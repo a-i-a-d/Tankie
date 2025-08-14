@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Devastator</title>
+		<meta charset="utf-8">
+		<link rel="icon" type="image/png" href="favicon.png">
+        	<link rel="stylesheet" type="text/css" href="style.css">
+	</head>
+	<body style="background-color:#101010;">
+		<div>
+               		Steer :<input id="joy1Steer" type="text" style="background-color:#269900;color:white;" />
+			Speed :<input id="joy1Speed" type="text" style="background-color:#269900;color:white;" />
+                	Battery:<input id="battery" type="text" style="background-color:#269900;color:white;" />
+                	Pan :<input id="joy2Pan" type="text" style="background-color:#269900;color:white;" />
+			Tilt :<input id="joy2Tilt" type="text" style="background-color:#269900;color:white;" />
+		</div>
+		<div class="row">
+			<div class="columnLateral">
+				<div id="joy1Div" style="width:320px;height:320px;margin:0px;background-color:#101010;"></div>
+			</div>
+			<div class="columnCentral" style="width:640px;height:480x;margin:0px">
+				<iframe id="videoStream"
+					scrolling="no"
+					style="pointer-events: none;"
+					width="640"
+					height="480"
+					loading="lazy"
+					frameborder="0"
+					src="/tankie.png">
+				</iframe>
+				<div style="text-align:center;">
+					<input type="button" value="Start video stream" id="streamBtn" style="color:white; text-align: center; text-decoration: none; font-size: 16px; padding: 10px 128px; background-color: #000000;" onclick="connectStream()"></input>
+				</div>
+			</div>
+			<div class="columnLateral">
+				<div id="joy2Div" style="width:320px;height:320px;margin:0px;background-color:#101010;"></div>
+			</div>
+		</div>
+	</body>
+	<script src="joy.js"></script>
+	<script src="script.js"></script>
+</html>
