@@ -66,7 +66,7 @@ Follow the instructions for the usb data upload. It will fail if not connected v
 
 ## RC Usage
 Connect to __http://<ip_of_tankie>__ adress with a browser. You should see a control interface with two joysticks and some fields that diaplsy current drive, steer, pan and tilt values as well as the current voltage of the power supply.
-![](https://github.com/a-i-a-d/tankie/blob/master/media/tankie_web_ui.png)
+![](media/tankie_web_ui.png)
 
 ## AI Usage
 Still WIP
