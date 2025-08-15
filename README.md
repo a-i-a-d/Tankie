@@ -1,5 +1,7 @@
 # Tankie
 Remote Controlled Tank for AI integration
+<br>
+![](media/tankie.png)
 
 ## Description
 Tankie is a DFRobot Devastator Tank platform controlled by a ESP8266 micro controller and a SparkFun Dual TB6612FNG Motor Driver. It can be connected to an existing WiFi network or provide an access point to connect to. Remote control works via json transfered over a web socket. Additionally a pan/tilt bracket kit with two servos is installed on top, which can be used to attach a camera and move that around. 
@@ -66,6 +68,7 @@ Follow the instructions for the usb data upload. It will fail if not connected v
 
 ## RC Usage
 Connect to __http://<ip_of_tankie>__ adress with a browser. You should see a control interface with two joysticks and some fields that diaplsy current drive, steer, pan and tilt values as well as the current voltage of the power supply.
+<br>
 ![](media/tankie_web_ui.png)
 
 ## AI Usage
