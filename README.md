@@ -21,8 +21,14 @@ This repository only contains the motor and pan/tilt control, no video or audio 
 
 ## Hardware Setup
 
+## Software Requirments
+- [ArduinoIDE 2.2.1 or newer](https://www.arduino.cc/en/software/)
+- [Arduino core for ESP8266 WiFi chip](https://github.com/esp8266/Arduino)
+- [LittleFS uploader plugin for Arduno 2.2.1 and higher](https://github.com/earlephilhower/arduino-littlefs-upload)
+
 ## Firmware
-Pinout and other config setting can be set in the [**config.h**](config.h) file.
+- Pinout and other config setting can be set in the [**config.h**](config.h) file.
+
 ### Configure as WiFi Client
 Set **AP_MODE** to **false**:
 ```
@@ -53,19 +59,20 @@ The first upload has to happen via usb and can be done as usual with the Arduino
 - select the usb board it is connected to
 - click on upload
 
+### Upload via ElegantOTG
+The firmware makes use of [ElegantOTG](https://github.com/ayushsharma82/ElegantOTA), which allows to update firmware and littlefs data via the browser over Wifi. This can be used after installing the firmwar once vi usb.
+
+In the ArduinoIDE, select __Sketch->Export Compiled Binary__. The exported .bin file is in a folder called **build** in the directory with the **tankie.ino** file. Upload it through the ElegantOTA web ui available at __http://<ip-of-tankie>/update__.
+
 ## Data
-Additional to the firmware, files from the [data folder](data/) have to be uploaded as littlefs filesystem. To do so, you need an additional tool for the ArduinoIDE
+Additional to the firmware, files from the [data folder](data/) have to be uploaded as littlefs filesystem.
+
+### Upload via USB
 - Install the [LittleFS uploader plugin for Arduno 2.2.1 and higher](https://github.com/earlephilhower/arduino-littlefs-upload)
 - In the ArduinoIDE press __[Shift]__+__[Control]__+__[p]__. A menu will appear, enter __littlefs__ and click __Upload LittleFS to Pico/ESP...__
 - It will create the littlefs .bin file and upload it
 
-## OTG Uploads
-The firmware makes use of [ElegantOTG](https://github.com/ayushsharma82/ElegantOTA), which allows to update firmware and littlefs data via the browser over Wifi. This can be used after installing the firmwar once vi usb. To update Tankie via Wifi, connect to __http://<ip-of-tankie>/update__. There you can upload firmware and data as bin files. These can be created as follows:
-
-### Firmware
-In the ArduinoIDE, select __Sketch->Export Compiled Binary__. The exported .bin file is in a folder called **build** in the directory with the **tankie.ino** file. Upload it through the ElegantOTA web ui.
-
-### Data
+### Upload via ElegantOTG 
 Follow the instructions for the usb data upload. It will fail if not connected via usb, but create the data .bin file in the **/tmp** directory. To find the exact name, look at the consle output of the tool in the arduinoIDE. You can simply copy that file from /tmp and upload it via the ElegantOTG UI. 
 
 ## RC Usage
@@ -77,3 +84,7 @@ Connect to __http://<ip_of_tankie>__ adress with a browser. You should see a con
 
 ## AI Usage
 Still WIP
+
+## Projects used
+- [joy.js](https://github.com/bobboteck/JoyStick)
+- [SparkFun TB6612 library](https://github.com/sparkfun/SparkFun_TB6612FNG_Arduino_Library)
