@@ -37,7 +37,7 @@ To be installed within the ArduinoIDE
 - ElegantOTA
 
 ## Firmware
-- Pinout and other config setting can be set in the [**config.h**](config.h) file.
+- Pinout and other config setting can be set in the [config.h](tankie/config.h) file.
 
 ### Configure as WiFi Client
 Set **AP_MODE** to **false**:
