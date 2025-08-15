@@ -75,7 +75,7 @@ The firmware makes use of [ElegantOTG](https://github.com/ayushsharma82/ElegantO
 In the ArduinoIDE, select __Sketch->Export Compiled Binary__. The exported .bin file will end up in the [build](tankie/build) folder. Upload it through the ElegantOTA web ui available at __http://<ip-of-tankie>/update__.
 
 ## Data
-Additional to the firmware, files from the [data folder](data/) have to be uploaded as littlefs filesystem.
+Additional to the firmware, files from the [data folder](tankie/data/) have to be uploaded as littlefs filesystem.
 
 ### Upload via USB
 - Install the [LittleFS uploader plugin for Arduno 2.2.1 and higher](https://github.com/earlephilhower/arduino-littlefs-upload)
