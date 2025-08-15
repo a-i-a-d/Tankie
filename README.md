@@ -21,6 +21,7 @@ This repository only contains the motor and pan/tilt control, no video or audio 
 
 ## Hardware Setup
 ![](media/Tankie_fritzing.png)
+**Please note:** The DC-DC converter and 9V power source in the image are wrong, a 9V battery won't be sufficient to power Tankie, use instead the 6x 1.5V battery bos that comes with the Devastator Kit. The DC-DC converter in the image can be used, however, it requires to have the output value adjusted manually, I'd suggest to use the converter in the parts list instead.
 
 ## Software Requirments
 This project is currently built with ArduinoIDE, but eventually will be switched to PlatformIO. To build the firmware, you will need to install aditional arduino libraries listed below.
