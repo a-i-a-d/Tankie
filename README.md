@@ -22,9 +22,19 @@ This repository only contains the motor and pan/tilt control, no video or audio 
 ## Hardware Setup
 
 ## Software Requirments
+This project is currently for ArduinoIDE, but eventually will be switched to PlatformIO. To build the firmware, you will need to install aditional arduino libraries listed below.
+
+### Tools
 - [ArduinoIDE 2.2.1 or newer](https://www.arduino.cc/en/software/)
 - [Arduino core for ESP8266 WiFi chip](https://github.com/esp8266/Arduino)
 - [LittleFS uploader plugin for Arduno 2.2.1 and higher](https://github.com/earlephilhower/arduino-littlefs-upload)
+
+### Libraries
+To be installed within the ArduinoIDE
+- AsyncTCP
+- ESPAsyncTCP
+- ESPAsyncWebServer
+- ElegantOTA
 
 ## Firmware
 - Pinout and other config setting can be set in the [**config.h**](config.h) file.
