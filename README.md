@@ -20,6 +20,7 @@ This repository only contains the motor and pan/tilt control, no video or audio 
 1x [Breadboard](https://www.berrybase.de/en/detail/019234a3c572735085405d3bf4e22c71) or 1x [breadboard, double-sided, 70 x 50 mm](https://www.reichelt.com/de/en/shop/product/breadboard_double-sided_70_x_50_mm-319111?&LANGUAGE=en)<br>
 
 ## Hardware Setup
+![](media/Tankie_fritzing.png)
 
 ## Software Requirments
 This project is currently built with ArduinoIDE, but eventually will be switched to PlatformIO. To build the firmware, you will need to install aditional arduino libraries listed below.
