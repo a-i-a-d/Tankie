@@ -1,6 +1,8 @@
 # Tankie
 Remote Controlled Tank for AI integration
 <br>
+<br>
+<br>
 ![](media/tankie.png)
 
 ## Description
@@ -68,6 +70,8 @@ Follow the instructions for the usb data upload. It will fail if not connected v
 
 ## RC Usage
 Connect to __http://<ip_of_tankie>__ adress with a browser. You should see a control interface with two joysticks and some fields that diaplsy current drive, steer, pan and tilt values as well as the current voltage of the power supply.
+<br>
+<br>
 <br>
 ![](media/tankie_web_ui.png)
 
