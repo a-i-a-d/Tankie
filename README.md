@@ -22,7 +22,7 @@ This repository only contains the motor and pan/tilt control, no video or audio 
 ## Hardware Setup
 
 ## Firmware
-Pinout and other config setting can be set in the **config.h** file.
+Pinout and other config setting can be set in the [**config.h**](config.h) file.
 ### Configure as WiFi Client
 Set **AP_MODE** to **false**:
 ```
@@ -54,7 +54,7 @@ The first upload has to happen via usb and can be done as usual with the Arduino
 - click on upload
 
 ## Data
-Additional to the firmware, data files have to be uploaded as littlefs filesystem. To do so, you need an additional tool for the ArduinoIDE
+Additional to the firmware, files from the [data folder](data/) have to be uploaded as littlefs filesystem. To do so, you need an additional tool for the ArduinoIDE
 - Install the [LittleFS uploader plugin for Arduno 2.2.1 and higher](https://github.com/earlephilhower/arduino-littlefs-upload)
 - In the ArduinoIDE press __[Shift]__+__[Control]__+__[p]__. A menu will appear, enter __littlefs__ and click __Upload LittleFS to Pico/ESP...__
 - It will create the littlefs .bin file and upload it
