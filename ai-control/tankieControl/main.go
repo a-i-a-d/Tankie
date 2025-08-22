@@ -9,14 +9,15 @@ import (
     "github.com/gorilla/websocket"
     "log"
     "flag"
+    "strconv"
 )
 
 type Params struct {
     Function    string 	`json:"function"`
     Action      string 	`json:"action"`
-    Duration    int 	`json:"duration"`
-    Speed       int 	`json:"speed"`
-    Amount	int 	`json:"amount"`
+    Speed       string 	`json:"speed"`
+    Amount	string 	`json:"amount"`
+    Degree	string	`json:"degree"`
 }
 
 func main() {
@@ -75,7 +76,7 @@ func connectWebsocket(url string) *websocket.Conn {
     if err != nil {
         log.Fatal(err)
     }
-    fmt.Printf("Websocket connection to %s established", url)
+    fmt.Printf("Websocket connection to %s established\n", url)
 
     //defer ws.Close()
     return ws 
@@ -89,7 +90,7 @@ func closeWebsocket(ws *websocket.Conn) {
 }
 
 func handleParams(d Params, ws *websocket.Conn) {
-    fmt.Printf("Function: %s", d.Function)
+    fmt.Printf("Function: %s\n", d.Function)
 
     switch d.Function {
         case "drive":
@@ -102,33 +103,35 @@ func handleParams(d Params, ws *websocket.Conn) {
             go camera(d, ws)
 
 	default:
-            fmt.Printf("Unknown action")
+            fmt.Printf("Unknown action\n")
             return
     }
 }
 
 func drive(d Params,ws *websocket.Conn) {
-    fmt.Printf("Action: %s, Duration: %s, Speed: %s\n", d.Action, d.Duration, d.Speed)
-    Speed := 0
+    fmt.Printf("Action: %s, Speed: %s\n", d.Action, d.Speed)
+
+    ws_message := "" 
+
     switch d.Action {
         case "forward":
-            fmt.Printf("Driving forward")
-	    Speed = d.Speed
+            fmt.Printf("Driving forward\n")
+            ws_message = fmt.Sprintf("speed=%s", d.Speed)
 
         case "reverse":
-            fmt.Printf("Driving reverse")
-	    Speed = -d.Speed
+            fmt.Printf("Driving reverse\n")
+            ws_message = fmt.Sprintf("speed=-%s", d.Speed)
 
 	case "stop":
-	    fmt.Printf("Stopping")
-    	    Speed = 0
+	    fmt.Printf("Stopping\n")
+            ws_message = fmt.Sprintf("speed=0")
 
         default:
-            fmt.Printf("Unknown action")
+            fmt.Printf("Unknown action\n")
             return
     }
 
-    ws_message := fmt.Sprintf("speed=%s", Speed)
+    fmt.Printf("Message: %s\n", ws_message)
     err := ws.WriteMessage(websocket.TextMessage, []byte(ws_message))
     if err != nil {
         log.Fatal(err)
@@ -139,26 +142,28 @@ func drive(d Params,ws *websocket.Conn) {
 	
 func steer(d Params,ws *websocket.Conn) {
     fmt.Printf("Action: %s, Amount: %s\n", d.Action, d.Amount)
-    Amount := 0
+
+    ws_message := ""
+
     switch d.Action {
 	case "left":
-	    fmt.Printf("Turing left")
-	    Amount = -d.Amount
+	    fmt.Printf("Turing left\n")
+            ws_message = fmt.Sprintf("steer=-%s\n", d.Amount)
 
 	case "right":
-	    fmt.Printf("Turing right")
-	    Amount = d.Amount
+	    fmt.Printf("Turing right\n")
+            ws_message = fmt.Sprintf("steer=%s\n", d.Amount)
 
 	case "straight":
-	    fmt.Printf("Driving straight")
-	    Amount = 0 
+	    fmt.Printf("Driving straight\n")
+            ws_message = fmt.Sprintf("steer=0\n")
 
         default:
-            fmt.Printf("Unknown action")
+            fmt.Printf("Unknown action\n")
             return
     }
 
-    ws_message := fmt.Sprintf("steer=%s", Amount)
+    fmt.Printf("Message: %s\n", ws_message)
     err := ws.WriteMessage(websocket.TextMessage, []byte(ws_message))
     if err != nil {
         log.Fatal(err)
@@ -168,35 +173,68 @@ func steer(d Params,ws *websocket.Conn) {
 }
 
 func camera(d Params,ws *websocket.Conn) {
-    fmt.Printf("Action: %s, Amount: %s\n", d.Action, d.Amount)
+    fmt.Printf("Action: %s, Degree: %s\n", d.Action, d.Degree)
+
     ws_message := ""
+    amount, err := strconv.Atoi(d.Degree)
+    if err != nil {
+        log.Fatal(err)
+    }
+
     switch d.Action {
-       	case "up":
-	    fmt.Printf("Camera up")
-    	    ws_message = fmt.Sprintf("tilt=%s", d.Amount)
+        case "pan_left":
+	    fmt.Printf("pan left\n")
+    	    ws_message = fmt.Sprintf("pan=%s", strconv.Itoa(90 - amount))
 
-	case "down":
-	    fmt.Printf("Camera down")
-    	    ws_message = fmt.Sprintf("tilt=%s", -d.Amount)
+        case "pan_right":
+	    fmt.Printf("pan right\n")
+    	    ws_message = fmt.Sprintf("pan=%s", strconv.Itoa(90 + amount))
 
-	case "left":
-	    fmt.Printf("Camera left")
-    	    ws_message = fmt.Sprintf("pan=%s", -d.Amount)
+	case "tilt_up":
+	    fmt.Printf("tilt up\n")
+    	    ws_message = fmt.Sprintf("tilt=%s", strconv.Itoa(90 - amount))
 
-	case "right":
-	    fmt.Printf("Camera right")
-    	    ws_message = fmt.Sprintf("pan=%s", d.Amount)
+	case "tilt_down":
+	    fmt.Printf("tilt down\n")
+    	    ws_message = fmt.Sprintf("tilt=%s", strconv.Itoa(90 + amount))
 
 	case "center":
-	    fmt.Printf("Camera centerd")
-    	    ws_message = fmt.Sprintf("tilt=%s,pan=%s",0,0)
+	    fmt.Printf("center camera\n")
+    	    ws_message = fmt.Sprintf("tilt=90,pan=90")
 
-        default:
-            fmt.Printf("Unknown action")
+	default:
+            fmt.Printf("Unknown action\n")
             return
     }
 
-    err := ws.WriteMessage(websocket.TextMessage, []byte(ws_message))
+    /*switch d.Action {
+       	case "up":
+	    fmt.Printf("Camera up\n")
+    	    //ws_message = fmt.Sprintf("tilt=%s", d.Amount)
+
+	case "down":
+	    fmt.Printf("Camera down\n")
+    	    //ws_message = fmt.Sprintf("tilt=-%s", d.Amount)
+
+	case "left":
+	    fmt.Printf("Camera left\n")
+    	    //ws_message = fmt.Sprintf("pan=-%s", d.Amount)
+
+	case "right":
+	    fmt.Printf("Camera right\n")
+    	    //ws_message = fmt.Sprintf("pan=%s", d.Amount)
+
+	case "center":
+	    fmt.Printf("Camera centerd\n")
+    	    ws_message = fmt.Sprintf("tilt=%s,pan=%s",90,90)
+
+        default:
+            fmt.Printf("Unknown action\n")
+            return
+    }*/
+
+    fmt.Printf("Message: %s\n", ws_message)
+    err = ws.WriteMessage(websocket.TextMessage, []byte(ws_message))
     if err != nil {
         log.Fatal(err)
     }

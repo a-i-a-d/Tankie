@@ -1,4 +1,4 @@
-module wsProxy
+module tankieControl 
 
 go 1.24.2
 
