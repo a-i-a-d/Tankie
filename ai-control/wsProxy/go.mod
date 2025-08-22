@@ -1,4 +1,4 @@
-module drive2ws
+module wsProxy
 
 go 1.24.2
 

@@ -6,12 +6,14 @@ import (
 )
 
 type DriveParams struct {
+    Function	string `json:"function"`
     Action  	string `json:"action"`
-    Duration	string `json:"duration"`
-    Speed	string `json:"speed"`
+    Speed	int `json:"speed"`
 }
 
 func Run(config map[string]interface{}) (string, map[string]interface{}, error) {
+    wsProxy := "192.168.1.50:5555"
+
     p := DriveParams{}
     b, err := json.Marshal(config)
     if err != nil {
@@ -21,11 +23,12 @@ func Run(config map[string]interface{}) (string, map[string]interface{}, error) 
         return "", map[string]interface{}{}, err
     }
 
+    p.Function = "drive"
+    fmt.Printf("Function: %s\n", p.Function) 
     fmt.Printf("Action: %s\n", p.Action) 
     fmt.Printf("Speed: %s\n", p.Speed) 
-    fmt.Printf("Duration: %s\n", p.Duration) 
 
-    conn, err := net.Dial("tcp", "192.168.1.50:5555")
+    conn, err := net.Dial("tcp", wsProxy)
     if err != nil {
         //log.Fatal("Error connecting:", err)
         return "", map[string]interface{}{}, err
@@ -53,19 +56,15 @@ func Definition() map[string][]string {
     return map[string][]string{
         "action": []string{
             "string",
-	    "Drive action: forward, reverse, turn_left, turn_right, rotate_left, rotate_right",
-        },
-        "duration": []string{
-            "string",
-	    "drive duration in milliseconds",
+	    "Driving action: forward, reverse, stop",
         },
         "speed": []string{
             "string",
-            "speed in percent from 0 to 100",
+	    "Driving speed: Speed in percent from 0 to 100",
         },
     }
 }
 
 func RequiredFields() []string {
-    return []string{"action", "duration"}
+    return []string{"action", "speed"}
 }
