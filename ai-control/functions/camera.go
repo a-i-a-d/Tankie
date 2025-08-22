@@ -56,7 +56,7 @@ func Definition() map[string][]string {
         },
         "degree": []string{
             "string",
-	    "Degree: how many degree to pan/tilt the camera: 0-90",
+	    "Degree: pan/tilt degree from 0 to 90",
         },
     }
 }

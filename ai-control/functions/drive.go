@@ -60,7 +60,7 @@ func Definition() map[string][]string {
         },
         "speed": []string{
             "string",
-	    "Driving speed: Speed in percent from 0 to 100",
+	    "Driving speed: Speed in percent from 0 to 255",
         },
     }
 }

@@ -57,7 +57,7 @@ func Definition() map[string][]string {
         },
         "amount": []string{
             "string",
-	    "Steering amount: the amount to steer in percent from 0 to 100",
+	    "Steering amount: the amount to steer from 0 to 255",
         },
     }
 }
