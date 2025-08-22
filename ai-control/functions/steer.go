@@ -8,7 +8,7 @@ import (
 type SteerParams struct {
     Function	string  `json:"function"`
     Action  	string 	`json:"action"`
-    Amount	int 	`json:"amount"`
+    Amount	string 	`json:"amount"`
 }
 
 func Run(config map[string]interface{}) (string, map[string]interface{}, error) {

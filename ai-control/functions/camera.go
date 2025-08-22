@@ -8,7 +8,7 @@ import (
 type CamParams struct {
     Function    string `json:"function"`
     Action  	string `json:"action"`
-    Amount	int `json:"amount"`
+    Degree	string `json:"degree"`
 }
 
 func Run(config map[string]interface{}) (string, map[string]interface{}, error) {
@@ -26,7 +26,7 @@ func Run(config map[string]interface{}) (string, map[string]interface{}, error) 
     p.Function = "camera"
     fmt.Printf("Function: %s\n", p.Function) 
     fmt.Printf("Action: %s\n", p.Action) 
-    fmt.Printf("Amount: %s\n", p.Amount) 
+    fmt.Printf("Degree: %s\n", p.Degree) 
 
     conn, err := net.Dial("tcp", wsProxy)
     if err != nil {
@@ -52,15 +52,15 @@ func Definition() map[string][]string {
     return map[string][]string{
         "action": []string{
             "string",
-	    "Move Camera: up, down, left, right, center",
+	    "Action: pan_left, pan_right, tilt_up, tilt_down, center",
         },
-        "amount": []string{
+        "degree": []string{
             "string",
-	    "Amount: Absolute amount to move the camera in percent 0-100",
+	    "Degree: how many degree to pan/tilt the camera: 0-90",
         },
     }
 }
 
 func RequiredFields() []string {
-    return []string{"action", "amount"}
+    return []string{"action", "degree"}
 }

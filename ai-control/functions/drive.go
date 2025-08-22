@@ -8,7 +8,7 @@ import (
 type DriveParams struct {
     Function	string `json:"function"`
     Action  	string `json:"action"`
-    Speed	int `json:"speed"`
+    Speed	string `json:"speed"`
 }
 
 func Run(config map[string]interface{}) (string, map[string]interface{}, error) {
