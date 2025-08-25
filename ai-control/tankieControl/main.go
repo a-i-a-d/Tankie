@@ -37,6 +37,17 @@ func main() {
     // Connect to Devastator websocket
     ws := connectWebsocket("ws://10.42.0.20/ws")
 
+    go func() {
+	for {
+            _, message, err := ws.ReadMessage()
+            if err != nil {
+                log.Println("ReadMessage() error:", err)
+                return
+            }
+            log.Printf("Received: %s", message)
+        }
+    }()
+
     // Accept incoming connections and handle them
     for {
         tcp, err := ln.Accept()
