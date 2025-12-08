@@ -44,7 +44,7 @@ func main() {
                 log.Println("ReadMessage() error:", err)
                 return
             }
-            log.Printf("Received: %s", message)
+            log.Printf("Received:\n%s\n\n", message)
         }
     }()
 
