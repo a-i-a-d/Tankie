@@ -41,6 +41,14 @@ camera_position = {
     "tilt": 90
 }
 
+# Autonomous drive profile: safety limits for AI-issued drive commands.
+# Deliberately slower than the manual range (0-100) so a misbehaving model
+# cannot drive the tank at full speed.
+AUTO_PROFILE = {
+    "max_speed": 40,          # clamp AI speed to this value
+    "reissue_interval": 1.0,  # seconds between re-issues of the active drive command
+}
+
 tank = {
     "speed": 0,
     "steer": 0
@@ -164,6 +172,9 @@ def drive_tank(speed, direction):
         print ("Invalid amount")
         return("Invalid amount, Valid values are 0 - 100")
 
+    # Autonomous drive profile: clamp to the safe AI speed limit
+    speed = min(speed, AUTO_PROFILE["max_speed"])
+
     if direction == "forward":
         tank["speed"] = speed
 
@@ -225,9 +236,28 @@ def ws_update():
     for key in tank:
         ws_message = (f"{key}={tank[key]}")
         print("Sending ws message: ", ws_message)
-        #ws.send(ws_message)
+        ws.send(ws_message)
 
     return "ok"
+
+
+# Continuous control loop: the firmware expects the drive command to be
+# re-issued periodically (and has a safety watchdog that stops the motors
+# when it stops receiving them). While the AI is thinking between frames
+# this thread keeps re-sending the active speed/steer command so the tank
+# does not jerk to a halt.
+def control_loop():
+    while True:
+        try:
+            if tank["speed"] != 0 or tank["steer"] != 0:
+                for key in tank:
+                    ws_message = (f"{key}={tank[key]}")
+                    print("Re-sending drive command (control loop):", ws_message)
+                    ws.send(ws_message)
+        except Exception as e:
+            print("Control loop: websocket send failed:", e)
+            break
+        time.sleep(AUTO_PROFILE["reissue_interval"])
 
 
 def call_function(name,args):
@@ -318,6 +348,10 @@ def main():
     #)
     ws = websocket.create_connection(WS_HOST, on_message=on_message, on_error=on_error, on_close=on_close)
     #ws.run_forever()
+
+    # Continuous control loop: keep re-issuing the active drive command
+    control_thread = Thread(target=control_loop, daemon=True)
+    control_thread.start()
 
     video = VideoCapture(VIDEO_URL)
     while(True):

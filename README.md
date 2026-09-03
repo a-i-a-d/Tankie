@@ -31,6 +31,12 @@ This project is currently built with ArduinoIDE, but eventually will be switched
 - [Arduino core for ESP8266 WiFi chip](https://github.com/esp8266/Arduino)
 - [LittleFS uploader plugin for Arduno 2.2.1 and higher](https://github.com/earlephilhower/arduino-littlefs-upload)
 
+> **Build note (ElegantOTA + AsyncWebServer):** this sketch uses the async web stack, so ElegantOTA has to be compiled in async mode. With ArduinoIDE add `ELEGANTOTA_USE_ASYNC_WEBSERVER=1` to *File → Preferences → Additional compiler flags* (or the board's custom flags). With arduino-cli:
+> ```
+> arduino-cli compile --fqbn esp8266:esp8266:d1_mini \
+>   --build-property "compiler.cpp.extra_flags=-DELEGANTOTA_USE_ASYNC_WEBSERVER=1" tankie
+> ```
+
 ### Libraries
 To be installed within the ArduinoIDE
 - AsyncTCP
@@ -101,7 +107,14 @@ Connect to __http://<ip_of_tankie>__ address with a browser. You should see a co
 ![](media/tankie_web_ui.png)
 
 ## AI Usage
-Still WIP
+The [ai-control](ai-control/) folder contains the code that connects an AI to the tank (see [ai-control/README.md](ai-control/README.md)).
+
+### Safety & state feedback
+- **Safety watchdog (firmware):** if the tank is driving and no command is received for 5 seconds, the motors are stopped and the pan/tilt camera is recentered automatically. A watchdog event is broadcast to all websocket clients as `{"watchdog":true,...}`.
+- **State feedback:** the periodic websocket broadcast now includes the current state in addition to the battery voltage: `{"battery":...,"speed":...,"steer":...,"pan":...,"tilt":...}`.
+- **Continuous control (ai_control.py):** the drive commands (`speed`/`steer`) that were previously never sent are now transmitted, and a background control loop re-issues the active drive command every second so the tank keeps moving while the AI is thinking between frames.
+- **Autonomous drive profile:** AI-issued drive commands are clamped to `max_speed = 40` (see `AUTO_PROFILE` in `ai_control/LocalAI/ai_control.py`), slower than the manual joystick range, so a misbehaving model cannot drive the tank at full speed.
+- **Pan/tilt:** the firmware clamps `pan`/`tilt` values to the 0-180 servo range; the AI tools already use relative moves (`up`/`down`/`left`/`right`/`center`) around the 90-degree center position.
 
 ## Projects used
 - [joy.js](https://github.com/bobboteck/JoyStick)
