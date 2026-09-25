@@ -1,0 +1,18 @@
+[Unit]
+Description=MediaMTX - Tankie camera streaming (WebRTC/HLS/RTSP/RTMP)
+Documentation=https://github.com/bluenviron/mediamtx
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mediamtx
+ExecStart=/opt/mediamtx/mediamtx /opt/mediamtx/mediamtx.yml
+Restart=on-failure
+RestartSec=3
+# The camera source is started/stopped on demand by mediamtx itself, so the
+# service stays up while the camera only runs when a client is connected.
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
