@@ -1,0 +1,70 @@
+# ---------------------------------------------------------------------------
+# Tankie camera streaming — mediamtx v1.21.1 (Raspberry Pi Zero 2 W)
+#
+# Dual stream from a single IMX708 (Raspberry Pi Camera Module 3, CSI port):
+#   cam       : 1080p30 H.264 (hardware) -> human consumption (WebRTC/HLS/RTSP/RTMP)
+#   cam_low   : 480p15  H.264 (hardware) -> AI consumption (LocalAI / capture service)
+#
+# Both paths start/stop on demand (sourceOnDemand), so the camera and the
+# WiFi bandwidth are only used while at least one client is connected.
+#
+# NOTE: mediamtx must be v1.19.2 or newer for `rpiCameraSecondary` (a second,
+# independently-encoded stream from the same sensor). The recommended version
+# is v1.21.1 (see setup.sh).
+# ---------------------------------------------------------------------------
+
+paths:
+  # High-resolution stream for human consumption (WebRTC is the low-latency path)
+  cam:
+    source: rpiCamera
+    rpiCameraWidth: 1920
+    rpiCameraHeight: 1080
+    rpiCameraFPS: 30
+    rpiCameraCodec: hardwareH264
+    rpiCameraBitrate: 5000000
+    rpiCameraIDRPeriod: 60
+    rpiCameraTextOverlayEnable: no
+    sourceOnDemand: yes
+    sourceOnDemandStartTimeout: 10s
+    sourceOnDemandCloseAfter: 10s
+
+  # Low-resolution stream for AI consumption (second hardware encoder, same sensor)
+  cam_low:
+    source: rpiCamera
+    rpiCameraSecondary: true
+    rpiCameraWidth: 640
+    rpiCameraHeight: 480
+    rpiCameraFPS: 15
+    rpiCameraCodec: hardwareH264
+    rpiCameraBitrate: 1000000
+    rpiCameraIDRPeriod: 30
+    rpiCameraTextOverlayEnable: no
+    sourceOnDemand: yes
+    sourceOnDemandStartTimeout: 10s
+    sourceOnDemandCloseAfter: 10s
+
+# Management API (path status, config, session control) — loopback only,
+# so it is not reachable from the network.
+api: yes
+apiAddress: 127.0.0.1:9997
+
+# --- protocols (same listeners as the previous setup) ---
+# WebRTC (human viewing, lowest latency; the ESP8266 UI embeds http://<pi>:8889/cam/)
+webrtcAddress: :8889
+webrtcAllowOrigins: ["*"]
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcIPsFromInterfaces: yes
+
+# HLS (ai_control.py fallback / generic players) — low-latency variant
+hls: yes
+hlsAddress: :8888
+hlsVariant: lowLatency
+
+# RTSP (recommended for the AI capture path: ffmpeg/OpenCV)
+rtsp: yes
+rtspAddress: :8554
+
+# RTMP (optional, e.g. for Go/Rust consumers)
+rtmp: yes
+rtmpAddress: :1935
