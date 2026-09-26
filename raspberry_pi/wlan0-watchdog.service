@@ -1,0 +1,15 @@
+[Unit]
+Description=Tankie WiFi watchdog - restores wlan0 if the brcmfmac firmware crash tears it down
+Documentation=https://github.com/a-i-a-d/Tankie/issues/1
+# Run after multi-user.target so NetworkManager (fallback path) is up when
+# this fires. The health check itself needs no network.
+After=multi-user.target
+
+[Service]
+Type=oneshot
+# Hard cap so a hung rmmod/modprobe can never wedge the timer.
+TimeoutStartSec=120s
+# One-liner (unit files have no line continuation). Outer double quotes are
+# systemd quoting; inner single quotes are shell quoting. The script avoids
+# $, backslash and double quotes so nothing needs escaping.
+ExecStart=/bin/sh -c "set -u; if ip link show wlan0 >/dev/null 2>&1; then echo '[wlan0-watchdog] wlan0 present - healthy'; exit 0; fi; echo '[wlan0-watchdog] wlan0 MISSING - attempting recovery'; if ! lsmod | grep -q '^brcmfmac[[:space:]]'; then echo '[wlan0-watchdog] brcmfmac not loaded and wlan0 missing - skipping (reload would not help)'; exit 0; fi; echo '[wlan0-watchdog] primary: reloading brcmfmac (rmmod + modprobe)'; rmmod brcmfmac 2>&1 || echo '[wlan0-watchdog] rmmod brcmfmac failed (module busy?)'; modprobe brcmfmac 2>&1 || echo '[wlan0-watchdog] modprobe brcmfmac failed'; sleep 10; if ip link show wlan0 >/dev/null 2>&1; then echo '[wlan0-watchdog] recovered: wlan0 is back after driver reload'; exit 0; fi; echo '[wlan0-watchdog] fallback: wlan0 still missing - restarting NetworkManager'; systemctl restart NetworkManager 2>&1 || echo '[wlan0-watchdog] NetworkManager restart failed'; sleep 5; if ip link show wlan0 >/dev/null 2>&1; then echo '[wlan0-watchdog] recovered: wlan0 is back after NetworkManager restart'; exit 0; fi; echo '[wlan0-watchdog] ERROR: wlan0 still missing after all recovery attempts - will retry on next tick'; exit 1"

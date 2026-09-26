@@ -15,6 +15,8 @@ separate box bolted on top whose only job here is to turn the CSI camera
 | `setup.sh` | Idempotent installer. Downloads the pinned, self-contained `mediamtx` binary, enables the CSI camera, installs the config + systemd service, and starts streaming. Run with `sudo bash setup.sh`. |
 | `mediamtx.yml` | The mediamtx configuration: two on-demand streams from the one camera (`cam` 1080p30 for humans, `cam_low` 480p15 for the AI). |
 | `mediamtx.service` | systemd unit that runs `mediamtx` as a non-root user and keeps it alive. |
+| `wlan0-watchdog.service` | One-shot recovery unit: if `wlan0` is missing, reloads the `brcmfmac` driver (fallback: restarts NetworkManager). Never reboots. |
+| `wlan0-watchdog.timer` | systemd timer that triggers the watchdog 90 s after boot, then every 60 s. |
 
 ## The two streams
 
@@ -67,6 +69,29 @@ driver loads and `/dev/video0` appears.
   **≥ v1.19.2**. We pin **v1.21.1** in `setup.sh` (SHA256-verified).
 - **On-demand + hardware encode** keeps the single A35-core-class Pi cool and
   the 2.4 GHz WiFi link free when nobody is watching.
+
+## WiFi watchdog
+
+The Pi Zero 2 W's on-board WiFi (`wlan0`, BCM43430B0 / `brcmfmac`) has a
+known firmware bug: the firmware can crash, tear down `wlan0`, and the
+interface is never re-registered — leaving the Pi unreachable (diagnosis
+in [\#1](https://github.com/a-i-a-d/Tankie/issues/1)). Since `wlan0` is
+now the Pi's **only** uplink, `setup.sh` installs a watchdog that
+self-recovers without a reboot:
+
+- `wlan0-watchdog.timer` fires 90 s after boot, then every 60 s.
+- Each tick runs `wlan0-watchdog.service`, which checks `ip link show wlan0`.
+  - **healthy** → exits immediately (no-op).
+  - **missing** → `rmmod brcmfmac && modprobe brcmfmac` (primary fix from #1);
+    if `wlan0` is still gone ~10 s later → `systemctl restart NetworkManager`
+    (fallback from #1). If both fail it logs an error and retries on the
+    next tick. `TimeoutStartSec=120` caps a hung recovery.
+
+```bash
+systemctl status wlan0-watchdog.timer   # timer state
+journalctl -u wlan0-watchdog -f         # live watchdog log
+systemctl disable --now wlan0-watchdog.timer   # disable the watchdog
+```
 
 ## Notes / related issues
 
