@@ -1,0 +1,14 @@
+[Unit]
+Description=Tankie WiFi watchdog - restores wlan0 if the brcmfmac firmware crash tears it down
+Documentation=https://github.com/a-i-a-d/Tankie/issues/1
+# Run after multi-user.target so NetworkManager (fallback path) is up when
+# this fires. The health check itself needs no network.
+After=multi-user.target
+
+[Service]
+Type=oneshot
+# Hard cap so a hung rmmod/modprobe can never wedge the timer.
+TimeoutStartSec=120s
+# The check/recovery logic lives in wlan0-watchdog.sh (installed to
+# /usr/local/bin by setup.sh) so it stays readable and testable.
+ExecStart=/usr/local/bin/wlan0-watchdog.sh

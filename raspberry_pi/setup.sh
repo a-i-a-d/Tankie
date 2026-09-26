@@ -15,6 +15,11 @@
 # camera helper, `libcamera`, and the Raspberry Pi IPA configs, so this
 # script does NOT need to install GStreamer, ffmpeg, or libcamera from apt.
 #
+# It also installs the WiFi watchdog (wlan0-watchdog.sh + .timer + .service) that
+# detects a missing wlan0 (brcmfmac firmware crash, see
+# https://github.com/a-i-a-d/Tankie/issues/1) and reloads the driver /
+# restarts NetworkManager to bring it back — no reboot needed.
+#
 # Usage:
 #   sudo bash setup.sh
 #
@@ -33,10 +38,16 @@ INSTALL_DIR="/opt/mediamtx"
 BIN="${INSTALL_DIR}/mediamtx"
 CONF="${INSTALL_DIR}/mediamtx.yml"
 SERVICE="mediamtx.service"
+WATCHDOG_SERVICE="wlan0-watchdog.service"
+WATCHDOG_SCRIPT="/usr/local/bin/wlan0-watchdog.sh"
+WATCHDOG_TIMER="wlan0-watchdog.timer"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_CONF="${SCRIPT_DIR}/mediamtx.yml"
 SRC_SERVICE="${SCRIPT_DIR}/mediamtx.service"
+SRC_WATCHDOG="${SCRIPT_DIR}/wlan0-watchdog.service"
+SRC_WATCHDOG_SCRIPT="${SCRIPT_DIR}/wlan0-watchdog.sh"
+SRC_TIMER="${SCRIPT_DIR}/wlan0-watchdog.timer"
 
 log()  { printf '\033[1;32m[setup]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
@@ -118,7 +129,17 @@ systemctl enable "${SERVICE}" >/dev/null 2>&1
 systemctl restart "${SERVICE}"
 sleep 2
 
-# --- 6. verify -------------------------------------------------------------
+# --- 6. install + enable the WiFi watchdog (timer triggers the service) ----
+log "Installing WiFi watchdog (${WATCHDOG_SERVICE} + ${WATCHDOG_TIMER})"
+install -m 0755 "${SRC_WATCHDOG_SCRIPT}" "${WATCHDOG_SCRIPT}"
+install -m 0644 "${SRC_WATCHDOG}" "/etc/systemd/system/${WATCHDOG_SERVICE}"
+install -m 0644 "${SRC_TIMER}" "/etc/systemd/system/${WATCHDOG_TIMER}"
+systemctl daemon-reload
+systemctl enable "${WATCHDOG_TIMER}" >/dev/null 2>&1
+systemctl restart "${WATCHDOG_TIMER}"
+sleep 1
+
+# --- 7. verify -------------------------------------------------------------
 log "Verifying installation..."
 "${BIN}" --version | head -1
 log "Validating configuration..."
@@ -128,6 +149,12 @@ if systemctl is-active --quiet "${SERVICE}"; then
   log "Service '${SERVICE}' is active."
 else
   warn "Service is not active — check: journalctl -u ${SERVICE} -n 50"
+fi
+
+if systemctl is-active --quiet "${WATCHDOG_TIMER}"; then
+  log "WiFi watchdog timer is active (checks wlan0 every 60s, first check 90s after boot)."
+else
+  warn "WiFi watchdog timer is not active — check: systemctl status ${WATCHDOG_TIMER}"
 fi
 
 # Show the live path status (camera will be 'ready' only once a client connects)
@@ -149,6 +176,9 @@ Next steps / how to use:
   * Is a client online? :  curl -s http://127.0.0.1:9997/v3/paths/list
   * Service status      :  systemctl status mediamtx
   * Logs                :  journalctl -u mediamtx -f
+  * WiFi watchdog status:  systemctl status wlan0-watchdog.timer
+  * WiFi watchdog logs  :  journalctl -u wlan0-watchdog -f
+  * Disable the watchdog:  systemctl disable --now wlan0-watchdog.timer
 
 Note: if you just enabled the camera for the first time, reboot once so the
       camera driver loads and /dev/video0 appears.
