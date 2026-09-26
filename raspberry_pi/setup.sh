@@ -15,7 +15,7 @@
 # camera helper, `libcamera`, and the Raspberry Pi IPA configs, so this
 # script does NOT need to install GStreamer, ffmpeg, or libcamera from apt.
 #
-# It also installs the WiFi watchdog (wlan0-watchdog.timer + .service) that
+# It also installs the WiFi watchdog (wlan0-watchdog.sh + .timer + .service) that
 # detects a missing wlan0 (brcmfmac firmware crash, see
 # https://github.com/a-i-a-d/Tankie/issues/1) and reloads the driver /
 # restarts NetworkManager to bring it back — no reboot needed.
@@ -39,12 +39,14 @@ BIN="${INSTALL_DIR}/mediamtx"
 CONF="${INSTALL_DIR}/mediamtx.yml"
 SERVICE="mediamtx.service"
 WATCHDOG_SERVICE="wlan0-watchdog.service"
+WATCHDOG_SCRIPT="/usr/local/bin/wlan0-watchdog.sh"
 WATCHDOG_TIMER="wlan0-watchdog.timer"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_CONF="${SCRIPT_DIR}/mediamtx.yml"
 SRC_SERVICE="${SCRIPT_DIR}/mediamtx.service"
 SRC_WATCHDOG="${SCRIPT_DIR}/wlan0-watchdog.service"
+SRC_WATCHDOG_SCRIPT="${SCRIPT_DIR}/wlan0-watchdog.sh"
 SRC_TIMER="${SCRIPT_DIR}/wlan0-watchdog.timer"
 
 log()  { printf '\033[1;32m[setup]\033[0m %s\n' "$*"; }
@@ -129,6 +131,7 @@ sleep 2
 
 # --- 6. install + enable the WiFi watchdog (timer triggers the service) ----
 log "Installing WiFi watchdog (${WATCHDOG_SERVICE} + ${WATCHDOG_TIMER})"
+install -m 0755 "${SRC_WATCHDOG_SCRIPT}" "${WATCHDOG_SCRIPT}"
 install -m 0644 "${SRC_WATCHDOG}" "/etc/systemd/system/${WATCHDOG_SERVICE}"
 install -m 0644 "${SRC_TIMER}" "/etc/systemd/system/${WATCHDOG_TIMER}"
 systemctl daemon-reload

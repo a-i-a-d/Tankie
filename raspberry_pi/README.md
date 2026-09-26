@@ -16,6 +16,7 @@ separate box bolted on top whose only job here is to turn the CSI camera
 | `mediamtx.yml` | The mediamtx configuration: two on-demand streams from the one camera (`cam` 1080p30 for humans, `cam_low` 480p15 for the AI). |
 | `mediamtx.service` | systemd unit that runs `mediamtx` as a non-root user and keeps it alive. |
 | `wlan0-watchdog.service` | One-shot recovery unit: if `wlan0` is missing, reloads the `brcmfmac` driver (fallback: restarts NetworkManager). Never reboots. |
+| `wlan0-watchdog.sh` | The actual check/recovery logic (health check, driver reload, NetworkManager fallback), installed to `/usr/local/bin/wlan0-watchdog.sh` and called by the service. |
 | `wlan0-watchdog.timer` | systemd timer that triggers the watchdog 90 s after boot, then every 60 s. |
 
 ## The two streams
@@ -80,7 +81,9 @@ now the Pi's **only** uplink, `setup.sh` installs a watchdog that
 self-recovers without a reboot:
 
 - `wlan0-watchdog.timer` fires 90 s after boot, then every 60 s.
-- Each tick runs `wlan0-watchdog.service`, which checks `ip link show wlan0`.
+- Each tick runs `wlan0-watchdog.service`, which calls `wlan0-watchdog.sh`
+  (installed to `/usr/local/bin` by `setup.sh`); the script checks
+  `ip link show wlan0`.
   - **healthy** → exits immediately (no-op).
   - **missing** → `rmmod brcmfmac && modprobe brcmfmac` (primary fix from #1);
     if `wlan0` is still gone ~10 s later → `systemctl restart NetworkManager`
