@@ -51,14 +51,14 @@ On boot the ESP:
 1. reads the saved network (`ssid.txt` / `pass.txt` / `ip.txt` / `gateway.txt`)
    from LittleFS and tries to connect in **STA mode**;
 2. if that fails (or nothing is saved yet) it opens its own access point
-   `tankie-esp` (password `secret`) and serves a **setup web page** at
+   `tankie-esp` (password `tankie1234`) and serves a **setup web page** at
    `http://192.168.4.1/` where you can enter the SSID / password / static IP /
    gateway. Saving reboots the ESP and retries step 1.
 
 The AP name + password are set in [config.h](tankie/config.h):
 ```
 #define APSSID "tankie-esp"
-#define APPSK  "secret"
+#define APPSK  "tankie1234"
 ```
 
 The saved network lives in LittleFS, so it can also be (re)configured at any

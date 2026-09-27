@@ -4,7 +4,7 @@
 // The ESP starts as this AP and serves a web form at
 // http://192.168.4.1/ to configure the WiFi connection.
 #define APSSID "tankie-esp"
-#define APPSK  "secret"
+#define APPSK  "tankie1234"
 
 // Motor driver pins (SparkFun TB6612FNG)
 #define PWMA D1

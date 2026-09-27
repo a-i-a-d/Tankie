@@ -29,7 +29,7 @@
 // Usage (see tankie.ino):
 //   WiFiManager wifiManager;
 //   // in setup(), before the web server is started:
-//   wifiManager.begin("tankie-esp", "secret");
+//   wifiManager.begin("tankie-esp", "tankie1234");
 //   // in loop():
 //   wifiManager.loop();   // performs the deferred reboot after a config save
 //   // the "/" route serves wifimanager.html while inConfigMode() is true
