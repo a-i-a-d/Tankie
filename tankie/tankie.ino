@@ -24,6 +24,7 @@ Motor M2 = Motor(AIN1, AIN2, PWMA, offsetA, STBY);
 Motor M1 = Motor(BIN1, BIN2, PWMB, offsetB, STBY);
 
 AsyncWebServer server(80);
+AsyncWebServer configServer(8080);
 AsyncWebSocket ws("/ws");
 //M8833 M1(D1,D2);
 //M8833 M2(D4,D3);
@@ -68,29 +69,34 @@ void setup() {
   Serial.println();
 
   // WiFi: connect to the saved network (ssid.txt/pass.txt on LittleFS),
-  // or open the "tankie-esp" config portal AP (http://192.168.4.1/) when
-  // nothing is saved or the network is unreachable.
+  // or open the "tankie-esp" config portal AP (http://192.168.4.1:8080)
+  // when nothing is saved or the network is unreachable.
   wifiManager.begin(APSSID, APPSK);
 
+  // Port 80 always serves the tank control page (even in config mode, so the
+  // page can hint at the portal URL). The WiFi setup form itself lives on
+  // the dedicated config server below (port 8080).
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
   {
     Serial.println("requested /");
-    if (wifiManager.inConfigMode()) {
-      // Config portal: show the WiFi setup form.
-      request->send(LittleFS, "/wifimanager.html", "text/html");
-    } else {
-      request->send(LittleFS, "/index.html", String(), false, processor);
-    }
+    request->send(LittleFS, "/index.html", String(), false, processor);
   });
 
-  server.on("/", HTTP_POST, [](AsyncWebServerRequest *request)
+  // Config portal server (only meaningful while wifiManager.inConfigMode()):
+  // the WiFi setup form on a dedicated port, so it never collides with the
+  // tank control page or the ElegantOTA routes on port 80.
+  configServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
   {
-    if (!wifiManager.inConfigMode()) {
-      request->send(405, "text/plain", "WiFi already configured - use GET /");
-      return;
-    }
+    Serial.println("config portal: requested /");
+    request->send(LittleFS, "/wifimanager.html", "text/html");
+  });
+
+  configServer.on("/", HTTP_POST, [](AsyncWebServerRequest *request)
+  {
     wifiManager.handleConfigPost(request);
   });
+
+  configServer.onNotFound(notFound);
 
   server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(LittleFS, "/style.css", "text/css");
@@ -110,6 +116,7 @@ void setup() {
 
   server.onNotFound(notFound);
   server.begin();
+  configServer.begin();
 
   listDir("/");
 }

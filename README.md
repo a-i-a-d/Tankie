@@ -51,9 +51,13 @@ On boot the ESP:
 1. reads the saved network (`ssid.txt` / `pass.txt` / `ip.txt` / `gateway.txt`)
    from LittleFS and tries to connect in **STA mode**;
 2. if that fails (or nothing is saved yet) it opens its own access point
-   `tankie-esp` (password `tankie1234`) and serves a **setup web page** at
-   `http://192.168.4.1/` where you can enter the SSID / password / static IP /
-   gateway. Saving reboots the ESP and retries step 1.
+   `tankie-esp` (password `tankie1234`) and serves the **setup web page** at
+   `http://192.168.4.1:8080` where you can enter the SSID / password / static
+   IP / gateway. Saving reboots the ESP and retries step 1.
+
+   The setup form runs on a dedicated config server (port **8080**); port 80
+   always serves the tank control page, even in config mode (it shows a hint
+   pointing at the portal URL).
 
 The AP name + password are set in [config.h](tankie/config.h):
 ```

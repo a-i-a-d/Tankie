@@ -17,8 +17,9 @@
 //      (ssid.txt / pass.txt / ip.txt / gateway.txt).
 //   2. If the stored network connects in time -> STA mode, done.
 //   3. Otherwise the ESP opens its own access point (default "tankie-esp")
-//      and the web form (data/wifimanager.html) served at http://192.168.4.1/
-//      can be used to enter SSID / password / IP / gateway.
+//      and the web form (data/wifimanager.html) served at
+//      http://192.168.4.1:8080 (dedicated config server, port 8080) can be
+//      used to enter SSID / password / IP / gateway.
 //   4. The form POSTs back to the ESP; the values are written to LittleFS
 //      and the ESP reboots, retrying step 2 with the new credentials.
 //
@@ -32,7 +33,8 @@
 //   wifiManager.begin("tankie-esp", "tankie1234");
 //   // in loop():
 //   wifiManager.loop();   // performs the deferred reboot after a config save
-//   // the "/" route serves wifimanager.html while inConfigMode() is true
+//   // the config server on port 8080 serves wifimanager.html while
+//   // inConfigMode() is true (port 80 always serves the tank page)
 // ---------------------------------------------------------------------------
 
 class WiFiManager {
@@ -52,7 +54,8 @@ class WiFiManager {
   bool inConfigMode() const { return _inConfigMode; }
 
   // Handle the POST of the config form: stores the submitted fields in
-  // LittleFS and schedules the reboot. Call from the "/" POST handler.
+  // LittleFS and schedules the reboot. Call from the config server's
+  // (port 8080) "/" POST handler.
   void handleConfigPost(AsyncWebServerRequest* request);
 
   // Read-only access to the active configuration (for logging).

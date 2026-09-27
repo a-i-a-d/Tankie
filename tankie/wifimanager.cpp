@@ -126,7 +126,7 @@ void WiFiManager::startPortal() {
   IPAddress myIP = WiFi.softAPIP();
   Serial.print("[WiFiManager] AP IP address: ");
   Serial.println(myIP);
-  Serial.println("[WiFiManager] open the browser at http://192.168.4.1/ to configure WiFi");
+  Serial.println("[WiFiManager] open the browser at http://192.168.4.1:8080 to configure WiFi");
 
   _inConfigMode = true;
 }
