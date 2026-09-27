@@ -41,29 +41,30 @@ To be installed within the ArduinoIDE
 ## Firmware
 - Pinout and other config setting can be set in the [config.h](tankie/config.h) file.
 
-### Configure as WiFi Client
-Set **AP_MODE** to **false**:
+### WiFi configuration (WiFiManager)
+The firmware no longer hard-codes WiFi credentials or an `AP_MODE` switch.
+Instead it uses a small [WiFiManager](tankie/wifimanager.h) class (implemented
+on top of the already-running `ESPAsyncWebServer`, so it does not clash with
+`ElegantOTA` / `ESPAsyncWebServer` the way the `WiFiManager` library does).
+
+On boot the ESP:
+1. reads the saved network (`ssid.txt` / `pass.txt` / `ip.txt` / `gateway.txt`)
+   from LittleFS and tries to connect in **STA mode**;
+2. if that fails (or nothing is saved yet) it opens its own access point
+   `tankie-esp` (password `secret`) and serves a **setup web page** at
+   `http://192.168.4.1/` where you can enter the SSID / password / static IP /
+   gateway. Saving reboots the ESP and retries step 1.
+
+The AP name + password are set in [config.h](tankie/config.h):
 ```
-#define AP_MODE false
+#define APSSID "tankie-esp"
+#define APPSK  "secret"
 ```
 
-Enter your wifi credentials:
-```
-#define STASSID "your access point ssid"
-#define STAPSK "your wifi password"
-```
-
-### Configure as Access Point 
-Set **AP_MODE** to **true**:
-```
-#define AP_MODE true
-```
-
-Set the Access Point name and password:
-```
-#define STASSID "your access point ssid"
-#define STAPSK "your wifi password"
-```
+The saved network lives in LittleFS, so it can also be (re)configured at any
+time by deleting `ssid.txt` / `pass.txt` (or by using the setup page), without
+re-flashing. See issue [#21](https://github.com/a-i-a-d/Tankie/issues/21) for
+the background on why the `WiFiManager` library was replaced.
 
 ### Upload via USB
 The first upload has to happen via usb and can be done as usual with the Arduino IDE
@@ -78,6 +79,7 @@ In the ArduinoIDE, select __Sketch->Export Compiled Binary__. The exported .bin 
 
 ## Data
 Additional to the firmware, files from the [data folder](tankie/data/) have to be uploaded as littlefs filesystem.
+
 
 ### Upload via USB
 - Install the [LittleFS uploader plugin for Arduno 2.2.1 and higher](https://github.com/earlephilhower/arduino-littlefs-upload)

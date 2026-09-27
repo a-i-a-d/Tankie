@@ -1,18 +1,12 @@
-// Set this to false and configure you wifi credentials below for client mode
-#define AP_MODE true
-
-// When running in Wifi Access Point mode 
-#ifdef AP_MODE
+// Config portal AP name and password.
+// Used when the ESP cannot connect to a saved WiFi network,
+// or when no WiFi network has been configured yet.
+// The ESP starts as this AP and serves a web form at
+// http://192.168.4.1/ to configure the WiFi connection.
 #define APSSID "tankie-esp"
-#define APPSK "secret"
-#endif
+#define APPSK  "secret"
 
-// When running in Wifi Client mode
-#ifndef AP_MODE
-#define STASSID "your access point ssid"
-#define STAPSK "your wifi password"
-#endif
-
+// Motor driver pins (SparkFun TB6612FNG)
 #define PWMA D1
 #define AIN2 D2
 #define AIN1 D3
@@ -20,7 +14,8 @@
 #define BIN1 D8
 #define BIN2 D7
 #define PWMB D6
-#define BAT A0
+#define BAT  A0
 
-#define SERVO_PAN D0
+// Pan/tilt servo pins
+#define SERVO_PAN  D0
 #define SERVO_TILT D5
