@@ -7,8 +7,8 @@
 # the chip into download mode automatically — no button dance needed.
 #
 # Steps:
-#   1. Build the sketch (arduino-cli, esp8266 core) unless a fresh binary
-#      already exists (rebuild only when the sources are newer).
+#   1. Build the sketch via build.sh (arduino-cli, esp8266 core) unless a
+#      fresh binary already exists (rebuild only when the sources are newer).
 #   2. Flash the merged image with esptool (from the esp8266 core package).
 #   3. Verify the chip rebooted and is running the new firmware by reading
 #      its UART0 console (the firmware streams "Battery Voltage: …" lines).
@@ -28,22 +28,27 @@ set -euo pipefail
 # --- configuration ----------------------------------------------------------
 PORT="${PORT:-/dev/ttyUSB0}"
 BAUD=115200
-FQBN="esp8266:esp8266:d1_mini"
-# ElegantOTA + the core's WebServer both define an HTTP_GET enum -> clash.
-# This single global flag is the library's documented toggle and fixes it.
-EXTRA_FLAGS="-DELEGANTOTA_USE_ASYNC_WEBSERVER=1"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-SKETCH_DIR="${REPO_ROOT}/tankie"
-OUT_DIR="${TANKIE_FLASH_DIR:-/tmp/tankie-flash}"   # stable dir -> rebuilds are skipped when fresh
+
+# System-wide overrides (written by setup.sh on the tank)
+if [ -f /etc/tankie/flash.env ]; then
+  # shellcheck disable=SC1091
+  . /etc/tankie/flash.env
+fi
+
+SKETCH_DIR="${TANKIE_SKETCH_DIR:-${REPO_ROOT}/tankie}"
+OUT_DIR="${TANKIE_FLASH_DIR:-/tmp/tankie-flash}"   # stable dir -> shared with build.sh
 BIN="${OUT_DIR}/tankie.ino.bin"
+BUILD_SH="${SCRIPT_DIR}/build.sh"
 
 log()  { printf '\033[1;32m[flash]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[flash]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[flash]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # --- preflight ---------------------------------------------------------------
+[ -f "${BUILD_SH}" ] || die "build.sh not found next to flash.sh: ${BUILD_SH}"
 [ -f "${SKETCH_DIR}/tankie.ino" ] || die "sketch not found: ${SKETCH_DIR}/tankie.ino"
 command -v arduino-cli >/dev/null 2>&1 || die "arduino-cli not found in PATH"
 [ -e "${PORT}" ] || die "serial port ${PORT} not present (is the CH340/D1 Mini connected?)"
@@ -57,13 +62,8 @@ LATEST_SOURCE="$(ls -t "${SKETCH_DIR}"/*.ino "${SKETCH_DIR}"/*.h "${SKETCH_DIR}"
 if [ -f "${BIN}" ] && [ -n "${LATEST_SOURCE}" ] && [ ! "${LATEST_SOURCE}" -nt "${BIN}" ]; then
   log "reusing existing build ${BIN} (newer than sources)"
 else
-  log "building ${FQBN} (extra flags: ${EXTRA_FLAGS}) …"
-  mkdir -p "${OUT_DIR}"
-  arduino-cli compile --fqbn "${FQBN}" \
-    --build-property "build.extra_flags=${EXTRA_FLAGS}" \
-    --export-binaries --output-dir "${OUT_DIR}" "${SKETCH_DIR}"
+  bash "${BUILD_SH}"
   [ -f "${BIN}" ] || die "build did not produce ${BIN}"
-  log "built $(stat -c%s "${BIN}") bytes -> ${BIN}"
 fi
 
 # --- 2. flash ----------------------------------------------------------------

@@ -13,7 +13,8 @@ separate box bolted on top whose only job here is to turn the CSI camera
 | File | Purpose |
 |------|---------|
 | `setup.sh` | Idempotent installer. Downloads the pinned, self-contained `mediamtx` binary, enables the CSI camera, installs the config + systemd service, and starts streaming. Run with `sudo bash setup.sh`. |
-| `flash.sh` | Build + flash + boot-verify the ESP8266 (D1 Mini) firmware over USB (CH340 → `/dev/ttyUSB0`). Run with `bash flash.sh`. |
+| `build.sh` | Build the ESP8266 (D1 Mini) firmware with arduino-cli (esp8266 core) → `tankie.ino.bin`. Run with `bash build.sh`. |
+| `flash.sh` | Build (via `build.sh`) + flash + boot-verify the ESP8266 (D1 Mini) firmware over USB (CH340 → `/dev/ttyUSB0`). Run with `bash flash.sh`. |
 | `mediamtx.yml` | The mediamtx configuration: two on-demand streams from the one camera (`cam` 1080p30 for humans, `cam_low` 480p15 for the AI). |
 | `mediamtx.service` | systemd unit that runs `mediamtx` as a non-root user and keeps it alive. |
 | `wlan0-watchdog.service` | One-shot recovery unit: if `wlan0` is missing, reloads the `brcmfmac` driver (fallback: restarts NetworkManager). Never reboots. |
@@ -115,13 +116,17 @@ automatically — there is **no button dance**.
 arduino-cli core install esp8266:esp8266   # provides the toolchain + esptool
 pip3 install --user pyserial               # only for the boot check
 
+# build only
+bash raspberry_pi/build.sh
+
 # build (if needed) + flash + verify boot
 bash raspberry_pi/flash.sh
 ```
 
 What `flash.sh` does:
 
-1. **Build** — `arduino-cli compile --fqbn esp8266:esp8266:d1_mini` with the
+1. **Build** — via `build.sh` (standalone: `tankie-build`): `arduino-cli
+   compile --fqbn esp8266:esp8266:d1_mini` with the
    global flag `--build-property "build.extra_flags=-DELEGANTOTA_USE_ASYNC_WEBSERVER=1"`.
    That flag is **required**: ElegantOTA and the core's `WebServer` both define
    an `HTTP_GET` enum, and this is the library's documented toggle to drop
@@ -133,6 +138,10 @@ What `flash.sh` does:
    at 115200 baud; `Hash of data verified` is the success marker.
 3. **Verify** — reads the ESP's UART0 console and expects the firmware's
    `Battery Voltage: …` stream, proving the new firmware actually booted.
+
+`setup.sh` installs both helpers on a fresh system as **`tankie-build`** and
+**`tankie-flash`** in `/usr/local/bin`, so the ESP can be built and flashed
+from the Pi without the repo checkout in the way.
 
 Notes:
 

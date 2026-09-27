@@ -20,6 +20,11 @@
 # https://github.com/a-i-a-d/Tankie/issues/1) and reloads the driver /
 # restarts NetworkManager to bring it back — no reboot needed.
 #
+# And it installs the ESP8266 (D1 Mini) firmware helpers as
+# `tankie-build` and `tankie-flash` in /usr/local/bin, so a fresh system can
+# build and flash the ESP from the Pi out of the box (see
+# https://github.com/a-i-a-d/Tankie/issues/21).
+#
 # Usage:
 #   sudo bash setup.sh
 #
@@ -41,6 +46,9 @@ SERVICE="mediamtx.service"
 WATCHDOG_SERVICE="wlan0-watchdog.service"
 WATCHDOG_SCRIPT="/usr/local/bin/wlan0-watchdog.sh"
 WATCHDOG_TIMER="wlan0-watchdog.timer"
+ESP_BUILD_SCRIPT="/usr/local/bin/tankie-build"
+ESP_FLASH_SCRIPT="/usr/local/bin/tankie-flash"
+ESP_ENV="/etc/tankie/flash.env"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_CONF="${SCRIPT_DIR}/mediamtx.yml"
@@ -48,6 +56,8 @@ SRC_SERVICE="${SCRIPT_DIR}/mediamtx.service"
 SRC_WATCHDOG="${SCRIPT_DIR}/wlan0-watchdog.service"
 SRC_WATCHDOG_SCRIPT="${SCRIPT_DIR}/wlan0-watchdog.sh"
 SRC_TIMER="${SCRIPT_DIR}/wlan0-watchdog.timer"
+SRC_ESP_BUILD="${SCRIPT_DIR}/build.sh"
+SRC_ESP_FLASH="${SCRIPT_DIR}/flash.sh"
 
 log()  { printf '\033[1;32m[setup]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
@@ -139,7 +149,41 @@ systemctl enable "${WATCHDOG_TIMER}" >/dev/null 2>&1
 systemctl restart "${WATCHDOG_TIMER}"
 sleep 1
 
-# --- 7. verify -------------------------------------------------------------
+# --- 7. install the ESP8266 build/flash helpers ----------------------------
+log "Installing ESP8266 firmware helpers (tankie-build, tankie-flash)"
+[ -f "${SRC_ESP_BUILD}" ] || die "build.sh not found next to setup.sh: ${SRC_ESP_BUILD}"
+[ -f "${SRC_ESP_FLASH}" ] || die "flash.sh not found next to setup.sh: ${SRC_ESP_FLASH}"
+install -m 0755 "${SRC_ESP_BUILD}" "${ESP_BUILD_SCRIPT}"
+install -m 0755 "${SRC_ESP_FLASH}" "${ESP_FLASH_SCRIPT}"
+
+# The installed scripts resolve the sketch relative to their own location,
+# which is /usr/local/bin — so point them at the canonical checkout.
+# Existing env files are preserved (idempotent re-runs).
+mkdir -p /var/lib/tankie/flash "$(dirname "${ESP_ENV}")"
+if [ ! -f "${ESP_ENV}" ]; then
+  # Prefer the checkout this setup.sh was run from, then common locations.
+  if [ -f "${SCRIPT_DIR}/../tankie/tankie.ino" ]; then
+    CHECKOUT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+  elif [ -d /opt/tankie ]; then
+    CHECKOUT=/opt/tankie
+  elif [ -d /root/Tankie ]; then
+    CHECKOUT=/root/Tankie
+  else
+    CHECKOUT=/opt/tankie
+    warn "No Tankie checkout found — adjust TANKIE_SKETCH_DIR in ${ESP_ENV} once you clone the repo"
+  fi
+  cat > "${ESP_ENV}" <<ENVEOF
+# Tankie ESP8266 build/flash overrides (sourced by tankie-build / tankie-flash)
+TANKIE_SKETCH_DIR=${CHECKOUT}/tankie
+TANKIE_FLASH_DIR=/var/lib/tankie/flash
+ENVEOF
+  chmod 0644 "${ESP_ENV}"
+  log "ESP8266 env written: ${ESP_ENV} (TANKIE_SKETCH_DIR=${CHECKOUT}/tankie)"
+else
+  log "ESP8266 env already present: ${ESP_ENV} (left untouched)"
+fi
+
+# --- 8. verify -------------------------------------------------------------
 log "Verifying installation..."
 "${BIN}" --version | head -1
 log "Validating configuration..."
@@ -155,6 +199,12 @@ if systemctl is-active --quiet "${WATCHDOG_TIMER}"; then
   log "WiFi watchdog timer is active (checks wlan0 every 60s, first check 90s after boot)."
 else
   warn "WiFi watchdog timer is not active — check: systemctl status ${WATCHDOG_TIMER}"
+fi
+
+if [ -x "${ESP_BUILD_SCRIPT}" ] && [ -x "${ESP_FLASH_SCRIPT}" ]; then
+  log "ESP8266 helpers installed: ${ESP_BUILD_SCRIPT}, ${ESP_FLASH_SCRIPT}"
+else
+  warn "ESP8266 helpers missing — check /usr/local/bin/tankie-{build,flash}"
 fi
 
 # Show the live path status (camera will be 'ready' only once a client connects)
@@ -179,6 +229,8 @@ Next steps / how to use:
   * WiFi watchdog status:  systemctl status wlan0-watchdog.timer
   * WiFi watchdog logs  :  journalctl -u wlan0-watchdog -f
   * Disable the watchdog:  systemctl disable --now wlan0-watchdog.timer
+  * Build ESP8266 fw    :  tankie-build
+  * Flash ESP8266 fw    :  tankie-flash     (D1 Mini on /dev/ttyUSB0)
 
 Note: if you just enabled the camera for the first time, reboot once so the
       camera driver loads and /dev/video0 appears.
