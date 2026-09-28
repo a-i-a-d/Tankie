@@ -1,0 +1,60 @@
+# CI for the Tankie ESP8266 firmware (issue #5).
+#
+# Two jobs, both on push/PR:
+#
+#   unit-tests     - host-side unit tests (g++, no ESP toolchain): compiles
+#                    the pure firmware modules against tests/shims/Arduino.h
+#                    and runs the assertion suite (tests/run_tests.sh).
+#
+#   firmware-build - a compile-check guard: builds the REAL sketch with
+#                    arduino-cli + the esp8266 core, using the exact FQBN
+#                    and flags that raspberry_pi/build.sh uses
+#                    (esp8266:esp8266:d1_mini, -DELEGANTOTA_USE_ASYNC_WEBSERVER=1).
+#                    This keeps the sketch from breaking the build path that
+#                    the tank Pi uses (PR #25).
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install host compiler
+        run: sudo apt-get update && sudo apt-get install -y g++
+      - name: Run host unit tests
+        run: bash tests/run_tests.sh
+
+  firmware-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install arduino-cli
+        uses: arduino/setup-arduino-cli@v1
+        with:
+          version: latest
+      - name: Install the esp8266 core (pinned)
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install esp8266:esp8266@3.1.2
+      - name: Install the external libraries
+        run: |
+          arduino-cli lib update-index
+          arduino-cli lib install ElegantOTA
+          arduino-cli lib install ESPAsyncWebServer
+          arduino-cli lib install AsyncTCP
+          arduino-cli lib install Servo
+      - name: Compile the sketch (same FQBN + flags as raspberry_pi/build.sh)
+        run: |
+          arduino-cli compile \
+            --fqbn esp8266:esp8266:d1_mini \
+            --build-property "build.extra_flags=-DELEGANTOTA_USE_ASYNC_WEBSERVER=1" \
+            --export-binaries --output-dir /tmp/tankie-flash tankie
+      - name: Check the firmware binary
+        run: |
+          ls -l /tmp/tankie-flash/tankie.ino.bin
+          test -s /tmp/tankie-flash/tankie.ino.bin
