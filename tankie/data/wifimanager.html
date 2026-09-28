@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Tankie WiFi Config</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background-color: #101010;
+            color: white;
+            font-family: Arial, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            background-color: #1a1a2e;
+            border-radius: 12px;
+            padding: 32px;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        }
+        h1 {
+            text-align: center;
+            font-size: 1.4rem;
+            margin-bottom: 8px;
+            color: #269900;
+        }
+        .subtitle {
+            text-align: center;
+            font-size: 0.85rem;
+            opacity: 0.7;
+            margin-bottom: 24px;
+        }
+        .form-group {
+            margin-bottom: 16px;
+        }
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 0.9rem;
+            color: #aaa;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            background-color: #16213e;
+            color: white;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            font-size: 1rem;
+        }
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #269900;
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            background-color: #269900;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+        button:hover {
+            background-color: #1a7000;
+        }
+        .info {
+            text-align: center;
+            margin-top: 16px;
+            font-size: 0.8rem;
+            opacity: 0.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>&#128295; Tankie WiFi Setup</h1>
+        <p class="subtitle">
+            Enter your WiFi network details.<br>
+            The Tankie will reboot and connect automatically.
+        </p>
+        <form action="/" method="POST">
+            <div class="form-group">
+                <label for="ssid">WiFi SSID <span style="opacity:0.5">(required)</span></label>
+                <input type="text" id="ssid" name="ssid" required
+                       placeholder="e.g. pharzyte" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label for="pass">WiFi Password</label>
+                <input type="text" id="pass" name="pass"
+                       placeholder="Leave empty for open network" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label for="ip">Static IP <span style="opacity:0.5">(optional)</span></label>
+                <input type="text" id="ip" name="ip"
+                       placeholder="e.g. 192.168.178.100 &mdash; or leave empty for DHCP" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label for="gateway">Gateway <span style="opacity:0.5">(optional)</span></label>
+                <input type="text" id="gateway" name="gateway"
+                       placeholder="e.g. 192.168.178.1" autocomplete="off">
+            </div>
+            <button type="submit">Save &amp; Reboot</button>
+        </form>
+        <p class="info">
+            After saving, the Tankie reboots and tries to connect.<br>
+            If it fails, it returns to this setup page.
+        </p>
+    </div>
+</body>
+</html>

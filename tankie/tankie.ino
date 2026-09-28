@@ -2,6 +2,7 @@
 //#include "m8833.h"
 #include "tankdrive.h"
 #include "config.h"
+#include "wifimanager.h"
 #include <Servo.h>
 #include <ESP8266WiFi.h>
 #include <ESPAsyncTCP.h>
@@ -9,21 +10,6 @@
 #include <FS.h>
 #include "LittleFS.h"
 #include <time.h>
-
-#ifndef AP_MODE
-  // connect to existing AP
-  const char* ssid = STASSID;
-  const char* password = STAPSK;
-#endif
-
-#ifdef AP_MODE
-  // running own access point
-  const char* ssid = APSSID;
-  const char* password = APPSK;
-  IPAddress ip(192,168,4,1);
-  IPAddress gateway(192,168,4,1);
-  IPAddress subnet(255,255,255,0);
-#endif
 
 const char* PARAM_COMMAND = "command";
 const char* PARAM_SPEED = "speed";
@@ -38,6 +24,7 @@ Motor M2 = Motor(AIN1, AIN2, PWMA, offsetA, STBY);
 Motor M1 = Motor(BIN1, BIN2, PWMB, offsetB, STBY);
 
 AsyncWebServer server(80);
+AsyncWebServer configServer(8080);
 AsyncWebSocket ws("/ws");
 //M8833 M1(D1,D2);
 //M8833 M2(D4,D3);
@@ -45,6 +32,11 @@ AsyncWebSocket ws("/ws");
 TankDrive tank(&M1, &M2);
 Servo servoPan;
 Servo servoTilt;
+
+// WiFi configuration (STA with saved credentials, fallback config portal).
+// See wifimanager.h/.cpp - replaces the WiFiManager library, which
+// collides with ESPAsyncWebServer / ElegantOTA (see issue #21).
+WiFiManager wifiManager;
 
 float vin = 0.0;
 float R1 = 330000;
@@ -76,36 +68,35 @@ void setup() {
   Serial.println();
   Serial.println();
 
-  #ifndef AP_MODE
-  // connect to AP
-    Serial.print("Connecting to ");
-    Serial.println(ssid);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-      Serial.print(".");
-    }
-    Serial.println("");
-    Serial.println("WiFi connected");
-    Serial.println("IP address: ");
-    Serial.println(WiFi.localIP());
-  #endif
+  // WiFi: connect to the saved network (ssid.txt/pass.txt on LittleFS),
+  // or open the "tankie-esp" config portal AP (http://192.168.4.1:8080)
+  // when nothing is saved or the network is unreachable.
+  wifiManager.begin(APSSID, APPSK);
 
-  #ifdef AP_MODE
-    Serial.print("Configuring access point...");
-    WiFi.softAPConfig(ip, gateway, subnet); 
-    WiFi.softAP(ssid, password);
-    IPAddress myIP = WiFi.softAPIP();
-    Serial.print("AP IP address: ");
-    Serial.println(myIP);
-  #endif
-
+  // Port 80 always serves the tank control page (even in config mode, so the
+  // page can hint at the portal URL). The WiFi setup form itself lives on
+  // the dedicated config server below (port 8080).
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
   {
     Serial.println("requested /");
     request->send(LittleFS, "/index.html", String(), false, processor);
   });
+
+  // Config portal server (only meaningful while wifiManager.inConfigMode()):
+  // the WiFi setup form on a dedicated port, so it never collides with the
+  // tank control page or the ElegantOTA routes on port 80.
+  configServer.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
+  {
+    Serial.println("config portal: requested /");
+    request->send(LittleFS, "/wifimanager.html", "text/html");
+  });
+
+  configServer.on("/", HTTP_POST, [](AsyncWebServerRequest *request)
+  {
+    wifiManager.handleConfigPost(request);
+  });
+
+  configServer.onNotFound(notFound);
 
   server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(LittleFS, "/style.css", "text/css");
@@ -125,6 +116,7 @@ void setup() {
 
   server.onNotFound(notFound);
   server.begin();
+  configServer.begin();
 
   listDir("/");
 }
@@ -132,6 +124,7 @@ void setup() {
 void loop()
 {
   ElegantOTA.loop();
+  wifiManager.loop();
   ws.cleanupClients();
   if (millis() > batInterval + batTimer ) {
     batTimer = millis();
@@ -203,16 +196,12 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
         }
         else if (strcmp(token, "pan") == 0)
         {
-          //Serial.print("Set pan to");
           token = strtok(NULL, s);
-          //Serial.println(token);
           servoPan.write(atoi(token));
         }
         else if (strcmp(token, "tilt") == 0)
         {
-          //Serial.print("Set tilt to");
           token = strtok(NULL, s);
-          //Serial.println(token);
           servoTilt.write(atoi(token));
         }
         else
