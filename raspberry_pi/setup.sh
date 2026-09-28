@@ -20,6 +20,13 @@
 # https://github.com/a-i-a-d/Tankie/issues/1) and reloads the driver /
 # restarts NetworkManager to bring it back — no reboot needed.
 #
+# And it installs the ESP8266 (D1 Mini) toolchain (arduino-cli + the esp8266
+# core, which ships the xtensa compiler, esptool, and mklittlefs) plus the
+# firmware helpers `tankie-build` and `tankie-flash` in /usr/local/bin, so a
+# fresh system can build (firmware + LittleFS data partition) and flash the
+# ESP from the Pi out of the box (see
+# https://github.com/a-i-a-d/Tankie/issues/21).
+#
 # Usage:
 #   sudo bash setup.sh
 #
@@ -41,6 +48,9 @@ SERVICE="mediamtx.service"
 WATCHDOG_SERVICE="wlan0-watchdog.service"
 WATCHDOG_SCRIPT="/usr/local/bin/wlan0-watchdog.sh"
 WATCHDOG_TIMER="wlan0-watchdog.timer"
+ESP_BUILD_SCRIPT="/usr/local/bin/tankie-build"
+ESP_FLASH_SCRIPT="/usr/local/bin/tankie-flash"
+ESP_ENV="/etc/tankie/flash.env"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_CONF="${SCRIPT_DIR}/mediamtx.yml"
@@ -48,6 +58,8 @@ SRC_SERVICE="${SCRIPT_DIR}/mediamtx.service"
 SRC_WATCHDOG="${SCRIPT_DIR}/wlan0-watchdog.service"
 SRC_WATCHDOG_SCRIPT="${SCRIPT_DIR}/wlan0-watchdog.sh"
 SRC_TIMER="${SCRIPT_DIR}/wlan0-watchdog.timer"
+SRC_ESP_BUILD="${SCRIPT_DIR}/build.sh"
+SRC_ESP_FLASH="${SCRIPT_DIR}/flash.sh"
 
 log()  { printf '\033[1;32m[setup]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
@@ -139,7 +151,78 @@ systemctl enable "${WATCHDOG_TIMER}" >/dev/null 2>&1
 systemctl restart "${WATCHDOG_TIMER}"
 sleep 1
 
-# --- 7. verify -------------------------------------------------------------
+# --- 7. install the ESP8266 toolchain (arduino-cli + esp8266 core) ---------
+# build.sh needs arduino-cli (to compile) and the esp8266 core (which ships the
+# xtensa toolchain, esptool for flash.sh, and mklittlefs for the LittleFS data
+# partition). Install them on a fresh system so the ESP build/flash path is out
+# of the box. Best-effort: a network hiccup warns but does not abort the
+# mediamtx setup.
+ARDUINO_CLI="$(command -v arduino-cli || true)"
+if [ -z "${ARDUINO_CLI}" ]; then
+  log "arduino-cli not found — installing to /usr/local/bin …"
+  if command -v curl >/dev/null 2>&1; then
+    if curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh \
+        | BINDIR=/usr/local/bin sh; then
+      ARDUINO_CLI=/usr/local/bin/arduino-cli
+    else
+      warn "arduino-cli install failed — the ESP build/flash helpers will not work until you install it"
+    fi
+  else
+    warn "curl not available — cannot auto-install arduino-cli; install it manually for the ESP build/flash path"
+  fi
+fi
+[ -n "${ARDUINO_CLI}" ] || warn "arduino-cli still missing — skipping the esp8266 core install"
+
+if [ -n "${ARDUINO_CLI}" ]; then
+  # Register the esp8266 board index (idempotent; it is the arduino-cli default).
+  ESP8266_INDEX="http://arduino.esp8266.com/stable/package_esp8266com_index.json"
+  if ! "${ARDUINO_CLI}" config get board_manager.additional_urls 2>/dev/null | grep -qF "${ESP8266_INDEX}"; then
+    log "Adding the esp8266 board index to arduino-cli …"
+    "${ARDUINO_CLI}" config add board_manager.additional_urls "${ESP8266_INDEX}" \
+      || warn "could not add the esp8266 board index"
+  fi
+  # Install the esp8266 core (a no-op if already installed). This pulls in the
+  # xtensa toolchain, esptool, and mklittlefs that build.sh / flash.sh need.
+  log "Ensuring the esp8266 core is installed (arduino-cli core install esp8266:esp8266) …"
+  "${ARDUINO_CLI}" core install esp8266:esp8266 \
+    || warn "esp8266 core install failed — the ESP build/flash helpers will not work until you install it"
+fi
+
+# --- 8. install the ESP8266 build/flash helpers ----------------------------
+log "Installing ESP8266 firmware helpers (tankie-build, tankie-flash)"
+[ -f "${SRC_ESP_BUILD}" ] || die "build.sh not found next to setup.sh: ${SRC_ESP_BUILD}"
+[ -f "${SRC_ESP_FLASH}" ] || die "flash.sh not found next to setup.sh: ${SRC_ESP_FLASH}"
+install -m 0755 "${SRC_ESP_BUILD}" "${ESP_BUILD_SCRIPT}"
+install -m 0755 "${SRC_ESP_FLASH}" "${ESP_FLASH_SCRIPT}"
+
+# The installed scripts resolve the sketch relative to their own location,
+# which is /usr/local/bin — so point them at the canonical checkout.
+# Existing env files are preserved (idempotent re-runs).
+mkdir -p /var/lib/tankie/flash "$(dirname "${ESP_ENV}")"
+if [ ! -f "${ESP_ENV}" ]; then
+  # Prefer the checkout this setup.sh was run from, then common locations.
+  if [ -f "${SCRIPT_DIR}/../tankie/tankie.ino" ]; then
+    CHECKOUT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+  elif [ -d /opt/tankie ]; then
+    CHECKOUT=/opt/tankie
+  elif [ -d /root/Tankie ]; then
+    CHECKOUT=/root/Tankie
+  else
+    CHECKOUT=/opt/tankie
+    warn "No Tankie checkout found — adjust TANKIE_SKETCH_DIR in ${ESP_ENV} once you clone the repo"
+  fi
+  cat > "${ESP_ENV}" <<ENVEOF
+# Tankie ESP8266 build/flash overrides (sourced by tankie-build / tankie-flash)
+TANKIE_SKETCH_DIR=${CHECKOUT}/tankie
+TANKIE_FLASH_DIR=/var/lib/tankie/flash
+ENVEOF
+  chmod 0644 "${ESP_ENV}"
+  log "ESP8266 env written: ${ESP_ENV} (TANKIE_SKETCH_DIR=${CHECKOUT}/tankie)"
+else
+  log "ESP8266 env already present: ${ESP_ENV} (left untouched)"
+fi
+
+# --- 9. verify -------------------------------------------------------------
 log "Verifying installation..."
 "${BIN}" --version | head -1
 log "Validating configuration..."
@@ -155,6 +238,18 @@ if systemctl is-active --quiet "${WATCHDOG_TIMER}"; then
   log "WiFi watchdog timer is active (checks wlan0 every 60s, first check 90s after boot)."
 else
   warn "WiFi watchdog timer is not active — check: systemctl status ${WATCHDOG_TIMER}"
+fi
+
+if [ -x "${ESP_BUILD_SCRIPT}" ] && [ -x "${ESP_FLASH_SCRIPT}" ]; then
+  log "ESP8266 helpers installed: ${ESP_BUILD_SCRIPT}, ${ESP_FLASH_SCRIPT}"
+else
+  warn "ESP8266 helpers missing — check /usr/local/bin/tankie-{build,flash}"
+fi
+
+if ls -d "${HOME}"/.arduino15/packages/esp8266/tools/mklittlefs/*/mklittlefs >/dev/null 2>&1; then
+  log "esp8266 core + mklittlefs present (LittleFS data partition build ready)"
+else
+  warn "esp8266 core / mklittlefs not found — the LittleFS data partition build will be skipped until you run: arduino-cli core install esp8266:esp8266"
 fi
 
 # Show the live path status (camera will be 'ready' only once a client connects)
@@ -179,6 +274,8 @@ Next steps / how to use:
   * WiFi watchdog status:  systemctl status wlan0-watchdog.timer
   * WiFi watchdog logs  :  journalctl -u wlan0-watchdog -f
   * Disable the watchdog:  systemctl disable --now wlan0-watchdog.timer
+  * Build ESP8266 fw    :  tankie-build     (firmware + LittleFS data partition)
+  * Flash ESP8266 fw    :  tankie-flash     (D1 Mini on /dev/ttyUSB0)
 
 Note: if you just enabled the camera for the first time, reboot once so the
       camera driver loads and /dev/video0 appears.
