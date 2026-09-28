@@ -13,6 +13,7 @@
 #   bash build.sh                    # sketch defaults to <repo>/tankie
 #   TANKIE_SKETCH_DIR=/path/to/sketch bash build.sh
 #   TANKIE_FLASH_DIR=/custom/out bash build.sh
+#   ARDUINO_JOBS=<n> bash build.sh     # override parallel compile jobs (0 = auto)
 #
 # Output (both land in the same dir):
 #   ${TANKIE_FLASH_DIR:-/tmp/tankie-flash}/tankie.ino.bin        (firmware)
@@ -31,6 +32,18 @@ set -euo pipefail
 # This single global flag is the library's documented toggle and fixes it.
 FQBN="esp8266:esp8266:d1_mini"
 EXTRA_FLAGS="-DELEGANTOTA_USE_ASYNC_WEBSERVER=1"
+
+# Parallel jobs for arduino-cli compile (0 = auto: one job per CPU core).
+# Low-RAM boxes (e.g. a Pi Zero 2 W with 416 MB) can crash under the default
+# parallel build (observed on PR #26) — cap at one job when total RAM is
+# 512 MB or less. Override with ARDUINO_JOBS=<n> if needed.
+JOBS="${ARDUINO_JOBS:-0}"
+if [ "${JOBS}" -eq 0 ]; then
+  TOTAL_KB="$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || true)"
+  if [ -n "${TOTAL_KB}" ] && [ "${TOTAL_KB}" -le 524288 ]; then
+    JOBS=1
+  fi
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -66,10 +79,11 @@ HAVE_MKLITTLEFS=0
 [ -n "${MKLITTLEFS}" ] && [ -x "${MKLITTLEFS}" ] && HAVE_MKLITTLEFS=1
 
 # --- build (firmware) --------------------------------------------------------
-log "building ${FQBN} (extra flags: ${EXTRA_FLAGS}) …"
+log "building ${FQBN} (extra flags: ${EXTRA_FLAGS}, jobs: ${JOBS}) …"
 log "sketch: ${SKETCH_DIR}"
 mkdir -p "${OUT_DIR}"
 arduino-cli compile --fqbn "${FQBN}" \
+  --jobs "${JOBS}" \
   --build-property "build.extra_flags=${EXTRA_FLAGS}" \
   --export-binaries --output-dir "${OUT_DIR}" "${SKETCH_DIR}"
 [ -f "${BIN}" ] || die "build did not produce ${BIN}"
