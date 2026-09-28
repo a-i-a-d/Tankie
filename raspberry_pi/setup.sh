@@ -20,9 +20,11 @@
 # https://github.com/a-i-a-d/Tankie/issues/1) and reloads the driver /
 # restarts NetworkManager to bring it back — no reboot needed.
 #
-# And it installs the ESP8266 (D1 Mini) firmware helpers as
-# `tankie-build` and `tankie-flash` in /usr/local/bin, so a fresh system can
-# build and flash the ESP from the Pi out of the box (see
+# And it installs the ESP8266 (D1 Mini) toolchain (arduino-cli + the esp8266
+# core, which ships the xtensa compiler, esptool, and mklittlefs) plus the
+# firmware helpers `tankie-build` and `tankie-flash` in /usr/local/bin, so a
+# fresh system can build (firmware + LittleFS data partition) and flash the
+# ESP from the Pi out of the box (see
 # https://github.com/a-i-a-d/Tankie/issues/21).
 #
 # Usage:
@@ -149,7 +151,44 @@ systemctl enable "${WATCHDOG_TIMER}" >/dev/null 2>&1
 systemctl restart "${WATCHDOG_TIMER}"
 sleep 1
 
-# --- 7. install the ESP8266 build/flash helpers ----------------------------
+# --- 7. install the ESP8266 toolchain (arduino-cli + esp8266 core) ---------
+# build.sh needs arduino-cli (to compile) and the esp8266 core (which ships the
+# xtensa toolchain, esptool for flash.sh, and mklittlefs for the LittleFS data
+# partition). Install them on a fresh system so the ESP build/flash path is out
+# of the box. Best-effort: a network hiccup warns but does not abort the
+# mediamtx setup.
+ARDUINO_CLI="$(command -v arduino-cli || true)"
+if [ -z "${ARDUINO_CLI}" ]; then
+  log "arduino-cli not found — installing to /usr/local/bin …"
+  if command -v curl >/dev/null 2>&1; then
+    if curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh \
+        | BINDIR=/usr/local/bin sh; then
+      ARDUINO_CLI=/usr/local/bin/arduino-cli
+    else
+      warn "arduino-cli install failed — the ESP build/flash helpers will not work until you install it"
+    fi
+  else
+    warn "curl not available — cannot auto-install arduino-cli; install it manually for the ESP build/flash path"
+  fi
+fi
+[ -n "${ARDUINO_CLI}" ] || warn "arduino-cli still missing — skipping the esp8266 core install"
+
+if [ -n "${ARDUINO_CLI}" ]; then
+  # Register the esp8266 board index (idempotent; it is the arduino-cli default).
+  ESP8266_INDEX="http://arduino.esp8266.com/stable/package_esp8266com_index.json"
+  if ! "${ARDUINO_CLI}" config get board_manager.additional_urls 2>/dev/null | grep -qF "${ESP8266_INDEX}"; then
+    log "Adding the esp8266 board index to arduino-cli …"
+    "${ARDUINO_CLI}" config add board_manager.additional_urls "${ESP8266_INDEX}" \
+      || warn "could not add the esp8266 board index"
+  fi
+  # Install the esp8266 core (a no-op if already installed). This pulls in the
+  # xtensa toolchain, esptool, and mklittlefs that build.sh / flash.sh need.
+  log "Ensuring the esp8266 core is installed (arduino-cli core install esp8266:esp8266) …"
+  "${ARDUINO_CLI}" core install esp8266:esp8266 \
+    || warn "esp8266 core install failed — the ESP build/flash helpers will not work until you install it"
+fi
+
+# --- 8. install the ESP8266 build/flash helpers ----------------------------
 log "Installing ESP8266 firmware helpers (tankie-build, tankie-flash)"
 [ -f "${SRC_ESP_BUILD}" ] || die "build.sh not found next to setup.sh: ${SRC_ESP_BUILD}"
 [ -f "${SRC_ESP_FLASH}" ] || die "flash.sh not found next to setup.sh: ${SRC_ESP_FLASH}"
@@ -183,7 +222,7 @@ else
   log "ESP8266 env already present: ${ESP_ENV} (left untouched)"
 fi
 
-# --- 8. verify -------------------------------------------------------------
+# --- 9. verify -------------------------------------------------------------
 log "Verifying installation..."
 "${BIN}" --version | head -1
 log "Validating configuration..."
@@ -205,6 +244,12 @@ if [ -x "${ESP_BUILD_SCRIPT}" ] && [ -x "${ESP_FLASH_SCRIPT}" ]; then
   log "ESP8266 helpers installed: ${ESP_BUILD_SCRIPT}, ${ESP_FLASH_SCRIPT}"
 else
   warn "ESP8266 helpers missing — check /usr/local/bin/tankie-{build,flash}"
+fi
+
+if ls -d "${HOME}"/.arduino15/packages/esp8266/tools/mklittlefs/*/mklittlefs >/dev/null 2>&1; then
+  log "esp8266 core + mklittlefs present (LittleFS data partition build ready)"
+else
+  warn "esp8266 core / mklittlefs not found — the LittleFS data partition build will be skipped until you run: arduino-cli core install esp8266:esp8266"
 fi
 
 # Show the live path status (camera will be 'ready' only once a client connects)
@@ -229,7 +274,7 @@ Next steps / how to use:
   * WiFi watchdog status:  systemctl status wlan0-watchdog.timer
   * WiFi watchdog logs  :  journalctl -u wlan0-watchdog -f
   * Disable the watchdog:  systemctl disable --now wlan0-watchdog.timer
-  * Build ESP8266 fw    :  tankie-build
+  * Build ESP8266 fw    :  tankie-build     (firmware + LittleFS data partition)
   * Flash ESP8266 fw    :  tankie-flash     (D1 Mini on /dev/ttyUSB0)
 
 Note: if you just enabled the camera for the first time, reboot once so the

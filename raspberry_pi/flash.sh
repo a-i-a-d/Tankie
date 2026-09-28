@@ -8,8 +8,9 @@
 #
 # Steps:
 #   1. Build the sketch via build.sh (arduino-cli, esp8266 core) unless a
-#      fresh binary already exists (rebuild only when the sources are newer).
-#   2. Flash the merged image with esptool (from the esp8266 core package).
+#      fresh binaries already exist (rebuild only when the sources are newer).
+#   2. Flash the merged image AND the LittleFS data partition with esptool
+#      (both ship from the esp8266 core package).
 #   3. Verify the chip rebooted and is running the new firmware by reading
 #      its UART0 console (the firmware streams "Battery Voltage: …" lines).
 #
@@ -41,6 +42,7 @@ fi
 SKETCH_DIR="${TANKIE_SKETCH_DIR:-${REPO_ROOT}/tankie}"
 OUT_DIR="${TANKIE_FLASH_DIR:-/tmp/tankie-flash}"   # stable dir -> shared with build.sh
 BIN="${OUT_DIR}/tankie.ino.bin"
+DATA_BIN="${OUT_DIR}/tankie.ino.data.bin"
 BUILD_SH="${SCRIPT_DIR}/build.sh"
 
 log()  { printf '\033[1;32m[flash]\033[0m %s\n' "$*"; }
@@ -58,20 +60,21 @@ ESPTOOL="$(ls -d "${HOME}"/.arduino15/packages/esp8266/hardware/esp8266/*/tools/
 [ -n "${ESPTOOL}" ] && [ -f "${ESPTOOL}" ] || die "esptool.py not found — run: arduino-cli core install esp8266:esp8266"
 
 # --- 1. build (skip if the binary is newer than every sketch source) --------
-LATEST_SOURCE="$(ls -t "${SKETCH_DIR}"/*.ino "${SKETCH_DIR}"/*.h "${SKETCH_DIR}"/*.cpp 2>/dev/null | head -1)"
+LATEST_SOURCE="$(ls -t "${SKETCH_DIR}"/*.ino "${SKETCH_DIR}"/*.h "${SKETCH_DIR}"/*.cpp "${SKETCH_DIR}"/data/* 2>/dev/null | head -1)"
 if [ -f "${BIN}" ] && [ -n "${LATEST_SOURCE}" ] && [ ! "${LATEST_SOURCE}" -nt "${BIN}" ]; then
   log "reusing existing build ${BIN} (newer than sources)"
 else
   bash "${BUILD_SH}"
   [ -f "${BIN}" ] || die "build did not produce ${BIN}"
 fi
+[ -f "${DATA_BIN}" ] || die "data partition ${DATA_BIN} missing — run build.sh (needs the esp8266 core's mklittlefs)"
 
 # --- 2. flash ----------------------------------------------------------------
 # Default esptool reset (DTR/RTS) puts the ESP8266 into download mode and
 # hard-resets it afterwards — this is exactly what the CH340 wiring provides.
 log "flashing ${PORT} @ ${BAUD} baud …"
 python3 "${ESPTOOL}" --chip esp8266 --port "${PORT}" --baud "${BAUD}" \
-  write_flash 0x0 "${BIN}"
+  write_flash 0x0 "${BIN}" 0x200000 "${DATA_BIN}"
 
 # --- 3. boot verification ----------------------------------------------------
 log "waiting for the ESP8266 to reboot and reading its console …"

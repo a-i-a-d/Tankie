@@ -13,8 +13,8 @@ separate box bolted on top whose only job here is to turn the CSI camera
 | File | Purpose |
 |------|---------|
 | `setup.sh` | Idempotent installer. Downloads the pinned, self-contained `mediamtx` binary, enables the CSI camera, installs the config + systemd service, and starts streaming. Run with `sudo bash setup.sh`. |
-| `build.sh` | Build the ESP8266 (D1 Mini) firmware with arduino-cli (esp8266 core) → `tankie.ino.bin`. Run with `bash build.sh`. |
-| `flash.sh` | Build (via `build.sh`) + flash + boot-verify the ESP8266 (D1 Mini) firmware over USB (CH340 → `/dev/ttyUSB0`). Run with `bash flash.sh`. |
+| `build.sh` | Build the ESP8266 (D1 Mini) firmware **and the LittleFS data partition** with arduino-cli (esp8266 core) → `tankie.ino.bin` + `tankie.ino.data.bin`. Run with `bash build.sh`. |
+| `flash.sh` | Build (via `build.sh`) + flash the firmware **and the LittleFS data partition** + boot-verify the ESP8266 (D1 Mini) over USB (CH340 → `/dev/ttyUSB0`). Run with `bash flash.sh`. |
 | `mediamtx.yml` | The mediamtx configuration: two on-demand streams from the one camera (`cam` 1080p30 for humans, `cam_low` 480p15 for the AI). |
 | `mediamtx.service` | systemd unit that runs `mediamtx` as a non-root user and keeps it alive. |
 | `wlan0-watchdog.service` | One-shot recovery unit: if `wlan0` is missing, reloads the `brcmfmac` driver (fallback: restarts NetworkManager). Never reboots. |
@@ -125,23 +125,34 @@ bash raspberry_pi/flash.sh
 
 What `flash.sh` does:
 
-1. **Build** — via `build.sh` (standalone: `tankie-build`): `arduino-cli
-   compile --fqbn esp8266:esp8266:d1_mini` with the
-   global flag `--build-property "build.extra_flags=-DELEGANTOTA_USE_ASYNC_WEBSERVER=1"`.
-   That flag is **required**: ElegantOTA and the core's `WebServer` both define
-   an `HTTP_GET` enum, and this is the library's documented toggle to drop
-   one. The build produces the merged image `tankie.ino.bin` (≈ 382 kB,
-   bootloader magic `0xE9`) — the single file you `write_flash 0x0`.
-   Re-runs reuse the binary while it is newer than the sources.
-2. **Flash** — `esptool.py --chip esp8266 write_flash 0x0 tankie.ino.bin`
-   (esptool ships inside the esp8266 core package). A full flash takes ~35 s
-   at 115200 baud; `Hash of data verified` is the success marker.
+1. **Build** — via `build.sh` (standalone: `tankie-build`):
+   - **Firmware:** `arduino-cli compile --fqbn esp8266:esp8266:d1_mini` with
+     the global flag `--build-property
+     "build.extra_flags=-DELEGANTOTA_USE_ASYNC_WEBSERVER=1"`. That flag is
+     **required**: ElegantOTA and the core's `WebServer` both define an
+     `HTTP_GET` enum, and this is the library's documented toggle to drop one.
+     Produces the merged image `tankie.ino.bin` (≈ 382 kB, bootloader magic
+     `0xE9`).
+   - **LittleFS data partition:** the firmware serves its web UI (`tankie/data/`)
+     from a LittleFS partition, so `build.sh` also packs that directory into
+     `tankie.ino.data.bin` with the core's `mklittlefs` (page 256 / block 8192 /
+     size 2072576 — the D1 Mini's default 4 MB, FS:2 MB layout, matching what the
+     core's linker script bakes into the firmware).
+   - Re-runs reuse the binaries while they are newer than the sources (including
+     `tankie/data/`).
+2. **Flash** — `esptool.py --chip esp8266 write_flash 0x0 tankie.ino.bin
+   0x200000 tankie.ino.data.bin` (esptool ships inside the esp8266 core
+   package): the firmware at `0x0` and the LittleFS data partition at
+   `0x200000`. A full flash takes ~45 s at 115200 baud; `Hash of data
+   verified` is the success marker.
 3. **Verify** — reads the ESP's UART0 console and expects the firmware's
    `Battery Voltage: …` stream, proving the new firmware actually booted.
 
-`setup.sh` installs both helpers on a fresh system as **`tankie-build`** and
-**`tankie-flash`** in `/usr/local/bin`, so the ESP can be built and flashed
-from the Pi without the repo checkout in the way.
+`setup.sh` installs the toolchain (arduino-cli + the esp8266 core, which ships
+the xtensa compiler, esptool, and `mklittlefs`) and both helpers on a fresh
+system as **`tankie-build`** and **`tankie-flash`** in `/usr/local/bin`, so the
+ESP can be built (firmware + LittleFS data partition) and flashed from the Pi
+without the repo checkout in the way.
 
 Notes:
 
