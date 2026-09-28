@@ -2,6 +2,7 @@
 //#include "m8833.h"
 #include "tankdrive.h"
 #include "config.h"
+#include "batt.h"
 #include "wifimanager.h"
 #include <Servo.h>
 #include <ESP8266WiFi.h>
@@ -43,7 +44,6 @@ float R1 = 330000;
 float R2 = 33000;
 long batInterval = 1000;
 long batTimer;
-long readTimer=0;
 
 
 void setup() {
@@ -144,23 +144,6 @@ void notFound(AsyncWebServerRequest *request) {
 String processor(const String &var)
 {
   return String("unknown");
-}
-
-float getBatVoltage(float R1, float R2)
-{
-  float Tvoltage=0.0;
-  float Vvalue=0.0,Rvalue=0.0;
-
-  for(unsigned int i=0;i<10;i++)
-  {
-    readTimer = millis();
-    Vvalue=Vvalue+analogRead(BAT);         //Read analog Voltage
-    delay(1);
-  }
-  Vvalue=(float)Vvalue/10.0;
-  Rvalue = (Vvalue * 3.3) / 1023.0;
-  Tvoltage = Rvalue / (R2/(R1+R2));
-  return(Tvoltage);
 }
 
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {

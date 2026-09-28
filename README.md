@@ -103,6 +103,37 @@ Connect to __http://<ip_of_tankie>__ address with a browser. You should see a co
 ## AI Usage
 Still WIP
 
+## Testing
+The ESP8266 firmware logic is covered by a host-side unit-test suite (no ESP
+toolchain needed) in [tests/](tests/), plus a CI compile-check for the full
+sketch in [.github/workflows/tests.yml](.github/workflows/tests.yml):
+
+- `tests/test_tankdrive.cpp` - the full branch matrix of `TankDrive::updateMotors()`
+  (stop / fw / bw x straight / left / right, partial steer, boundary values),
+  asserting the real `config.h` H-bridge pins (PWM + In1/In2 direction)
+- `tests/test_motor.cpp` - `Motor::drive/brake/standby`, the offset
+  multiplication, and the `forward/back/left/right/brake` free functions
+- `tests/test_bat_voltage.cpp` - the battery voltage-divider math
+  (`getBatVoltage()`, extracted from `tankie.ino` into [tankie/batt.cpp](tankie/batt.cpp))
+
+Run it locally (any machine with g++):
+
+```sh
+bash tests/run_tests.sh
+```
+
+The tests compile the real firmware `.cpp` files against a minimal Arduino
+shim ([tests/shims/Arduino.h](tests/shims/Arduino.h)) and exit non-zero on
+any failure. The `firmware-build` CI job additionally compiles the complete
+sketch with arduino-cli (esp8266 core 3.1.2, `esp8266:esp8266:d1_mini`,
+`-DELEGANTOTA_USE_ASYNC_WEBSERVER=1`) so the sketch can never break the
+build/flash path used on the tank Pi.
+
+Not covered (intentionally): the WebSocket protocol handling in `tankie.ino`
+(it needs shims for the 7 network libraries - follow-up after the
+JSON-protocol refactor in [#7](https://github.com/a-i-a-d/Tankie/issues/7))
+and hardware-in-the-loop / OTA behavior.
+
 ## Projects used
 - [joy.js](https://github.com/bobboteck/JoyStick)
 - [SparkFun TB6612 library](https://github.com/sparkfun/SparkFun_TB6612FNG_Arduino_Library)
