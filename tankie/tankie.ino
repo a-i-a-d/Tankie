@@ -1,3 +1,7 @@
+// NOTE: This sketch uses the async web stack (AsyncWebServer / AsyncWebSocket).
+// ElegantOTA must therefore be built in async mode. That is a per-library
+// compile flag: build with -DELEGANTOTA_USE_ASYNC_WEBSERVER=1 (see README /
+// arduino-cli --build-property "compiler.cpp.extra_flags=-DELEGANTOTA_USE_ASYNC_WEBSERVER=1").
 #include <ElegantOTA.h>
 //#include "m8833.h"
 #include "tankdrive.h"
@@ -50,6 +54,19 @@ float R2 = 33000;
 SerialProto serialProto(&tank, &servoPan, &servoTilt, getBatVoltage, R1, R2);
 long batInterval = 1000;
 long batTimer;
+
+// Current state (updated by the websocket handler, broadcast to clients)
+int currentSpeed = 0;
+int currentSteer = 0;
+int currentPan = 90;
+int currentTilt = 90;
+long lastCommandMs = 0;
+
+// Safety watchdog: if no command arrives within this window the motors are
+// stopped and the servos return to center, so a lost/disconnected client can
+// never leave the tank driving unattended.
+const unsigned long COMMAND_TIMEOUT_MS = 5000;
+bool watchdogActive = false;
 
 
 void setup() {
@@ -142,7 +159,35 @@ void loop()
     // send battery Value to server
     Serial.print("Battery Voltage: ");
     Serial.println(vin);
-    ws.textAll(String("{\n\"battery\":")+String(vin)+String("\n}"));
+    // State feedback: battery + current speed/steer/pan/tilt, so a client
+    // (e.g. the AI) always knows the actual tank state.
+    String state = String("{\"battery\":") + String(vin)
+      + String(",\"speed\":") + String(currentSpeed)
+      + String(",\"steer\":") + String(currentSteer)
+      + String(",\"pan\":") + String(currentPan)
+      + String(",\"tilt\":") + String(currentTilt)
+      + String("}");
+    ws.textAll(state);
+  }
+
+  // Safety watchdog: stop the motors and recenter the camera if no command
+  // has been received for COMMAND_TIMEOUT_MS.
+  if (watchdogActive && (millis() - lastCommandMs) > COMMAND_TIMEOUT_MS) {
+    watchdogActive = false;
+    Serial.println("Watchdog: no command received, stopping motors and centering camera");
+    if (currentSpeed != 0 || currentSteer != 0) {
+      currentSpeed = 0;
+      currentSteer = 0;
+      tank.setSpeed(0);
+      tank.setSteer(0);
+    }
+    if (currentPan != 90 || currentTilt != 90) {
+      currentPan = 90;
+      currentTilt = 90;
+      servoPan.write(90);
+      servoTilt.write(90);
+    }
+    ws.textAll("{\"watchdog\":true,\"speed\":0,\"steer\":0,\"pan\":90,\"tilt\":90}");
   }
 }
 
@@ -178,24 +223,44 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
           //Serial.print("Set speed to");
           token = strtok(NULL, s);
           //Serial.println(token);
-          tank.setSpeed(atoi(token));
+          currentSpeed = atoi(token);
+          lastCommandMs = millis();
+          watchdogActive = (currentSpeed != 0);
+          tank.setSpeed(currentSpeed);
         }
         else if (strcmp(token, "steer") == 0)
         {
           //Serial.print("Set steer to");
           token = strtok(NULL, s);
           //Serial.println(token);
-          tank.setSteer(atoi(token));
+          currentSteer = atoi(token);
+          lastCommandMs = millis();
+          watchdogActive = (currentSpeed != 0);
+          tank.setSteer(currentSteer);
         }
         else if (strcmp(token, "pan") == 0)
         {
           token = strtok(NULL, s);
-          servoPan.write(atoi(token));
+          //Serial.println(token);
+          // Clamp to the servo range so out-of-range values cannot stall the servo
+          int pan = atoi(token);
+          if (pan < 0) pan = 0;
+          if (pan > 180) pan = 180;
+          currentPan = pan;
+          lastCommandMs = millis();
+          servoPan.write(currentPan);
         }
         else if (strcmp(token, "tilt") == 0)
         {
           token = strtok(NULL, s);
-          servoTilt.write(atoi(token));
+          //Serial.println(token);
+          // Clamp to the servo range so out-of-range values cannot stall the servo
+          int tilt = atoi(token);
+          if (tilt < 0) tilt = 0;
+          if (tilt > 180) tilt = 180;
+          currentTilt = tilt;
+          lastCommandMs = millis();
+          servoTilt.write(currentTilt);
         }
         else
         {
