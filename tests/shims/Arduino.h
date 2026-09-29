@@ -86,6 +86,7 @@ inline void pinMode(int pin, int mode) { (void)pin; (void)mode; }  // no-op on h
 extern int host_pwm[64];
 extern int host_adc[64];
 extern unsigned long host_adc_reads;   // analogRead() call counter (test hook)
+extern std::string host_serial_rx;   // Serial receive buffer (issue #29)
 inline void analogWrite(int pin, int value) {
   if (pin >= 0 && pin < 64) host_pwm[pin] = value;
 }
@@ -185,6 +186,44 @@ class SerialClass {
     return s.size();
   }
   std::string captured_;
+  // Receive-side (issue #29): available()/read() from host_serial_rx.
+ public:
+  int available() { return (int)host_serial_rx.size(); }
+  int read() {
+    if (host_serial_rx.empty()) return -1;
+    int c = (unsigned char)host_serial_rx[0];
+    host_serial_rx.erase(0, 1);
+    return c;
+  }
+ private:
 };
 
 extern SerialClass Serial;
+
+// ---------------------------------------------------------------------------
+// Servo: the subset of the esp8266 core's Servo API the firmware uses
+// (attach/write/read). Backed by a per-instance "last written angle" table
+// so tests can assert the servo actually moved (issue #29 pan/tilt).
+// ---------------------------------------------------------------------------
+class Servo {
+ public:
+  Servo() : pin_(-1), value_(0) {}
+  int attach(int pin) { pin_ = pin; return pin_ >= 0 ? 1 : 0; }
+  void write(int value) { value_ = value; }
+  int read() const { return value_; }
+  bool attached() const { return pin_ >= 0; }
+  void reset() { pin_ = -1; value_ = 0; }
+  int pin() const { return pin_; }
+
+ private:
+  int pin_;
+  int value_;
+};
+
+// ---------------------------------------------------------------------------
+// Serial receive: the SerialClass shim gains a small receive buffer +
+// available()/read() so SerialProto::readSerial() can be exercised. Tests
+// feed bytes with host_feed_serial() (defined below).
+// ---------------------------------------------------------------------------
+inline void host_feed_serial(const std::string& s) { host_serial_rx += s; }
+inline void host_clear_serial_rx() { host_serial_rx.clear(); }

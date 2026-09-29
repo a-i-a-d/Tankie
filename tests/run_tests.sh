@@ -26,6 +26,7 @@ MODULES=(
   tankie/tankdrive.cpp
   tankie/SparkFun_TB6612.cpp
   tankie/batt.cpp
+  tankie/serialproto.cpp
 )
 
 # Test files (one per module, plus the harness).
@@ -34,6 +35,7 @@ TESTS=(
   tests/test_tankdrive.cpp
   tests/test_motor.cpp
   tests/test_bat_voltage.cpp
+  tests/test_serialproto.cpp
 )
 
 echo "[run_tests] compiling: ${MODULES[*]}"

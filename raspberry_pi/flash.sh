@@ -85,7 +85,10 @@ try:
 except ImportError:
     sys.exit(3)   # pyserial missing -> skip check, don't fail the flash
 port = sys.argv[1]
-s = serial.Serial(port, 115200, timeout=1)
+# Issue #29: the firmware now runs at 921600 baud and emits a
+# {"type":"hello",...} JSON line on boot. The old firmware
+# (115200, "Battery Voltage" text) is still accepted as a fallback.
+s = serial.Serial(port, 921600, timeout=1)
 s.reset_input_buffer()
 end = time.time() + 12
 buf = b""
@@ -93,13 +96,14 @@ while time.time() < end:
     d = s.read(1024)
     if d:
         buf += d
-        if b"Battery Voltage" in buf:
+        if b"type":"hello" in buf or b"Battery Voltage" in buf:
             break
 s.close()
-sys.exit(0 if b"Battery Voltage" in buf else 1)
+ok = (b"type":"hello" in buf) or (b"Battery Voltage" in buf)
+sys.exit(0 if ok else 1)
 PY
 then
-  log "OK: flash verified — new firmware is up (console active)"
+  log "OK: flash verified — new firmware is up (hello / console active)"
 elif python3 -c "import serial" 2>/dev/null; then
   die "flash completed, but no firmware console output was seen — check the ESP power/UART"
 else
