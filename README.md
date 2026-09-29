@@ -103,6 +103,60 @@ Connect to __http://<ip_of_tankie>__ address with a browser. You should see a co
 ## AI Usage
 Still WIP
 
+
+## Serial control protocol (ESP8266 over /dev/ttyUSB0)
+The ESP8266 is controlled over the USB-serial link (`/dev/ttyUSB0` @ 921600 8N1)
+using a line-oriented JSON protocol (NDJSON) — see
+[issue #29](https://github.com/a-i-a-d/Tankie/issues/29). The WiFi/WebUI
+path above stays available as a fallback.
+
+Pi → ESP (commands):
+
+```json
+{"cmd":"drive","speed":50,"steer":0}
+{"cmd":"pan","angle":90}
+{"cmd":"tilt","angle":30}
+{"cmd":"stop"}
+```
+
+ESP → Pi (responses):
+
+```json
+{"type":"hello","proto":1,"fw":"v0.1-serial"}
+{"type":"ack","seq":1}
+{"type":"error","seq":2,"code":"range","field":"speed"}
+{"type":"watchdog"}
+{"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,"pan":90,"tilt":90}
+```
+
+Rules: strict validation + clamping on the ESP (speed/steer ±255, pan/tilt
+0–180); a command watchdog stops the motors if the link goes quiet
+(`SERIAL_WATCHDOG_MS`, compile-time in `tankie/config_serial.h`);
+seq-based acks so a dead link is detectable; a hello/proto handshake
+catches firmware/Pi mismatches. Non-JSON lines (debug output) are ignored.
+
+### Pi-side bridge (`raspberry_pi/serial_bridge/`)
+
+- `bridge.py` — daemon holding `/dev/ttyUSB0`: reader thread (NDJSON in,
+  seq/ack tracking, link health), writer thread (250 ms keep-alive
+  re-send of the active drive command), state store
+  (`/var/lib/tankie/state.json`), Unix socket (`/run/tankie/bridge.sock`).
+- `tankie-serial.py` — CLI: `drive --speed 50 --steer 0`, `pan 90`, `tilt 30`,
+  `stop`, `state`, `watchdog-test` (or `--raw` to talk to the port directly).
+- `config.yaml` — single config source (serial_port, baud, keepalive_ms,
+  ack_timeout_ms, state_file, socket_path).
+- `tankie-serial.service` — systemd unit (`Restart=always`, dialout group).
+- `setup-serial.sh` — idempotent installer (deps, udev rule, systemd).
+- `test_serial_proto.py` — raw-port protocol test (T1–T7 of the issue).
+
+```sh
+sudo bash raspberry_pi/serial_bridge/setup-serial.sh   # install + start
+raspberry_pi/serial_bridge/tankie-serial.py drive --speed 50 --steer 0
+raspberry_pi/serial_bridge/tankie-serial.py state
+python3 raspberry_pi/serial_bridge/test_serial_proto.py   # raw-port test
+```
+
+
 ## Testing
 The ESP8266 firmware logic is covered by a host-side unit-test suite (no ESP
 toolchain needed) in [tests/](tests/), plus a CI compile-check for the full

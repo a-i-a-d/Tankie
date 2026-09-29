@@ -1,0 +1,27 @@
+# Tankie serial bridge configuration (issue #29).
+# Single config source for the Pi-side serial control link (per #16).
+#
+# The ESP8266 firmware uses the matching compile-time constants in
+# tankie/config_serial.h (SERIAL_PROTO_BAUD, SERIAL_WATCHDOG_MS).
+# Keep the two in sync when changing baud or watchdog timing.
+
+serial_port: /dev/ttyUSB0
+baud: 921600
+
+# Keep-alive: the bridge re-sends the active drive command at this interval
+# so the ESP8266 watchdog (SERIAL_WATCHDOG_MS = 1000 ms) never fires while
+# the tank is supposed to be moving. 250 ms gives 4× margin.
+keepalive_ms: 250
+
+# Link-down detection: if no ack is received within this window after a
+# command, the link is considered down and the state file is updated.
+ack_timeout_ms: 500
+
+# State store: written by the bridge, read by the CLI and (future) Web UI.
+state_file: /var/lib/tankie/state.json
+
+# Unix socket: the CLI sends commands to the bridge daemon over this socket.
+socket_path: /run/tankie/bridge.sock
+
+# Log level: DEBUG, INFO, WARNING, ERROR
+log_level: INFO

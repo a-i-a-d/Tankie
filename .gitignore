@@ -2,3 +2,5 @@
 *.swp
 *.swo
 tests/build/
+__pycache__/
+*.pyc
