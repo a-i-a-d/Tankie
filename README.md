@@ -110,8 +110,8 @@ Connect to __http://<ip_of_tankie>__ address with a browser. You should see a co
 The [ai-control](ai-control/) folder contains the code that connects an AI to the tank (see [ai-control/README.md](ai-control/README.md)).
 
 ### Safety & state feedback
-- **Safety watchdog (firmware):** if the tank is driving and no command is received for 5 seconds, the motors are stopped and the pan/tilt camera is recentered automatically. A watchdog event is broadcast to all websocket clients as `{"watchdog":true,...}`.
-- **State feedback:** the periodic websocket broadcast now includes the current state in addition to the battery voltage: `{"battery":...,"speed":...,"steer":...,"pan":...,"tilt":...}`.
+- **Safety watchdog (firmware):** if the tank is driving and no command is received for 5 seconds, the motors are stopped and the pan/tilt camera is recentered automatically. A watchdog event is broadcast to all websocket clients as `{"type":"watchdog"}` (issue #32).
+- **State feedback:** the periodic websocket broadcast includes the current state in addition to the battery voltage, in the contract shape: `{"type":"state","seq":N,"battery":...,"speed":...,"steer":...,"pan":...,"tilt":...}` (issue #32).
 - **Continuous control (ai_control.py):** the drive commands (`speed`/`steer`) that were previously never sent are now transmitted, and a background control loop re-issues the active drive command every second so the tank keeps moving while the AI is thinking between frames.
 - **Autonomous drive profile:** AI-issued drive commands are clamped to `max_speed = 40` (see `AUTO_PROFILE` in `ai_control/LocalAI/ai_control.py`), slower than the manual joystick range, so a misbehaving model cannot drive the tank at full speed.
 - **Pan/tilt:** the firmware clamps `pan`/`tilt` values to the 0-180 servo range; the AI tools already use relative moves (`up`/`down`/`left`/`right`/`center`) around the 90-degree center position.

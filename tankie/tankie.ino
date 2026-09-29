@@ -17,12 +17,6 @@
 #include "LittleFS.h"
 #include <time.h>
 
-const char* PARAM_COMMAND = "command";
-const char* PARAM_SPEED = "speed";
-const char* PARAM_STEER = "steer";
-const char* PARAM_PAN = "pan";
-const char* PARAM_TILT = "tilt";
-
 const int offsetA = 1;
 const int offsetB = 1;
 
@@ -160,14 +154,9 @@ void loop()
     Serial.print("Battery Voltage: ");
     Serial.println(vin);
     // State feedback: battery + current speed/steer/pan/tilt, so a client
-    // (e.g. the AI) always knows the actual tank state.
-    String state = String("{\"battery\":") + String(vin)
-      + String(",\"speed\":") + String(currentSpeed)
-      + String(",\"steer\":") + String(currentSteer)
-      + String(",\"pan\":") + String(currentPan)
-      + String(",\"tilt\":") + String(currentTilt)
-      + String("}");
-    ws.textAll(state);
+    // (e.g. the AI) always knows the actual tank state. Contract shape
+    // (issue #32): {"type":"state","seq":N,"battery":...,"speed":...,...}.
+    broadcastState();
   }
 
   // Safety watchdog: stop the motors and recenter the camera if no command
@@ -187,7 +176,7 @@ void loop()
       servoPan.write(90);
       servoTilt.write(90);
     }
-    ws.textAll("{\"watchdog\":true,\"speed\":0,\"steer\":0,\"pan\":90,\"tilt\":90}");
+    broadcastWatchdog();
   }
 }
 
@@ -201,76 +190,193 @@ String processor(const String &var)
   return String("unknown");
 }
 
+// ---------------------------------------------------------------------------
+// WebSocket command handling (issue #32)
+//
+// The ESP /ws endpoint now speaks the JSON protocol contract (the same NDJSON
+// shapes as the serial link, tankie/serialproto.h) instead of the legacy
+// key=value dialect. The web UI (tankie/data/script.js) and the Pi bridge
+// both send:
+//   {"cmd":"drive","speed":N,"steer":M}
+//   {"cmd":"pan","angle":N}
+//   {"cmd":"tilt","angle":N}
+//   {"cmd":"stop"}
+// Non-JSON / unknown messages are logged and ignored (coexistence rule).
+// ---------------------------------------------------------------------------
+
+// Minimal JSON field extractor (dependency-free, same approach as
+// serialproto.cpp): find "key" and parse the following integer value.
+static bool wsJsonGetInt(const char* json, const char* key, int* out) {
+  if (!json || !key || !out) return false;
+  char pat[32];
+  size_t klen = strlen(key);
+  if (klen == 0 || klen >= sizeof(pat) - 2) return false;
+  pat[0] = '"';
+  memcpy(pat + 1, key, klen);
+  pat[1 + klen] = '"';
+  pat[2 + klen] = '\0';
+  const char* p = strstr(json, pat);
+  if (!p) return false;
+  p += klen + 2;   // past "key"
+  while (*p == ' ' || *p == '\t') p++;
+  if (*p != ':') return false;
+  p++;
+  while (*p == ' ' || *p == '\t') p++;
+  bool neg = false;
+  if (*p == '-') { neg = true; p++; }
+  else if (*p == '+') { p++; }
+  if (*p < '0' || *p > '9') return false;
+  long v = 0;
+  while (*p >= '0' && *p <= '9') { v = v * 10 + (*p - '0'); p++; }
+  *out = neg ? -(int)v : (int)v;
+  return true;
+}
+
+// Minimal JSON string-field extractor (for the "cmd" dispatch).
+static bool wsJsonGetString(const char* json, const char* key,
+                            char* out, size_t outSize) {
+  if (!json || !key || !out || outSize == 0) return false;
+  char pat[32];
+  size_t klen = strlen(key);
+  if (klen == 0 || klen >= sizeof(pat) - 2) return false;
+  pat[0] = '"';
+  memcpy(pat + 1, key, klen);
+  pat[1 + klen] = '"';
+  pat[2 + klen] = '\0';
+  const char* p = strstr(json, pat);
+  if (!p) return false;
+  p += klen + 2;
+  while (*p == ' ' || *p == '\t') p++;
+  if (*p != ':') return false;
+  p++;
+  while (*p == ' ' || *p == '\t') p++;
+  if (*p != '"') return false;   // must be a string value
+  p++;
+  size_t i = 0;
+  while (*p && *p != '"' && i < outSize - 1) {
+    if (*p == '\\' && *(p + 1)) { p++; }   // skip escape
+    out[i++] = *p++;
+  }
+  out[i] = '\0';
+  return (*p == '"');
+}
+
+// Apply a validated drive command (speed/steer) to the tank.
+static void wsApplyDrive(int speed, int steer) {
+  currentSpeed = speed;
+  currentSteer = steer;
+  tank.setSpeed(speed);
+  tank.setSteer(steer);
+  lastCommandMs = millis();
+  watchdogActive = (speed != 0 || steer != 0);
+}
+
+// Apply a validated pan/tilt angle to the servo (clamped to 0-180).
+static void wsApplyPan(int angle) {
+  if (angle < 0) angle = 0;
+  if (angle > 180) angle = 180;
+  currentPan = angle;
+  servoPan.write(angle);
+  lastCommandMs = millis();
+}
+
+static void wsApplyTilt(int angle) {
+  if (angle < 0) angle = 0;
+  if (angle > 180) angle = 180;
+  currentTilt = angle;
+  servoTilt.write(angle);
+  lastCommandMs = millis();
+}
+
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
   AwsFrameInfo *info = (AwsFrameInfo*)arg;
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
-
-    if (data != NULL)
-    {
+    if (data != NULL) {
       data[len] = 0;
-      const char s[2] = "=";
+      const char* msg = (const char*)data;
       Serial.print("Data received: ");
-      Serial.println((char*)data);
+      Serial.println(msg);
 
-      String message = String( (char *) data );
-      Serial.println(message);
+      // Only accept JSON objects (the protocol contract).
+      if (msg[0] != '{') {
+        Serial.println("Ignoring non-JSON websocket message");
+        return;
+      }
 
-      char *token = strtok((char*)data, s);
-      if (token != NULL)
-      {
-        if (strcmp(token, "speed") == 0)
-        {
-          //Serial.print("Set speed to");
-          token = strtok(NULL, s);
-          //Serial.println(token);
-          currentSpeed = atoi(token);
-          lastCommandMs = millis();
-          watchdogActive = (currentSpeed != 0);
-          tank.setSpeed(currentSpeed);
+      char cmd[16];
+      if (!wsJsonGetString(msg, "cmd", cmd, sizeof(cmd))) {
+        Serial.println("Ignoring websocket message without a cmd field");
+        return;
+      }
+
+      if (strcmp(cmd, "drive") == 0) {
+        int speed = 0, steer = 0;
+        bool hasSpeed = wsJsonGetInt(msg, "speed", &speed);
+        bool hasSteer = wsJsonGetInt(msg, "steer", &steer);
+        if (!hasSpeed && !hasSteer) {
+          Serial.println("drive: missing speed/steer");
+          return;
         }
-        else if (strcmp(token, "steer") == 0)
-        {
-          //Serial.print("Set steer to");
-          token = strtok(NULL, s);
-          //Serial.println(token);
-          currentSteer = atoi(token);
-          lastCommandMs = millis();
-          watchdogActive = (currentSpeed != 0);
-          tank.setSteer(currentSteer);
+        if (speed < -255 || speed > 255 || steer < -255 || steer > 255) {
+          Serial.println("drive: speed/steer out of range [-255, 255]");
+          return;
         }
-        else if (strcmp(token, "pan") == 0)
-        {
-          token = strtok(NULL, s);
-          //Serial.println(token);
-          // Clamp to the servo range so out-of-range values cannot stall the servo
-          int pan = atoi(token);
-          if (pan < 0) pan = 0;
-          if (pan > 180) pan = 180;
-          currentPan = pan;
-          lastCommandMs = millis();
-          servoPan.write(currentPan);
+        wsApplyDrive(speed, steer);
+      } else if (strcmp(cmd, "pan") == 0) {
+        int angle = 0;
+        if (!wsJsonGetInt(msg, "angle", &angle)) {
+          Serial.println("pan: missing angle");
+          return;
         }
-        else if (strcmp(token, "tilt") == 0)
-        {
-          token = strtok(NULL, s);
-          //Serial.println(token);
-          // Clamp to the servo range so out-of-range values cannot stall the servo
-          int tilt = atoi(token);
-          if (tilt < 0) tilt = 0;
-          if (tilt > 180) tilt = 180;
-          currentTilt = tilt;
-          lastCommandMs = millis();
-          servoTilt.write(currentTilt);
+        if (angle < 0 || angle > 180) {
+          Serial.println("pan: angle out of range [0, 180]");
+          return;
         }
-        else
-        {
-          Serial.print("Unknown command: ");
-          token = strtok(NULL, s);
-          Serial.println(token);
+        wsApplyPan(angle);
+      } else if (strcmp(cmd, "tilt") == 0) {
+        int angle = 0;
+        if (!wsJsonGetInt(msg, "angle", &angle)) {
+          Serial.println("tilt: missing angle");
+          return;
         }
+        if (angle < 0 || angle > 180) {
+          Serial.println("tilt: angle out of range [0, 180]");
+          return;
+        }
+        wsApplyTilt(angle);
+      } else if (strcmp(cmd, "stop") == 0) {
+        wsApplyDrive(0, 0);
+      } else {
+        Serial.print("Unknown websocket cmd: ");
+        Serial.println(cmd);
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// State / watchdog broadcast (issue #32)
+//
+// The ESP now broadcasts the contract shapes so the web UI (and any other
+// JSON client) can parse a single, well-defined message type:
+//   {"type":"state","seq":N,"battery":B,"speed":S,"steer":T,"pan":P,"tilt":U}
+//   {"type":"watchdog"}
+// ---------------------------------------------------------------------------
+static unsigned long wsSeq = 0;
+
+void broadcastState() {
+  float battery = getBatVoltage(R1, R2);
+  wsSeq++;
+  char buf[160];
+  snprintf(buf, sizeof(buf),
+           "{\"type\":\"state\",\"seq\":%lu,\"battery\":%.2f,"
+           "\"speed\":%d,\"steer\":%d,\"pan\":%d,\"tilt\":%d}",
+           wsSeq, battery, currentSpeed, currentSteer, currentPan, currentTilt);
+  ws.textAll(buf);
+}
+
+void broadcastWatchdog() {
+  ws.textAll("{\"type\":\"watchdog\"}");
 }
 
 void eventHandler(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
