@@ -3,6 +3,7 @@
 #include "tankdrive.h"
 #include "config.h"
 #include "batt.h"
+#include "serialproto.h"
 #include "wifimanager.h"
 #include <Servo.h>
 #include <ESP8266WiFi.h>
@@ -39,16 +40,21 @@ Servo servoTilt;
 // collides with ESPAsyncWebServer / ElegantOTA (see issue #21).
 WiFiManager wifiManager;
 
+
 float vin = 0.0;
 float R1 = 330000;
 float R2 = 33000;
+
+// Serial control protocol (issue #29) — the single hardened entry
+// point for motor/servo commands over the USB-serial link.
+SerialProto serialProto(&tank, &servoPan, &servoTilt, getBatVoltage, R1, R2);
 long batInterval = 1000;
 long batTimer;
 
 
 void setup() {
 
-  Serial.begin(115200);
+  Serial.begin(SERIAL_PROTO_BAUD);  // 921600 8N1 — issue #29
 
   if(!LittleFS.begin()){
     Serial.println("An Error has occurred while mounting LittleFS");
@@ -64,6 +70,9 @@ void setup() {
   servoTilt.attach(SERVO_TILT);
   servoPan.write(90);
   servoTilt.write(90);
+
+  // Serial control protocol: emit the hello handshake (issue #29).
+  serialProto.begin();
 
   Serial.println();
   Serial.println();
@@ -123,6 +132,7 @@ void setup() {
 
 void loop()
 {
+  serialProto.loop();   // NDJSON control link (issue #29)
   ElegantOTA.loop();
   wifiManager.loop();
   ws.cleanupClients();

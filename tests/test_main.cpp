@@ -22,6 +22,7 @@ int host_pin_level[64];
 int host_pwm[64];
 int host_adc[64];
 unsigned long host_adc_reads = 0;
+std::string host_serial_rx;   // Serial receive buffer (issue #29)
 SerialClass Serial;
 
 // ---------------------------------------------------------------------------
