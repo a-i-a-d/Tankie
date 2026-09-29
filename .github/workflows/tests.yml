@@ -44,7 +44,7 @@ jobs:
             "https://github.com/arduino/arduino-cli/releases/download/v${ARDUINO_CLI_VERSION}/arduino-cli_${ARDUINO_CLI_VERSION}_Linux_64bit.tar.gz"
           sudo mkdir -p /opt/arduino-cli
           sudo tar -xzf /tmp/arduino-cli.tar.gz -C /opt/arduino-cli
-          sudo ln -sf /opt/arduino-cli/bin/arduino-cli /usr/local/bin/arduino-cli
+          sudo ln -sf /opt/arduino-cli/arduino-cli /usr/local/bin/arduino-cli
           arduino-cli version
       - name: Install the esp8266 core (pinned)
         run: |
