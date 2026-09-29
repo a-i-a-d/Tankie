@@ -96,10 +96,10 @@ while time.time() < end:
     d = s.read(1024)
     if d:
         buf += d
-        if b"type":"hello" in buf or b"Battery Voltage" in buf:
+        if b'"type":"hello"' in buf or b"Battery Voltage" in buf:
             break
 s.close()
-ok = (b"type":"hello" in buf) or (b"Battery Voltage" in buf)
+ok = (b'"type":"hello"' in buf) or (b"Battery Voltage" in buf)
 sys.exit(0 if ok else 1)
 PY
 then
