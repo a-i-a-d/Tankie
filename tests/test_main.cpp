@@ -25,6 +25,19 @@ unsigned long host_adc_reads = 0;
 std::string host_serial_rx;   // Serial receive buffer (issue #29)
 SerialClass Serial;
 
+// --- network shims (issue #34): the WS fallback handler in tankie.ino ---
+// The shim AsyncWebSocket records textAll() payloads here so tests can
+// assert on the state/watchdog broadcasts; the WiFi / LittleFS / FS
+// shims are compile-only and need no runtime state.
+#include <ESP8266WiFi.h>
+#include <LittleFS.h>
+#include <ElegantOTA.h>
+std::string host_ws_text_all;   // AsyncWebSocket::textAll() capture
+WiFiClass WiFi;
+FSClass LittleFS;
+ESPClass ESP;
+ElegantOTAClass ElegantOTA;
+
 // ---------------------------------------------------------------------------
 // Assertion-framework implementation
 // ---------------------------------------------------------------------------

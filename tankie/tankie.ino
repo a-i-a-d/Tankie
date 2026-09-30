@@ -62,6 +62,18 @@ long lastCommandMs = 0;
 const unsigned long COMMAND_TIMEOUT_MS = 5000;
 bool watchdogActive = false;
 
+// Forward declarations: these helpers are defined later in the sketch but
+// are called from setup()/loop() (the Arduino preprocessor concatenates the
+// whole .ino before compiling, so the order is legal on the ESP; the host
+// test build compiles the file as plain C++ and needs the declarations).
+void broadcastState();
+void broadcastWatchdog();
+void listDir(const char *dirname);
+String processor(const String &var);
+void notFound(AsyncWebServerRequest *request);
+void eventHandler(AsyncWebSocket *server, AsyncWebSocketClient *client,
+                  AwsEventType type, void *arg, uint8_t *data, size_t len);
+
 
 void setup() {
 
@@ -288,12 +300,26 @@ static void wsApplyTilt(int angle) {
   lastCommandMs = millis();
 }
 
+// Maximum size of a single WebSocket command frame we accept.
+// Matches the serial line buffer (tankie/serialproto.cpp, lineBuf_[128]).
+// Longer frames are truncated before parsing; a truncated command fails
+// JSON parsing and is rejected (no unbounded stack use, no OOB writes).
+static const size_t WS_MSG_MAX = 128;
+
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
   AwsFrameInfo *info = (AwsFrameInfo*)arg;
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
     if (data != NULL) {
-      data[len] = 0;
-      const char* msg = (const char*)data;
+      // Copy the frame into a bounded, NUL-terminated buffer and parse
+      // THAT (issue #34). ESPAsyncWebSocket hands us a pointer into the
+      // TCP receive pbuf with no NUL-terminator guarantee - it even
+      // restores data[datalen] after the handler returns - so we must
+      // not write past `len` and must not read `data` as a C string.
+      size_t n = (len < WS_MSG_MAX) ? len : WS_MSG_MAX;
+      char buf[WS_MSG_MAX + 1];
+      memcpy(buf, data, n);
+      buf[n] = '\0';
+      const char* msg = buf;
       Serial.print("Data received: ");
       Serial.println(msg);
 
