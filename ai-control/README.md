@@ -16,3 +16,7 @@ For LocalAGI Functions can be used by agents to send control commands to the tan
 ## LocalAI
 
 For using the tank with LocalAI, use the ai_control.py script. It's more a proof of concept at the moment and requires you to edit the global variables for your setup.
+
+## Transport (issue #33)
+
+`ai_control.py` drives the tank **via the Pi serial bridge** (`raspberry_pi/serial_bridge/`), not the ESP8266's WebSocket: commands go to the bridge daemon over the Unix socket (`/run/tankie/bridge.sock`, one JSON line in → one JSON line out) and tank state is read from the bridge state store (`/var/lib/tankie/state.json`). The bridge owns the 250 ms drive keep-alive that re-arms the ESP watchdog. Both paths are overridable via `TANKIE_BRIDGE_SOCK` / `TANKIE_STATE_FILE` for testing.
