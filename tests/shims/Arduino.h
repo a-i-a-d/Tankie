@@ -22,6 +22,7 @@
 
 #include <cstdarg>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -126,6 +127,15 @@ class String {
   String operator+(const char* o) const { return String((s_ + (o ? o : "")).c_str()); }
   String operator+(char o) const { std::string r = s_; r += o; return String(r.c_str()); }
 
+  void trim() {
+    while (!s_.empty() && (s_.front() == ' ' || s_.front() == '\t' ||
+                            s_.front() == '\r' || s_.front() == '\n'))
+      s_.erase(0, 1);
+    while (!s_.empty() && (s_.back() == ' ' || s_.back() == '\t' ||
+                            s_.back() == '\r' || s_.back() == '\n'))
+      s_.pop_back();
+  }
+
   bool equals(const char* o) const { return s_ == (o ? o : ""); }
   bool operator==(const char* o) const { return s_ == (o ? o : ""); }
   bool operator!=(const char* o) const { return !(*this == o); }
@@ -138,6 +148,31 @@ class String {
 inline String operator+(const char* a, const String& b) {
   return String((std::string(a ? a : "") + b.c_str()).c_str());
 }
+
+// ---------------------------------------------------------------------------
+// IPAddress: the subset of the esp8266 core's IPAddress API the firmware
+// uses (wifimanager.cpp config logging + the WiFi shim). Defined here so
+// the SerialClass below can offer print/println overloads for it.
+// ---------------------------------------------------------------------------
+class IPAddress {
+ public:
+  IPAddress() : o_{0, 0, 0, 0} {}
+  IPAddress(uint8_t a, uint8_t b, uint8_t c, uint8_t d) : o_{a, b, c, d} {}
+  bool fromString(const char* s) { (void)s; return false; }
+  bool operator==(const IPAddress& o) const {
+    return o_[0] == o.o_[0] && o_[1] == o.o_[1] &&
+           o_[2] == o.o_[2] && o_[3] == o.o_[3];
+  }
+  uint8_t& operator[](int i) { return o_[i]; }
+  uint8_t operator[](int i) const { return o_[i]; }
+  String toString() const {
+    char b[24];
+    std::snprintf(b, sizeof b, "%u.%u.%u.%u", o_[0], o_[1], o_[2], o_[3]);
+    return String(b);
+  }
+ private:
+  uint8_t o_[4];
+};
 
 // ---------------------------------------------------------------------------
 // Serial: print/println go to stdout (so a human running the tests sees the
@@ -156,6 +191,9 @@ class SerialClass {
   size_t print(unsigned long v) { char b[24]; std::snprintf(b, sizeof b, "%lu", v); return write(b); }
   size_t print(float v) { char b[32]; std::snprintf(b, sizeof b, "%g", v); return write(b); }
   size_t print(double v) { char b[32]; std::snprintf(b, sizeof b, "%g", v); return write(b); }
+  // wifimanager.cpp logs the AP IP this way.
+  size_t print(const IPAddress& ip) { return write(ip.toString().c_str()); }
+  size_t println(const IPAddress& ip) { return print(ip) + write("\n"); }
 
   size_t println() { return write("\n"); }
   size_t println(const char* s) { return print(s) + write("\n"); }

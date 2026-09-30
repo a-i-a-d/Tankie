@@ -9,9 +9,8 @@
 # Usage: bash tests/run_tests.sh
 #
 # To add a module: add its .cpp to MODULES and its test file to TESTS.
-# The shim in tests/shims/ grows the same way (it currently covers
-# Arduino.h only; the .ino's network stack is intentionally not shimmed -
-# see the README "Testing" section).
+# The shims in tests/shims/ grow the same way (Arduino.h + the network
+# stack shims for tankie.ino's WS fallback handler - issue #34).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."   # repo root
@@ -27,6 +26,14 @@ MODULES=(
   tankie/SparkFun_TB6612.cpp
   tankie/batt.cpp
   tankie/serialproto.cpp
+  tankie/wifimanager.cpp
+)
+
+# The sketch under test (issue #34): tankie.ino is a .ino, which g++ would
+# otherwise hand to the linker as a "linker script" (unrecognized extension).
+# Compile it explicitly as C++ with -x c++.
+INO=(
+  tankie/tankie.ino
 )
 
 # Test files (one per module, plus the harness).
@@ -36,11 +43,13 @@ TESTS=(
   tests/test_motor.cpp
   tests/test_bat_voltage.cpp
   tests/test_serialproto.cpp
+  tests/test_ws_fallback.cpp
 )
 
 echo "[run_tests] compiling: ${MODULES[*]}"
+echo "[run_tests] sketch:    ${INO[*]}"
 echo "[run_tests] tests:     ${TESTS[*]}"
-"$CXX" $CXXFLAGS "${TESTS[@]}" "${MODULES[@]}" -o "$OUT"
+"$CXX" $CXXFLAGS "${TESTS[@]}" "${MODULES[@]}" -x c++ "${INO[@]}" -o "$OUT"
 
 echo "[run_tests] running:   $OUT"
 "$OUT"

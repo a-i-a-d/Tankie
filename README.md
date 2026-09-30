@@ -183,6 +183,14 @@ sketch in [.github/workflows/tests.yml](.github/workflows/tests.yml):
   multiplication, and the `forward/back/left/right/brake` free functions
 - `tests/test_bat_voltage.cpp` - the battery voltage-divider math
   (`getBatVoltage()`, extracted from `tankie.ino` into [tankie/batt.cpp](tankie/batt.cpp))
+- `tests/test_ws_fallback.cpp` - the WebSocket fallback handler
+  (`handleWebSocketMessage()` in [tankie/tankie.ino](tankie/tankie.ino))
+  compiled against the network shims in [tests/shims/](tests/shims/):
+  valid drive/pan/tilt/stop move the motors/servos, out-of-range /
+  missing-field / non-JSON / unknown-cmd messages are rejected (no motor
+  or servo change), binary + fragmented frames are ignored, and the
+  out-of-bounds `data[len] = 0` write is gone (a canary byte at
+  `data[len]` is left untouched) (issue #34)
 - `tests/web_ui_harness.js` - the web UI (tankie/data/script.js) in a Node
   VM sandbox: every outgoing websocket message is valid JSON and exactly
   the protocol-contract shapes (drive / pan / tilt / stop), and the
@@ -214,10 +222,10 @@ sketch with arduino-cli (esp8266 core 3.1.2, `esp8266:esp8266:d1_mini`,
 `-DELEGANTOTA_USE_ASYNC_WEBSERVER=1`) so the sketch can never break the
 build/flash path used on the tank Pi.
 
-Not covered (intentionally): the WebSocket protocol handling in `tankie.ino`
-(it needs shims for the 7 network libraries - follow-up after the
-JSON-protocol refactor in [#7](https://github.com/a-i-a-d/Tankie/issues/7))
-and hardware-in-the-loop / OTA behavior.
+Not covered (intentionally): the network stack itself (the shims in
+[tests/shims/](tests/shims/) are compile-only stubs - no real sockets)
+and hardware-in-the-loop / OTA behavior. The WebSocket *command handler*
+in `tankie.ino` IS covered by `tests/test_ws_fallback.cpp` (issue #34).
 
 ## Projects used
 - [joy.js](https://github.com/bobboteck/JoyStick)
