@@ -135,7 +135,20 @@ def encode_image_to_base64(frame):
 
 
 def on_message(ws, message):
-    print(message)
+    # The ESP broadcasts the contract shapes (issue #32): {"type":"state",...}
+    # and {"type":"watchdog"}. Log them; pass through anything else.
+    try:
+        msg = json.loads(message)
+    except (TypeError, ValueError):
+        print(message)
+        return
+    if isinstance(msg, dict) and msg.get("type") == "state":
+        print(f"[tank state] battery={msg.get('battery')}V speed={msg.get('speed')} "
+              f"steer={msg.get('steer')} pan={msg.get('pan')} tilt={msg.get('tilt')}")
+    elif isinstance(msg, dict) and msg.get("type") == "watchdog":
+        print("[tank] watchdog fired: motors stopped, camera recentered")
+    else:
+        print(message)
 
 
 def on_error(ws, error):
@@ -226,17 +239,28 @@ def camera_control(amount, direction):
     return tank_response
 
 
+def drive_command():
+    """The contract drive object for the active speed/steer (issue #32/#38).
+
+    The /ws endpoint speaks the JSON protocol contract: speed and steer are
+    ONE object, not two key=value messages.
+    """
+    return json.dumps({"cmd": "drive", "speed": tank["speed"], "steer": tank["steer"]})
+
+
 def ws_update():
     print(f"Camera position: {camera_position} Tank state: {tank}")
-    for key in camera_position:
-        ws_message = (f"{key}={camera_position[key]}")
+
+    # Camera: contract pan/tilt objects (issue #32/#38).
+    for axis in ("pan", "tilt"):
+        ws_message = json.dumps({"cmd": axis, "angle": camera_position[axis]})
         print("Sending ws message: ", ws_message)
         ws.send(ws_message)
 
-    for key in tank:
-        ws_message = (f"{key}={tank[key]}")
-        print("Sending ws message: ", ws_message)
-        ws.send(ws_message)
+    # Drive: one combined contract object (speed + steer).
+    ws_message = drive_command()
+    print("Sending ws message: ", ws_message)
+    ws.send(ws_message)
 
     return "ok"
 
@@ -246,14 +270,18 @@ def ws_update():
 # when it stops receiving them). While the AI is thinking between frames
 # this thread keeps re-sending the active speed/steer command so the tank
 # does not jerk to a halt.
+def control_loop_once():
+    """One re-issue iteration (testable without the infinite loop)."""
+    if tank["speed"] != 0 or tank["steer"] != 0:
+        ws_message = drive_command()
+        print("Re-sending drive command (control loop):", ws_message)
+        ws.send(ws_message)
+
+
 def control_loop():
     while True:
         try:
-            if tank["speed"] != 0 or tank["steer"] != 0:
-                for key in tank:
-                    ws_message = (f"{key}={tank[key]}")
-                    print("Re-sending drive command (control loop):", ws_message)
-                    ws.send(ws_message)
+            control_loop_once()
         except Exception as e:
             print("Control loop: websocket send failed:", e)
             break
