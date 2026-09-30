@@ -112,7 +112,8 @@ The [ai-control](ai-control/) folder contains the code that connects an AI to th
 ### Safety & state feedback
 - **Safety watchdog (firmware):** if the tank is driving and no command is received for 5 seconds, the motors are stopped and the pan/tilt camera is recentered automatically. A watchdog event is broadcast to all websocket clients as `{"type":"watchdog"}` (issue #32).
 - **State feedback:** the periodic websocket broadcast includes the current state in addition to the battery voltage, in the contract shape: `{"type":"state","seq":N,"battery":...,"speed":...,"steer":...,"pan":...,"tilt":...}` (issue #32).
-- **Continuous control (ai_control.py):** the drive commands (`speed`/`steer`) that were previously never sent are now transmitted, and a background control loop re-issues the active drive command every second so the tank keeps moving while the AI is thinking between frames.
+- **JSON protocol (ai_control.py):** the LocalAI client speaks the JSON protocol contract — `{"cmd":"pan","angle":N}` / `{"cmd":"tilt","angle":N}` for the camera and one combined `{"cmd":"drive","speed":N,"steer":M}` object for the drive (the legacy `key=value` dialect was retired by #32, issue #38).
+- **Continuous control (ai_control.py):** a background control loop re-issues the active drive command (the combined `drive` object) every second so the firmware watchdog stays armed while the AI is thinking between frames.
 - **Autonomous drive profile:** AI-issued drive commands are clamped to `max_speed = 40` (see `AUTO_PROFILE` in `ai_control/LocalAI/ai_control.py`), slower than the manual joystick range, so a misbehaving model cannot drive the tank at full speed.
 - **Pan/tilt:** the firmware clamps `pan`/`tilt` values to the 0-180 servo range; the AI tools already use relative moves (`up`/`down`/`left`/`right`/`center`) around the 90-degree center position.
 
@@ -182,11 +183,28 @@ sketch in [.github/workflows/tests.yml](.github/workflows/tests.yml):
   multiplication, and the `forward/back/left/right/brake` free functions
 - `tests/test_bat_voltage.cpp` - the battery voltage-divider math
   (`getBatVoltage()`, extracted from `tankie.ino` into [tankie/batt.cpp](tankie/batt.cpp))
+- `tests/web_ui_harness.js` - the web UI (tankie/data/script.js) in a Node
+  VM sandbox: every outgoing websocket message is valid JSON and exactly
+  the protocol-contract shapes (drive / pan / tilt / stop), and the
+  incoming state/ack/error/watchdog/hello broadcasts are handled
+  (issue #32)
+- `tests/ai_control_json_harness.py` - the LocalAI client
+  (ai-control/LocalAI/ai_control.py) with stubbed deps: every outgoing
+  message is a contract JSON object (drive / pan / tilt), the control
+  loop re-issues the combined drive object, and the state/watchdog
+  broadcasts parse (issue #38)
+- `ai-control/tankieControl/main_test.go` - the LocalAGI wrapper's
+  drive/steer/camera handlers against a stub websocket tank: contract
+  JSON shapes only, steer combined with the active speed, center =
+  pan 90 + tilt 90 (issue #39)
 
-Run it locally (any machine with g++):
+Run it locally (any machine with g++, node, go):
 
 ```sh
 bash tests/run_tests.sh
+node tests/web_ui_harness.js   # web UI JSON protocol (node)
+python3 tests/ai_control_json_harness.py   # LocalAI client JSON protocol
+(cd ai-control/tankieControl && go test ./...)   # LocalAGI wrapper JSON protocol
 ```
 
 The tests compile the real firmware `.cpp` files against a minimal Arduino
