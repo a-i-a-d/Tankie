@@ -1,24 +1,31 @@
 import json
-import websocket
 import cv2
+import os
+import socket
 import threading
 import base64
-import time
 from datetime import datetime
 
 
 from openai import OpenAI
-from termcolor import colored  
-from threading import Thread
+from termcolor import colored
 from collections import deque
 
-WS_HOST = "ws://10.42.0.20:80/ws"
-#GPT_MODEL = "llava-1.6-vicuna"
 GPT_MODEL = "moondream2-20250414"
 API_BASE_URL='http://192.168.1.5:8081/v1'
 API_KEY='sk-0123456789'
 #VIDEO_URL='http://10.42.0.1:8888/cam/index.m3u8'
 VIDEO_URL='http://192.168.100.10:8888/cam/index.m3u8'
+
+# Serial bridge (issue #33, architecture #20): the AI no longer talks to the
+# ESP8266's WebSocket. It sends JSON commands to the Pi bridge daemon over
+# the Unix socket (one JSON line in -> one JSON line out) and reads the tank
+# state from the bridge state store. The bridge owns the 250 ms drive
+# keep-alive that re-arms the ESP watchdog, so no re-issue thread is needed
+# here anymore.
+BRIDGE_SOCKET = os.environ.get("TANKIE_BRIDGE_SOCK", "/run/tankie/bridge.sock")
+STATE_FILE = os.environ.get("TANKIE_STATE_FILE", "/var/lib/tankie/state.json")
+BRIDGE_TIMEOUT_S = 3.0
 
 # Font settings for text overlay on images
 font                   = cv2.FONT_HERSHEY_SIMPLEX
@@ -46,7 +53,6 @@ camera_position = {
 # cannot drive the tank at full speed.
 AUTO_PROFILE = {
     "max_speed": 40,          # clamp AI speed to this value
-    "reissue_interval": 1.0,  # seconds between re-issues of the active drive command
 }
 
 tank = {
@@ -134,29 +140,92 @@ def encode_image_to_base64(frame):
     return base64.b64encode(buffer).decode('utf-8')
 
 
-def on_message(ws, message):
-    # The ESP broadcasts the contract shapes (issue #32): {"type":"state",...}
-    # and {"type":"watchdog"}. Log them; pass through anything else.
+def bridge_command(cmd):
+    """Send one JSON command to the bridge daemon (issue #33).
+
+    One JSON line in -> one JSON line out over the Unix socket. Any failure
+    (socket missing, daemon down, timeout, bad reply) degrades gracefully to
+    {"ok": False, "error": "..."} so the AI loop never crashes on the link.
+    """
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(BRIDGE_TIMEOUT_S)
     try:
-        msg = json.loads(message)
-    except (TypeError, ValueError):
-        print(message)
-        return
-    if isinstance(msg, dict) and msg.get("type") == "state":
-        print(f"[tank state] battery={msg.get('battery')}V speed={msg.get('speed')} "
-              f"steer={msg.get('steer')} pan={msg.get('pan')} tilt={msg.get('tilt')}")
-    elif isinstance(msg, dict) and msg.get("type") == "watchdog":
-        print("[tank] watchdog fired: motors stopped, camera recentered")
-    else:
-        print(message)
+        s.connect(BRIDGE_SOCKET)
+        s.sendall((json.dumps(cmd) + "\n").encode())
+        data = b""
+        while b"\n" not in data:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+    except (OSError, socket.timeout) as e:
+        return {"ok": False, "error": f"bridge unreachable: {e}"}
+    finally:
+        s.close()
+    if not data:
+        return {"ok": False, "error": "bridge returned no response"}
+    try:
+        reply = json.loads(data.decode().strip())
+    except ValueError:
+        return {"ok": False, "error": "bridge returned invalid JSON"}
+    if not isinstance(reply, dict):
+        return {"ok": False, "error": "bridge returned a non-object reply"}
+    return reply
 
 
-def on_error(ws, error):
-    print(error)
+def read_state():
+    """Read the bridge state store (issue #33).
+
+    The bridge daemon writes /var/lib/tankie/state.json on every update
+    (last_state, link_up, watchdog_fired, ...). Missing/corrupt file -> {}.
+    """
+    try:
+        with open(STATE_FILE) as f:
+            state = json.load(f)
+        return state if isinstance(state, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 
-def on_close(ws, close_status_code, close_msg):
-    print("### closed ###")
+def surface_feedback(state=None):
+    """Human-readable watchdog/link feedback for the AI loop (issue #33).
+
+    Returns the feedback string (or empty string when all is well) and
+    clears the watchdog flag in the state store so it is not re-surfaced
+    on the next iteration.
+    """
+    if state is None:
+        state = read_state()
+    parts = []
+    if state.get("watchdog_fired"):
+        parts.append("watchdog fired on the tank: motors stopped, camera recentered")
+        try:
+            with open(STATE_FILE, "w") as f:
+                json.dump({**state, "watchdog_fired": False}, f, indent=2)
+        except OSError:
+            pass  # read-only store: keep surfacing until the flag clears
+    if not state.get("link_up"):
+        parts.append("serial link to the tank is down — commands are not reaching the tank")
+    return "; ".join(parts)
+
+
+def sync_from_state(state=None):
+    """Pull the applied pan/tilt/speed/steer from the bridge state store.
+
+    Keeps the local dicts in step with what the tank actually reports, so a
+    watchdog recenter or a manual command via the CLI is reflected here.
+    """
+    if state is None:
+        state = read_state()
+    last = state.get("last_state")
+    if isinstance(last, dict):
+        for key in ("pan", "tilt"):
+            if isinstance(last.get(key), (int, float)):
+                camera_position[key] = last[key]
+        for key in ("speed", "steer"):
+            if isinstance(last.get(key), (int, float)):
+                tank[key] = last[key]
+    return state
 
 
 def pretty_print_conversation(messages):
@@ -205,8 +274,17 @@ def drive_tank(speed, direction):
         tank["steer"] = 90
         tank["speed"] = speed
 
-    tank_response = ws_update()
-    return tank_response
+    # One combined drive object over the bridge (issue #33). The bridge
+    # re-sends the active drive command every 250 ms (keep-alive), so the
+    # ESP watchdog stays re-armed while the AI thinks between frames.
+    reply = bridge_command({"cmd": "drive", "speed": tank["speed"], "steer": tank["steer"]})
+    print(f"Camera position: {camera_position} Tank state: {tank}")
+    print("Sending bridge command: ", json.dumps({"cmd": "drive", "speed": tank["speed"], "steer": tank["steer"]}))
+    print("Bridge reply: ", reply)
+    feedback = surface_feedback()
+    if reply.get("ok"):
+        return f"ok: drive speed={tank['speed']} steer={tank['steer']}" + (f"; {feedback}" if feedback else "")
+    return f"error: {reply.get('error', 'unknown bridge error')}" + (f"; {feedback}" if feedback else "")
 
 
 def camera_control(amount, direction):
@@ -216,76 +294,37 @@ def camera_control(amount, direction):
 
     print("Moving camera position ", amount, " degree ", direction)
     if direction == "up":
-        camera_position["tilt"] = 90 + amount  
+        camera_position["tilt"] = 90 + amount
 
     elif direction == "down":
-        camera_position["tilt"] = 90 - amount 
-    
+        camera_position["tilt"] = 90 - amount
+
     elif direction == "left":
-        camera_position["pan"] = 90 - amount  
+        camera_position["pan"] = 90 - amount
 
     elif direction == "right":
-        camera_position["pan"] = 90 + amount 
-    
+        camera_position["pan"] = 90 + amount
+
     elif direction == "center":
-        camera_position["tilt"] = 90 
-        camera_position["pan"] = 90 
+        camera_position["tilt"] = 90
+        camera_position["pan"] = 90
 
     else:
         print("Unknown direction")
         return("Invalid direction")
 
-    tank_response = ws_update()
-    return tank_response
-
-
-def drive_command():
-    """The contract drive object for the active speed/steer (issue #32/#38).
-
-    The /ws endpoint speaks the JSON protocol contract: speed and steer are
-    ONE object, not two key=value messages.
-    """
-    return json.dumps({"cmd": "drive", "speed": tank["speed"], "steer": tank["steer"]})
-
-
-def ws_update():
-    print(f"Camera position: {camera_position} Tank state: {tank}")
-
-    # Camera: contract pan/tilt objects (issue #32/#38).
-    for axis in ("pan", "tilt"):
-        ws_message = json.dumps({"cmd": axis, "angle": camera_position[axis]})
-        print("Sending ws message: ", ws_message)
-        ws.send(ws_message)
-
-    # Drive: one combined contract object (speed + steer).
-    ws_message = drive_command()
-    print("Sending ws message: ", ws_message)
-    ws.send(ws_message)
-
-    return "ok"
-
-
-# Continuous control loop: the firmware expects the drive command to be
-# re-issued periodically (and has a safety watchdog that stops the motors
-# when it stops receiving them). While the AI is thinking between frames
-# this thread keeps re-sending the active speed/steer command so the tank
-# does not jerk to a halt.
-def control_loop_once():
-    """One re-issue iteration (testable without the infinite loop)."""
-    if tank["speed"] != 0 or tank["steer"] != 0:
-        ws_message = drive_command()
-        print("Re-sending drive command (control loop):", ws_message)
-        ws.send(ws_message)
-
-
-def control_loop():
-    while True:
-        try:
-            control_loop_once()
-        except Exception as e:
-            print("Control loop: websocket send failed:", e)
-            break
-        time.sleep(AUTO_PROFILE["reissue_interval"])
+    # Contract pan/tilt objects over the bridge (issue #33).
+    pan_reply = bridge_command({"cmd": "pan", "angle": camera_position["pan"]})
+    tilt_reply = bridge_command({"cmd": "tilt", "angle": camera_position["tilt"]})
+    print("Sending bridge command: ", json.dumps({"cmd": "pan", "angle": camera_position["pan"]}))
+    print("Sending bridge command: ", json.dumps({"cmd": "tilt", "angle": camera_position["tilt"]}))
+    print("Bridge reply: ", pan_reply, tilt_reply)
+    feedback = surface_feedback()
+    if pan_reply.get("ok") and tilt_reply.get("ok"):
+        return (f"ok: camera pan={camera_position['pan']} tilt={camera_position['tilt']}"
+                + (f"; {feedback}" if feedback else ""))
+    return (f"error: pan={pan_reply.get('error', 'unknown')} tilt={tilt_reply.get('error', 'unknown')}"
+            + (f"; {feedback}" if feedback else ""))
 
 
 def call_function(name,args):
@@ -330,7 +369,7 @@ def tool_chat(frame, previous_texts, client):
 
     tool_calls = response_message.tool_calls
     while tool_calls:
-        # Model returned tool call, execute it and prompt model with result  
+        # Model returned tool call, execute it and prompt model with result
         tool_call_id = tool_calls[0].id
         tool_name = tool_calls[0].function.name
         tool_args = json.loads(tool_calls[0].function.arguments)
@@ -356,9 +395,9 @@ def tool_chat(frame, previous_texts, client):
         #print(f"Result: {response_with_function_call.choices[0].message.content}")
         return (f"Result: {response_with_function_call.choices[0].message.content}")
 
-    else: 
-        # Model did not identify a function to call, result can be returned to the user 
-        #print(response_message.content) 
+    else:
+        # Model did not identify a function to call, result can be returned to the user
+        #print(response_message.content)
         return response_message.content
 
 
@@ -366,25 +405,20 @@ def tool_chat(frame, previous_texts, client):
 def main():
     # keep replies of last 5 image descriptions as context
     previous_texts = deque(maxlen=5)
-    websocket.enableTrace(True)
 
     client = OpenAI(api_key=API_KEY, base_url=API_BASE_URL)
-
-    global ws
-    #ws = websocket.WebSocketApp(
-    #    WS_HOST, on_message=on_message, on_error=on_error, on_close=on_close
-    #)
-    ws = websocket.create_connection(WS_HOST, on_message=on_message, on_error=on_error, on_close=on_close)
-    #ws.run_forever()
-
-    # Continuous control loop: keep re-issuing the active drive command
-    control_thread = Thread(target=control_loop, daemon=True)
-    control_thread.start()
 
     video = VideoCapture(VIDEO_URL)
     while(True):
         frame = video.read()
         if frame is not None:
+
+            # Stay in step with the tank and surface watchdog/link feedback
+            # (issue #33): the bridge is the source of truth now.
+            state = sync_from_state()
+            feedback = surface_feedback(state)
+            if feedback:
+                print("[tank]", feedback)
 
             base64_image = encode_image_to_base64(frame)
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')

@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
-# Host test for ai-control/LocalAI/ai_control.py — issues #38 / #32.
+# Host test for ai-control/LocalAI/ai_control.py — issue #33 (serial bridge).
 #
-# Stubs the third-party deps (websocket, cv2, openai, termcolor) and loads
-# the REAL ai_control.py, then asserts:
-#   1. every outgoing websocket message is valid JSON (no key=value strings)
-#   2. drive/camera commands are exactly the protocol-contract shapes
-#      ({"cmd":"drive","speed":N,"steer":M}, {"cmd":"pan","angle":N},
-#       {"cmd":"tilt","angle":N})
-#   3. the control loop re-issues the combined drive object (watchdog)
-#   4. the state/watchdog broadcasts are parsed without crashing
+# Stubs the third-party deps (cv2, openai, termcolor) and the `socket`
+# module, then loads the REAL ai_control.py so the real bridge client code
+# path runs (no websocket stub anymore — the transport is gone). Asserts:
+#   1. every command handed to the bridge is valid JSON with the exact
+#      contract shape ({"cmd":"drive","speed":N,"steer":M},
+#      {"cmd":"pan","angle":N}, {"cmd":"tilt","angle":N})
+#   2. the AUTO_PROFILE clamp (max 40) is applied
+#   3. tank state is read from the bridge state store (read_state /
+#      sync_from_state)
+#   4. watchdog / link feedback is surfaced into the tool results
+#   5. bridge down -> graceful {"ok":False,"error":...}, no crash
+#   6. no WebSocket plumbing / no key=value strings anywhere
 #
 # Usage: python3 tests/ai_control_json_harness.py
 import importlib.util
 import json
 import os
 import sys
+import tempfile
 import types
 
 failures = []
@@ -26,18 +31,66 @@ def check(cond, label):
         failures.append(label)
 
 
-# --- stubs (must exist before ai_control.py is imported) ---------------------
-sent = []
+# --- sandbox: temp socket path + state store ---------------------------------
+sandbox = tempfile.mkdtemp(prefix="tankie_ai_harness_")
+sock_path = os.path.join(sandbox, "bridge.sock")
+state_path = os.path.join(sandbox, "state.json")
 
 
-class StubWS:
-    def send(self, payload):
-        sent.append(payload)
+def write_state(**kw):
+    with open(state_path, "w") as f:
+        json.dump(kw, f)
 
 
-websocket_stub = types.ModuleType("websocket")
-websocket_stub.enableTrace = lambda *a, **k: None
-websocket_stub.create_connection = lambda *a, **k: StubWS()
+def read_state_file():
+    try:
+        with open(state_path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+# --- stubs (must be in place before ai_control.py is imported) ----------------
+sent = []          # commands handed to the bridge socket
+reply_mode = "ok"  # "ok" | "error" | "empty" | "badjson"
+
+
+class StubSocket:
+    def __init__(self, family, type_):
+        self.family = family
+        self.timeout = None
+
+    def settimeout(self, t):
+        self.timeout = t
+
+    def connect(self, path):
+        if not os.path.exists(path):
+            raise OSError(f"no such file: {path}")  # bridge down
+
+    def sendall(self, payload):
+        line = payload.decode()
+        if not line.endswith("\n"):
+            raise ValueError("bridge protocol is one JSON line in")
+        sent.append(json.loads(line.rstrip("\n")))
+
+    def recv(self, n):
+        if reply_mode == "empty":
+            return b""
+        if reply_mode == "badjson":
+            return b"not json at all\n"
+        if reply_mode == "error":
+            return b'{"ok": false, "error": "boom"}\n'
+        return b'{"ok": true}\n'
+
+    def close(self):
+        pass
+
+
+socket_stub = types.ModuleType("socket")
+socket_stub.AF_UNIX = 1
+socket_stub.SOCK_STREAM = 2
+socket_stub.timeout = OSError  # bridge_command catches (OSError, socket.timeout)
+socket_stub.socket = lambda family, type_: StubSocket(family, type_)
 
 cv2_stub = types.ModuleType("cv2")
 cv2_stub.FONT_HERSHEY_SIMPLEX = 0
@@ -52,7 +105,7 @@ openai_stub.OpenAI = lambda *a, **k: None
 termcolor_stub = types.ModuleType("termcolor")
 termcolor_stub.colored = lambda s, *a, **k: s
 
-sys.modules.setdefault("websocket", websocket_stub)
+sys.modules["socket"] = socket_stub
 sys.modules.setdefault("cv2", cv2_stub)
 sys.modules.setdefault("openai", openai_stub)
 sys.modules.setdefault("termcolor", termcolor_stub)
@@ -63,112 +116,162 @@ path = os.path.join(root, "ai-control", "LocalAI", "ai_control.py")
 spec = importlib.util.spec_from_file_location("ai_control", path)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
-mod.ws = StubWS()
+
+# Point the client at the sandbox (the module reads these globals at call time).
+mod.BRIDGE_SOCKET = sock_path
+mod.STATE_FILE = state_path
 
 
-def last_json(n=1):
-    out = []
-    for m in sent[-n:]:
-        try:
-            out.append(json.loads(m))
-        except (TypeError, ValueError):
-            out.append(None)
-    return out
-
-
-def is_contract(m):
-    """Valid JSON object with a string 'cmd' field (the contract)."""
-    return (isinstance(m, dict) and isinstance(m.get("cmd"), str))
-
-
-def reset_state():
-    """Reset the module's global tank/camera state between test sections."""
+def reset(reply="ok"):
+    """Reset bridge + state between test sections."""
+    global reply_mode
+    reply_mode = reply
+    sent.clear()
     mod.tank["speed"] = 0
     mod.tank["steer"] = 0
     mod.camera_position["pan"] = 90
     mod.camera_position["tilt"] = 90
-    sent.clear()
+    try:
+        os.unlink(sock_path)
+    except OSError:
+        pass
+    if reply != "down":
+        touch = open(sock_path, "w")
+        touch.close()
+    try:
+        os.unlink(state_path)
+    except OSError:
+        pass
 
 
-# --- T1: drive forward -> contract drive object -------------------------------
-print("T1: drive_tank forward -> contract drive object")
-reset_state()
-mod.drive_tank(40, "forward")
-msgs = last_json(3)
-check(all(is_contract(m) for m in msgs), "all 3 messages are contract JSON: " + repr(msgs))
-check(msgs[0] == {"cmd": "pan", "angle": 90}, "pan object: " + repr(msgs[0]))
-check(msgs[1] == {"cmd": "tilt", "angle": 90}, "tilt object: " + repr(msgs[1]))
-check(msgs[2] == {"cmd": "drive", "speed": 40, "steer": 0}, "drive object: " + repr(msgs[2]))
+def is_contract(m):
+    """Valid JSON object with a string 'cmd' field (the contract)."""
+    return isinstance(m, dict) and isinstance(m.get("cmd"), str)
+
+
+# --- T1: drive forward -> ONE contract drive object ---------------------------
+print("T1: drive_tank forward -> contract drive object over the bridge")
+reset()
+res = mod.drive_tank(40, "forward")
+check(len(sent) == 1, "exactly one bridge command: " + repr(sent))
+check(all(is_contract(m) for m in sent), "all commands are contract JSON: " + repr(sent))
+check(sent and sent[0] == {"cmd": "drive", "speed": 40, "steer": 0},
+      "drive object: " + repr(sent))
+check(isinstance(res, str) and res.startswith("ok"), "tool result ok: " + repr(res))
 
 # --- T2: drive left -> clamped speed + steer in ONE object --------------------
 print("T2: drive_tank left -> clamped speed + steer, one object")
-reset_state()
+reset()
 mod.drive_tank(80, "left")
-msgs = last_json(3)
-check(msgs[2] == {"cmd": "drive", "speed": 40, "steer": -90},
-      "drive object (clamped to 40): " + repr(msgs[2]))
+check(sent and sent[0] == {"cmd": "drive", "speed": 40, "steer": -90},
+      "drive object (clamped to 40): " + repr(sent))
 
 # --- T3: reverse + stop --------------------------------------------------------
 print("T3: reverse / stop")
-reset_state()
+reset()
 mod.drive_tank(20, "reverse")
-check(last_json(3)[2] == {"cmd": "drive", "speed": -20, "steer": 0},
-      "reverse object: " + repr(last_json(3)[2]))
-reset_state()
+check(sent and sent[0] == {"cmd": "drive", "speed": -20, "steer": 0},
+      "reverse object: " + repr(sent))
+reset()
 mod.drive_tank(0, "stop")
-check(last_json(3)[2] == {"cmd": "drive", "speed": 0, "steer": 0},
-      "stop object: " + repr(last_json(3)[2]))
+check(sent and sent[0] == {"cmd": "drive", "speed": 0, "steer": 0},
+      "stop object: " + repr(sent))
 
 # --- T4: camera moves -> pan/tilt angle objects --------------------------------
-print("T4: camera_control up/left/center -> angle objects")
-reset_state()
+print("T4: camera_control up/left/center -> pan+tilt angle objects")
+reset()
 mod.camera_control(30, "up")
-check(last_json(3)[0] == {"cmd": "pan", "angle": 90} and
-      last_json(3)[1] == {"cmd": "tilt", "angle": 120},
-      "tilt up 30 -> tilt=120: " + repr(last_json(3)))
-reset_state()
+check(sent[-2:] == [{"cmd": "pan", "angle": 90}, {"cmd": "tilt", "angle": 120}],
+      "tilt up 30 -> pan=90,tilt=120: " + repr(sent))
+reset()
 mod.camera_control(30, "left")
-check(last_json(3)[0] == {"cmd": "pan", "angle": 60} and
-      last_json(3)[1] == {"cmd": "tilt", "angle": 90},
-      "pan left 30 -> pan=60: " + repr(last_json(3)))
-reset_state()
-mod.camera_control(0, "center")
-check(last_json(3)[0] == {"cmd": "pan", "angle": 90} and
-      last_json(3)[1] == {"cmd": "tilt", "angle": 90},
-      "center -> pan=90,tilt=90: " + repr(last_json(3)))
+check(sent[-2:] == [{"cmd": "pan", "angle": 60}, {"cmd": "tilt", "angle": 90}],
+      "pan left 30 -> pan=60,tilt=90: " + repr(sent))
+reset()
+res = mod.camera_control(0, "center")
+check(sent[-2:] == [{"cmd": "pan", "angle": 90}, {"cmd": "tilt", "angle": 90}],
+      "center -> pan=90,tilt=90: " + repr(sent))
+check(isinstance(res, str) and res.startswith("ok"), "camera result ok: " + repr(res))
 
-# --- T5: control loop re-issues the combined drive object ----------------------
-print("T5: control_loop_once -> combined drive object (watchdog re-arm)")
-reset_state()
-mod.tank["speed"] = 40
-mod.tank["steer"] = -90
-mod.control_loop_once()
-check(len(sent) == 1, "exactly one re-issue: " + repr(sent))
-check(json.loads(sent[0]) == {"cmd": "drive", "speed": 40, "steer": -90},
-      "re-issue object: " + repr(sent[0]))
-
-print("T5b: control_loop_once idle -> no send")
-reset_state()
-mod.control_loop_once()
-check(len(sent) == 0, "no message when idle: " + repr(sent))
-
-# --- T6: state / watchdog broadcasts are parsed --------------------------------
-print("T6: on_message parses state + watchdog broadcasts")
+# --- T5: bridge down -> graceful error, no crash -------------------------------
+print("T5: bridge down -> graceful error result")
+reset(reply="down")
 try:
-    mod.on_message(None, '{"type":"state","seq":1,"battery":7.42,"speed":40,"steer":0,"pan":90,"tilt":90}')
-    mod.on_message(None, '{"type":"watchdog"}')
-    mod.on_message(None, "not json at all")
-    check(True, "no exception on state/watchdog/plain messages")
+    res = mod.drive_tank(20, "forward")
+    check(isinstance(res, str) and res.startswith("error") and "bridge" in res,
+          "error result mentions the bridge: " + repr(res))
 except Exception as e:
-    check(False, "on_message raised: %r" % e)
+    check(False, "drive_tank raised with bridge down: %r" % e)
+reset(reply="down")
+try:
+    res = mod.camera_control(30, "up")
+    check(isinstance(res, str) and res.startswith("error"),
+          "camera error result: " + repr(res))
+except Exception as e:
+    check(False, "camera_control raised with bridge down: %r" % e)
 
-# --- T7: no key=value dialect anywhere -----------------------------------------
-print("T7: no key=value strings were sent")
-bad = [m for m in sent if isinstance(m, str) and "=" in m and not m.strip().startswith("{")]
-check(not bad, "no key=value messages: " + repr(bad))
+# --- T6: bad bridge replies -> graceful ----------------------------------------
+print("T6: empty / non-JSON bridge replies -> graceful error")
+reset(reply="empty")
+res = mod.drive_tank(20, "forward")
+check(isinstance(res, str) and res.startswith("error"), "empty reply -> error: " + repr(res))
+reset(reply="badjson")
+res = mod.drive_tank(20, "forward")
+check(isinstance(res, str) and res.startswith("error"), "bad JSON reply -> error: " + repr(res))
+reset(reply="error")
+res = mod.drive_tank(20, "forward")
+check(isinstance(res, str) and "boom" in res, "bridge error surfaced: " + repr(res))
+
+# --- T7: state store is the source of truth ------------------------------------
+print("T7: read_state / sync_from_state pull from the bridge state store")
+reset()
+write_state(link_up=True, watchdog_fired=False, last_seq=7,
+            last_state={"type": "state", "seq": 7, "battery": 7.42,
+                        "speed": 50, "steer": -90, "pan": 30, "tilt": 60})
+st = mod.read_state()
+check(st.get("link_up") is True and st.get("last_seq") == 7, "read_state: " + repr(st))
+mod.sync_from_state(st)
+check(mod.tank["speed"] == 50 and mod.tank["steer"] == -90,
+      "tank synced from last_state: " + repr(mod.tank))
+check(mod.camera_position["pan"] == 30 and mod.camera_position["tilt"] == 60,
+      "camera synced from last_state: " + repr(mod.camera_position))
+check(mod.read_state() is not None, "read_state default path works")
+
+# --- T8: watchdog / link feedback ----------------------------------------------
+print("T8: surface_feedback reports watchdog + link state")
+write_state(link_up=True, watchdog_fired=True)
+fb = mod.surface_feedback()
+check("watchdog" in fb, "watchdog feedback: " + repr(fb))
+check(read_state_file().get("watchdog_fired") is False,
+      "watchdog flag cleared after surfacing: " + repr(read_state_file()))
+write_state(link_up=False, watchdog_fired=False)
+fb = mod.surface_feedback()
+check("link" in fb, "link-down feedback: " + repr(fb))
+write_state(link_up=True, watchdog_fired=False)
+check(mod.surface_feedback() == "", "quiet when all is well")
+
+# --- T9: feedback rides along in the tool result --------------------------------
+print("T9: tool result carries the bridge feedback")
+reset()
+write_state(link_up=True, watchdog_fired=True)
+res = mod.drive_tank(20, "forward")
+check(isinstance(res, str) and res.startswith("ok") and "watchdog" in res,
+      "drive result carries watchdog feedback: " + repr(res))
+
+# --- T10: no WebSocket plumbing / no key=value dialect --------------------------
+print("T10: no WebSocket plumbing, no key=value strings")
+src = open(path).read()
+for needle in ("websocket", "WS_HOST", "on_message", "on_error",
+               "on_close", "create_connection", "control_loop"):
+    check(needle not in src, "no %r in ai_control.py" % needle)
+check("websocket" not in sys.modules, "websocket module never imported")
+bad = [m for m in sent if not is_contract(m)]
+check(not bad, "every sent command is contract JSON: " + repr(bad))
+keyval = [m for m in sent if isinstance(m, str) and "=" in m and not m.strip().startswith("{")]
+check(not keyval, "no key=value messages: " + repr(keyval))
 
 print()
 if failures:
     print("FAILED: %d check(s) failed" % len(failures))
     sys.exit(1)
-print("OK: all ai_control.py JSON-protocol checks passed")
+print("OK: all ai_control.py serial-bridge checks passed (%d commands captured)" % len(sent))
