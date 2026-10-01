@@ -176,11 +176,17 @@ The ESP8266 firmware logic is covered by a host-side unit-test suite (no ESP
 toolchain needed) in [tests/](tests/), plus a CI compile-check for the full
 sketch in [.github/workflows/tests.yml](.github/workflows/tests.yml):
 
-- `tests/test_tankdrive.cpp` - the full branch matrix of `TankDrive::updateMotors()`
-  (stop / fw / bw x straight / left / right, partial steer, boundary values),
-  asserting the real `config.h` H-bridge pins (PWM + In1/In2 direction)
-- `tests/test_motor.cpp` - `Motor::drive/brake/standby`, the offset
-  multiplication, and the `forward/back/left/right/brake` free functions
+- `tests/test_wheels.cpp` - the pure drive-math `computeWheels()`
+  ([tankie/wheels.cpp](tankie/wheels.cpp), no Arduino deps): straight /
+  turn-left / turn-right in fwd + rev, spin-in-place at `speed == 0`,
+  the clamped +/-255 extreme corners (issue #14), and an exhaustive
+  (speed, steer) matrix check that both outputs stay within [-255, 255]
+- `tests/test_tankdrive.cpp` - `TankDrive` end-to-end through the real
+  `Motor` H-bridge: the full branch matrix (stop / spin-in-place / fw / bw
+  x straight / left / right, partial steer, boundary values), asserting
+  the real `config.h` H-bridge pins (PWM + In1/In2 direction)
+- `tests/test_motor.cpp` - `Motor::drive/brake/standby` and the
+  `forward/back/left/right/brake` free functions
 - `tests/test_bat_voltage.cpp` - the battery voltage-divider math
   (`getBatVoltage()`, extracted from `tankie.ino` into [tankie/batt.cpp](tankie/batt.cpp))
 - `tests/test_ws_fallback.cpp` - the WebSocket fallback handler
