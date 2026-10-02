@@ -30,9 +30,14 @@ class Dir {
   File openFile(const char*) { return File(); }
 };
 
+// Test hook (issue #44 C): default false (matches "no filesystem on host");
+// a test can set host_littlefs_begin_ok to true to exercise the firmware's
+// full setup() path (LittleFS success -> servos -> WiFi -> web server).
+extern bool host_littlefs_begin_ok;
+
 class FSClass {
  public:
-  bool begin() { return false; }
+  bool begin() { return host_littlefs_begin_ok; }
   bool exists(const char*) const { return false; }
   File open(const char*, const char*) { return File(); }
   Dir openDir(const char*) { return Dir(); }

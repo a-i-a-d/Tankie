@@ -48,6 +48,14 @@ class AsyncWebServer {
   void on(const String& uri, int method, void (*fn)(AsyncWebServerRequest*)) {
     (void)uri; (void)method; (void)fn;
   }
+  // The ElegantOTA library (v4) registers /ota/upload with a body handler
+  // (the real library's 5-arg on()); the shim accepts and ignores it so
+  // the host build compiles unchanged.
+  void on(const String& uri, int method, void (*fn)(AsyncWebServerRequest*),
+          void (*upload)(AsyncWebServerRequest*),
+          void (*body)(AsyncWebServerRequest*, uint8_t*, size_t, size_t, size_t)) {
+    (void)uri; (void)method; (void)fn; (void)upload; (void)body;
+  }
   void onNotFound(void (*fn)(AsyncWebServerRequest*)) { (void)fn; }
   void onRequestBody(void (*fn)(AsyncWebServerRequest*, uint8_t*, size_t)) { (void)fn; }
   void addHandler(AsyncWebSocket* ws) { (void)ws; }

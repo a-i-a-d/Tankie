@@ -23,6 +23,7 @@ int host_pwm[64];
 int host_adc[64];
 unsigned long host_adc_reads = 0;
 std::string host_serial_rx;   // Serial receive buffer (issue #29)
+bool host_littlefs_begin_ok = false;   // LittleFS shim begin() hook (issue #44 C)
 SerialClass Serial;
 
 // --- network shims (issue #34): the WS fallback handler in tankie.ino ---

@@ -66,6 +66,7 @@ bool watchdogActive = false;
 // are called from setup()/loop() (the Arduino preprocessor concatenates the
 // whole .ino before compiling, so the order is legal on the ESP; the host
 // test build compiles the file as plain C++ and needs the declarations).
+void setMotorsSafe();   // issue #44 C: safe motor state at the top of setup()
 void broadcastState();
 void broadcastWatchdog();
 void listDir(const char *dirname);
@@ -75,7 +76,23 @@ void eventHandler(AsyncWebSocket *server, AsyncWebSocketClient *client,
                   AwsEventType type, void *arg, uint8_t *data, size_t len);
 
 
+// Force the TB6612FNG into a known, non-driving state before anything else
+// runs, so a bad/strapping-pin boot can never leave the motors spinning at
+// max speed (issue #44 C). STBY=LOW puts both H-bridges in standby and the
+// direction + PWM pins LOW = no drive. drive() re-asserts STBY=HIGH on every
+// command, so normal operation is unaffected.
+void setMotorsSafe() {
+  pinMode(STBY, OUTPUT);  digitalWrite(STBY, LOW);
+  pinMode(PWMA, OUTPUT);  digitalWrite(PWMA, LOW);
+  pinMode(AIN1, OUTPUT);  digitalWrite(AIN1, LOW);
+  pinMode(AIN2, OUTPUT);  digitalWrite(AIN2, LOW);
+  pinMode(PWMB, OUTPUT);  digitalWrite(PWMB, LOW);
+  pinMode(BIN1, OUTPUT);  digitalWrite(BIN1, LOW);
+  pinMode(BIN2, OUTPUT);  digitalWrite(BIN2, LOW);
+}
+
 void setup() {
+  setMotorsSafe();   // issue #44 C: first statement, before Serial/LittleFS/servos
 
   Serial.begin(SERIAL_PROTO_BAUD);  // 921600 8N1 — issue #29
 

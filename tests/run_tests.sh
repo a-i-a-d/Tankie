@@ -44,6 +44,7 @@ TESTS=(
   tests/test_bat_voltage.cpp
   tests/test_serialproto.cpp
   tests/test_ws_fallback.cpp
+  tests/test_safe_boot.cpp
 )
 
 echo "[run_tests] compiling: ${MODULES[*]}"
