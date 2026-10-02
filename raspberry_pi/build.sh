@@ -3,9 +3,10 @@
 # Tankie — build the ESP8266 (NodeMCU D1 Mini) firmware
 #
 # Standalone build helper: compiles the `tankie` sketch with arduino-cli and
-# exports the merged image (bootloader + app) that `flash.sh` writes to the
-# chip, AND builds the LittleFS data partition image (the web UI in
-# `tankie/data/`) that the firmware serves over HTTP. `flash.sh` calls this
+# exports the merged image (bootloader + app) that `flash_serial.sh` writes to
+# the chip, AND builds the LittleFS data partition image (the web UI in
+# `tankie/data/`) that the firmware serves over HTTP. `flash_serial.sh` and
+# `flash_ota.sh` call this
 # script for its build step, so the two always agree on FQBN, flags, and
 # output location.
 #
@@ -55,7 +56,7 @@ if [ -f /etc/tankie/flash.env ]; then
 fi
 
 SKETCH_DIR="${TANKIE_SKETCH_DIR:-${REPO_ROOT}/tankie}"
-OUT_DIR="${TANKIE_FLASH_DIR:-/tmp/tankie-flash}"   # stable dir -> flash.sh finds the artifact
+OUT_DIR="${TANKIE_FLASH_DIR:-/tmp/tankie-flash}"   # stable dir -> flash_serial.sh / flash_ota.sh find the artifact
 BIN="${OUT_DIR}/tankie.ino.bin"
 DATA_BIN="${OUT_DIR}/tankie.ino.data.bin"
 DATA_DIR="${SKETCH_DIR}/data"
@@ -68,7 +69,7 @@ die()  { printf '\033[1;31m[build]\033[0m %s\n' "$*" >&2; exit 1; }
 [ -f "${SKETCH_DIR}/tankie.ino" ] || die "sketch not found: ${SKETCH_DIR}/tankie.ino (set TANKIE_SKETCH_DIR or /etc/tankie/flash.env)"
 command -v arduino-cli >/dev/null 2>&1 || die "arduino-cli not found in PATH"
 
-# The esp8266 core provides the toolchain (and esptool for flash.sh)
+# The esp8266 core provides the toolchain (and esptool for flash_serial.sh)
 if ! arduino-cli core list 2>/dev/null | awk '{print $1}' | grep -qx "esp8266:esp8266"; then
   die "esp8266 core not installed — run: arduino-cli core install esp8266:esp8266"
 fi
