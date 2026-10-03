@@ -70,7 +70,7 @@ SRC_TIMER="${SCRIPT_DIR}/wlan0-watchdog.timer"
 SRC_ESP_BUILD="${SCRIPT_DIR}/build.sh"
 SRC_ESP_FLASH="${SCRIPT_DIR}/flash_serial.sh"
 SRC_ESP_FLASH_OTA="${SCRIPT_DIR}/flash_ota.sh"
-SRC_ESP_FLASH_OTA_TEST="${SCRIPT_DIR}/flash_ota_test.sh"
+SRC_ESP_FLASH_OTA_TEST="${SCRIPT_DIR}/../tests/manual/flash_ota_test.sh"
 
 log()  { printf '\033[1;32m[setup]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
@@ -215,7 +215,7 @@ log "Installing ESP8266 firmware helpers (tankie-build, tankie-flash, tankie-fla
 [ -f "${SRC_ESP_BUILD}" ] || die "build.sh not found next to setup.sh: ${SRC_ESP_BUILD}"
 [ -f "${SRC_ESP_FLASH}" ] || die "flash_serial.sh not found next to setup.sh: ${SRC_ESP_FLASH}"
 [ -f "${SRC_ESP_FLASH_OTA}" ] || die "flash_ota.sh not found next to setup.sh: ${SRC_ESP_FLASH_OTA}"
-[ -f "${SRC_ESP_FLASH_OTA_TEST}" ] || die "flash_ota_test.sh not found next to setup.sh: ${SRC_ESP_FLASH_OTA_TEST}"
+[ -f "${SRC_ESP_FLASH_OTA_TEST}" ] || die "tests/manual/flash_ota_test.sh not found: ${SRC_ESP_FLASH_OTA_TEST}"
 install -m 0755 "${SRC_ESP_BUILD}" "${ESP_BUILD_SCRIPT}"
 install -m 0755 "${SRC_ESP_FLASH}" "${ESP_FLASH_SCRIPT}"
 install -m 0755 "${SRC_ESP_FLASH_OTA}" "${ESP_FLASH_OTA_SCRIPT}"

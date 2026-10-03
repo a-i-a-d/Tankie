@@ -26,7 +26,7 @@
 #
 # The ESP must be reachable at OTA_URL — either on the saved WiFi (STA mode,
 # use its DHCP IP) or on the "tankie-esp" config AP (192.168.4.1). On the
-# tank Pi use flash_ota_test.sh to hop onto the AP, run this, and restore the
+# tank Pi use tests/manual/flash_ota_test.sh to hop onto the AP, run this, and restore the
 # infrastructure WiFi automatically.
 #
 # Requirements: curl + md5sum (present on the Pi), arduino-cli + esp8266 core

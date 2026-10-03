@@ -26,7 +26,7 @@
 #
 # Because step 2 kills the SSH link, run it in the background so it survives:
 #
-#   nohup bash raspberry_pi/flash_ota_test.sh > /tmp/ota_test.out 2>&1 &
+#   nohup bash tests/manual/flash_ota_test.sh > /tmp/ota_test.out 2>&1 &
 #   # ... wait, then reconnect to the Pi over infrastructure WiFi and:
 #   tail -f /tmp/ota_test.out
 #   cat /tmp/tankie-ota-test.log
@@ -51,10 +51,11 @@ if [ "${1:-}" = "--dry-run" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-FLASH_CONF="${SCRIPT_DIR}/flash.conf"
-[ -f "${FLASH_CONF}" ] || die "flash.conf not found next to flash_ota_test.sh: ${FLASH_CONF}"
+FLASH_DIR="${REPO_ROOT}/raspberry_pi"
+FLASH_CONF="${FLASH_CONF:-${FLASH_DIR}/flash.conf}"
+[ -f "${FLASH_CONF}" ] || die "flash.conf not found (looked in ${FLASH_CONF} and ${FLASH_DIR}): ${FLASH_CONF}"
 # shellcheck disable=SC1091
 . "${FLASH_CONF}"
 if [ -f /etc/tankie/flash.env ]; then
@@ -62,11 +63,11 @@ if [ -f /etc/tankie/flash.env ]; then
   . /etc/tankie/flash.env
 fi
 
-# The OTA flasher: prefer the one next to this script, fall back to the copy
-# setup.sh installs at /usr/local/bin/tankie-flash-ota.
-FLASH_OTA="${SCRIPT_DIR}/flash_ota.sh"
+# The OTA flasher: prefer the canonical copy in raspberry_pi/, fall back to the
+# copy setup.sh installs at /usr/local/bin/tankie-flash-ota.
+FLASH_OTA="${FLASH_OTA:-${FLASH_DIR}/flash_ota.sh}"
 [ -f "${FLASH_OTA}" ] || FLASH_OTA="/usr/local/bin/tankie-flash-ota"
-[ -f "${FLASH_OTA}" ] || die "flash_ota.sh not found (looked in ${SCRIPT_DIR} and /usr/local/bin)"
+[ -f "${FLASH_OTA}" ] || die "flash_ota.sh not found (looked in ${FLASH_DIR} and /usr/local/bin)"
 
 # Derive the OTA API base (scheme://host[:port]) from the portal URL, the same
 # way flash_ota.sh does, so the endpoint checks hit the right host.
