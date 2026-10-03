@@ -45,8 +45,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Defaults live in flash.conf (issue #44 D, shared with flash_serial.sh). A
 # value already set in the environment wins over the flash.conf default, and
 # the system-wide /etc/tankie/flash.env (written by setup.sh) wins over both.
-FLASH_CONF="${SCRIPT_DIR}/flash.conf"
-[ -f "${FLASH_CONF}" ] || die "flash.conf not found next to flash_ota.sh: ${FLASH_CONF}"
+FLASH_CONF="${SCRIPT_DIR}/conf/flash.conf"
+[ -f "${FLASH_CONF}" ] || die "flash.conf not found in conf/ next to flash_ota.sh: ${FLASH_CONF}"
 # shellcheck disable=SC1091
 . "${FLASH_CONF}"
 if [ -f /etc/tankie/flash.env ]; then

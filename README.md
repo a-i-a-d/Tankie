@@ -157,7 +157,7 @@ catches firmware/Pi mismatches. Non-JSON lines (debug output) are ignored.
   (`/var/lib/tankie/state.json`), Unix socket (`/run/tankie/bridge.sock`).
 - `tankie-serial.py` — CLI: `drive --speed 50 --steer 0`, `pan 90`, `tilt 30`,
   `stop`, `state`, `watchdog-test` (or `--raw` to talk to the port directly).
-- `config.yaml` — single config source (serial_port, baud, keepalive_ms,
+- `conf/serial_bridge.yaml` — single config source (serial_port, baud, keepalive_ms,
   ack_timeout_ms, state_file, socket_path).
 - `tankie-serial.service` — systemd unit (`Restart=always`, dialout group).
 - `setup-serial.sh` — idempotent installer (deps, udev rule, systemd).

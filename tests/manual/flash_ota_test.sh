@@ -54,7 +54,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 FLASH_DIR="${REPO_ROOT}/raspberry_pi"
-FLASH_CONF="${FLASH_CONF:-${FLASH_DIR}/flash.conf}"
+FLASH_CONF="${FLASH_CONF:-${FLASH_DIR}/conf/flash.conf}"
 [ -f "${FLASH_CONF}" ] || die "flash.conf not found (looked in ${FLASH_CONF} and ${FLASH_DIR}): ${FLASH_CONF}"
 # shellcheck disable=SC1091
 . "${FLASH_CONF}"
