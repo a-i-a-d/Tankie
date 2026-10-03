@@ -216,16 +216,26 @@ trap restore_wifi EXIT
 root_ap_scan
 
 # --- 1. join the tankie-esp AP ----------------------------------------------
+# nmcli needs NetworkManager D-Bus permissions to change state. On the tank Pi
+# the user lacks them directly but has passwordless sudo (sudo -n), so fall back
+# to sudo when the direct call is denied. (The root AP scan above already proves
+# sudo -n works; on a box without sudo the direct call is the only option.)
+nmcli_wifi() {
+  nmcli "$@" || {
+    command -v sudo >/dev/null 2>&1 && sudo -n nmcli "$@"
+  }
+}
+
 log "connecting wlan0 to the '${OTA_AP_SSID}' AP …"
 # Drop the infrastructure connection so we actually land on the AP.
 if [ -n "${ACTIVE_CONN}" ]; then
-  nmcli connection down id "${ACTIVE_CONN}" || true
+  nmcli_wifi connection down id "${ACTIVE_CONN}" || true
 fi
 if [ -n "${OTA_AP_PASSWORD}" ]; then
-  nmcli device wifi connect "${OTA_AP_SSID}" password "${OTA_AP_PASSWORD}" \
+  nmcli_wifi device wifi connect "${OTA_AP_SSID}" password "${OTA_AP_PASSWORD}" \
     || die "could not connect to the '${OTA_AP_SSID}' AP"
 else
-  nmcli device wifi connect "${OTA_AP_SSID}" \
+  nmcli_wifi device wifi connect "${OTA_AP_SSID}" \
     || die "could not connect to the '${OTA_AP_SSID}' AP"
 fi
 
