@@ -41,6 +41,13 @@ MEDIAMTX_URL="https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMT
 # SHA256 of the official release tarball (pin for integrity)
 MEDIAMTX_SHA256="6a3aa635fb60ea9b8d566ec306f0a42ff1b6b52a3942bc2baffbe55880d4c3dd"
 
+# Pin the ElegantOTA firmware library (issue #44 D). flash_ota.sh drives the
+# 4.x ElegantOTA HTTP API (/ota/metadata, /ota/start?mode=fr|fs&hash=,
+# /ota/upload); ElegantOTA 3.x has no /ota/metadata and would die in the OTA
+# preflight. Section 7 installs this version so a fresh setup builds a firmware
+# the OTA flasher can talk to.
+ELEGANTOTA_VERSION="4.0.0"
+
 INSTALL_DIR="/opt/mediamtx"
 BIN="${INSTALL_DIR}/mediamtx"
 CONF="${INSTALL_DIR}/mediamtx.yml"
@@ -50,6 +57,8 @@ WATCHDOG_SCRIPT="/usr/local/bin/wlan0-watchdog.sh"
 WATCHDOG_TIMER="wlan0-watchdog.timer"
 ESP_BUILD_SCRIPT="/usr/local/bin/tankie-build"
 ESP_FLASH_SCRIPT="/usr/local/bin/tankie-flash"
+ESP_FLASH_OTA_SCRIPT="/usr/local/bin/tankie-flash-ota"
+ESP_FLASH_OTA_TEST_SCRIPT="/usr/local/bin/tankie-flash-ota-test"
 ESP_ENV="/etc/tankie/flash.env"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,7 +68,9 @@ SRC_WATCHDOG="${SCRIPT_DIR}/wlan0-watchdog.service"
 SRC_WATCHDOG_SCRIPT="${SCRIPT_DIR}/wlan0-watchdog.sh"
 SRC_TIMER="${SCRIPT_DIR}/wlan0-watchdog.timer"
 SRC_ESP_BUILD="${SCRIPT_DIR}/build.sh"
-SRC_ESP_FLASH="${SCRIPT_DIR}/flash.sh"
+SRC_ESP_FLASH="${SCRIPT_DIR}/flash_serial.sh"
+SRC_ESP_FLASH_OTA="${SCRIPT_DIR}/flash_ota.sh"
+SRC_ESP_FLASH_OTA_TEST="${SCRIPT_DIR}/../tests/manual/flash_ota_test.sh"
 
 log()  { printf '\033[1;32m[setup]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
@@ -153,7 +164,7 @@ sleep 1
 
 # --- 7. install the ESP8266 toolchain (arduino-cli + esp8266 core) ---------
 # build.sh needs arduino-cli (to compile) and the esp8266 core (which ships the
-# xtensa toolchain, esptool for flash.sh, and mklittlefs for the LittleFS data
+# xtensa toolchain, esptool for flash_serial.sh, and mklittlefs for the LittleFS data
 # partition). Install them on a fresh system so the ESP build/flash path is out
 # of the box. Best-effort: a network hiccup warns but does not abort the
 # mediamtx setup.
@@ -182,18 +193,33 @@ if [ -n "${ARDUINO_CLI}" ]; then
       || warn "could not add the esp8266 board index"
   fi
   # Install the esp8266 core (a no-op if already installed). This pulls in the
-  # xtensa toolchain, esptool, and mklittlefs that build.sh / flash.sh need.
+  # xtensa toolchain, esptool, and mklittlefs that build.sh / flash_serial.sh need.
   log "Ensuring the esp8266 core is installed (arduino-cli core install esp8266:esp8266) …"
   "${ARDUINO_CLI}" core install esp8266:esp8266 \
     || warn "esp8266 core install failed — the ESP build/flash helpers will not work until you install it"
+  # Pin the ElegantOTA firmware library (issue #44 D). flash_ota.sh drives the
+  # 4.x HTTP API (/ota/metadata, /ota/start?mode=fr|fs&hash=, /ota/upload);
+  # 3.x has no /ota/metadata and would die in the OTA preflight. arduino-cli
+  # resolves the library from the user (~/Arduino/libraries) or managed
+  # location, so this pin is what makes a fresh setup build a firmware the OTA
+  # flasher can talk to. Idempotent: a no-op at 4.0.0, an upgrade otherwise.
+  log "Pinning the ElegantOTA library to ${ELEGANTOTA_VERSION} (needed by flash_ota.sh) …"
+  "${ARDUINO_CLI}" lib update-index 2>/dev/null \
+    || warn "could not refresh the library index — the ElegantOTA pin may use a cached index"
+  "${ARDUINO_CLI}" lib install "ElegantOTA@${ELEGANTOTA_VERSION}" \
+    || warn "ElegantOTA ${ELEGANTOTA_VERSION} install failed — run: arduino-cli lib install ElegantOTA@${ELEGANTOTA_VERSION}"
 fi
 
 # --- 8. install the ESP8266 build/flash helpers ----------------------------
-log "Installing ESP8266 firmware helpers (tankie-build, tankie-flash)"
+log "Installing ESP8266 firmware helpers (tankie-build, tankie-flash, tankie-flash-ota, tankie-flash-ota-test)"
 [ -f "${SRC_ESP_BUILD}" ] || die "build.sh not found next to setup.sh: ${SRC_ESP_BUILD}"
-[ -f "${SRC_ESP_FLASH}" ] || die "flash.sh not found next to setup.sh: ${SRC_ESP_FLASH}"
+[ -f "${SRC_ESP_FLASH}" ] || die "flash_serial.sh not found next to setup.sh: ${SRC_ESP_FLASH}"
+[ -f "${SRC_ESP_FLASH_OTA}" ] || die "flash_ota.sh not found next to setup.sh: ${SRC_ESP_FLASH_OTA}"
+[ -f "${SRC_ESP_FLASH_OTA_TEST}" ] || die "tests/manual/flash_ota_test.sh not found: ${SRC_ESP_FLASH_OTA_TEST}"
 install -m 0755 "${SRC_ESP_BUILD}" "${ESP_BUILD_SCRIPT}"
 install -m 0755 "${SRC_ESP_FLASH}" "${ESP_FLASH_SCRIPT}"
+install -m 0755 "${SRC_ESP_FLASH_OTA}" "${ESP_FLASH_OTA_SCRIPT}"
+install -m 0755 "${SRC_ESP_FLASH_OTA_TEST}" "${ESP_FLASH_OTA_TEST_SCRIPT}"
 
 # The installed scripts resolve the sketch relative to their own location,
 # which is /usr/local/bin — so point them at the canonical checkout.
@@ -240,10 +266,10 @@ else
   warn "WiFi watchdog timer is not active — check: systemctl status ${WATCHDOG_TIMER}"
 fi
 
-if [ -x "${ESP_BUILD_SCRIPT}" ] && [ -x "${ESP_FLASH_SCRIPT}" ]; then
-  log "ESP8266 helpers installed: ${ESP_BUILD_SCRIPT}, ${ESP_FLASH_SCRIPT}"
+if [ -x "${ESP_BUILD_SCRIPT}" ] && [ -x "${ESP_FLASH_SCRIPT}" ] && [ -x "${ESP_FLASH_OTA_SCRIPT}" ] && [ -x "${ESP_FLASH_OTA_TEST_SCRIPT}" ]; then
+  log "ESP8266 helpers installed: ${ESP_BUILD_SCRIPT}, ${ESP_FLASH_SCRIPT}, ${ESP_FLASH_OTA_SCRIPT}, ${ESP_FLASH_OTA_TEST_SCRIPT}"
 else
-  warn "ESP8266 helpers missing — check /usr/local/bin/tankie-{build,flash}"
+  warn "ESP8266 helpers missing — check /usr/local/bin/tankie-{build,flash,flash-ota,flash-ota-test}"
 fi
 
 if ls -d "${HOME}"/.arduino15/packages/esp8266/tools/mklittlefs/*/mklittlefs >/dev/null 2>&1; then
@@ -275,7 +301,9 @@ Next steps / how to use:
   * WiFi watchdog logs  :  journalctl -u wlan0-watchdog -f
   * Disable the watchdog:  systemctl disable --now wlan0-watchdog.timer
   * Build ESP8266 fw    :  tankie-build     (firmware + LittleFS data partition)
-  * Flash ESP8266 fw    :  tankie-flash     (D1 Mini on /dev/ttyUSB0)
+  * Flash ESP8266 fw    :  tankie-flash        (USB/CH340, D1 Mini on /dev/ttyUSB0)
+  * Flash ESP8266 via OTA: tankie-flash-ota     (over WiFi, ElegantOTA)
+  * Test OTA from the Pi: tankie-flash-ota-test (joins the tankie-esp AP, runs the OTA, restores WiFi)
 
 Note: if you just enabled the camera for the first time, reboot once so the
       camera driver loads and /dev/video0 appears.

@@ -14,7 +14,10 @@ separate box bolted on top whose only job here is to turn the CSI camera
 |------|---------|
 | `setup.sh` | Idempotent installer. Downloads the pinned, self-contained `mediamtx` binary, enables the CSI camera, installs the config + systemd service, and starts streaming. Run with `sudo bash setup.sh`. |
 | `build.sh` | Build the ESP8266 (D1 Mini) firmware **and the LittleFS data partition** with arduino-cli (esp8266 core) → `tankie.ino.bin` + `tankie.ino.data.bin`. Run with `bash build.sh`. |
-| `flash.sh` | Build (via `build.sh`) + flash the firmware **and the LittleFS data partition** + boot-verify the ESP8266 (D1 Mini) over USB (CH340 → `/dev/ttyUSB0`). Run with `bash flash.sh`. |
+| `flash_serial.sh` | Build (via `build.sh`) + flash the firmware **and the LittleFS data partition** + boot-verify the ESP8266 (D1 Mini) over USB (CH340 → `/dev/ttyUSB0`). Run with `bash flash_serial.sh`. |
+| `flash_ota.sh` | Flash the ESP8266 **over the air** (ElegantOTA over WiFi) — firmware + (by default) the LittleFS data partition. Run with `bash flash_ota.sh`. |
+| `tests/manual/flash_ota_test.sh` | **Manual, hardware-only** OTA acceptance test from the tank Pi: joins the `tankie-esp` AP, runs `flash_ota.sh`, then restores the infrastructure WiFi. Lives in `tests/manual/` (the home for manual/hardware-only tests). Run with `bash tests/manual/flash_ota_test.sh`. |
+| `flash.conf` | Shared flash configuration (serial port/baud, OTA URL, AP name/password, filesystem toggle). Sourced by both flash scripts; env overrides win. |
 | `mediamtx.yml` | The mediamtx configuration: two on-demand streams from the one camera (`cam` 1080p30 for humans, `cam_low` 480p15 for the AI). |
 | `mediamtx.service` | systemd unit that runs `mediamtx` as a non-root user and keeps it alive. |
 | `wlan0-watchdog.service` | One-shot recovery unit: if `wlan0` is missing, reloads the `brcmfmac` driver (fallback: restarts NetworkManager). Never reboots. |
@@ -119,11 +122,14 @@ pip3 install --user pyserial               # only for the boot check
 # build only
 bash raspberry_pi/build.sh
 
-# build (if needed) + flash + verify boot
-bash raspberry_pi/flash.sh
+# build (if needed) + flash over USB + verify boot
+bash raspberry_pi/flash_serial.sh
+
+# ...or flash over the air (the ESP must be reachable, e.g. on the tankie-esp AP)
+bash raspberry_pi/flash_ota.sh
 ```
 
-What `flash.sh` does:
+What `flash_serial.sh` does:
 
 1. **Build** — via `build.sh` (standalone: `tankie-build`):
    - **Firmware:** `arduino-cli compile --fqbn esp8266:esp8266:d1_mini` with
@@ -149,10 +155,11 @@ What `flash.sh` does:
    `Battery Voltage: …` stream, proving the new firmware actually booted.
 
 `setup.sh` installs the toolchain (arduino-cli + the esp8266 core, which ships
-the xtensa compiler, esptool, and `mklittlefs`) and both helpers on a fresh
-system as **`tankie-build`** and **`tankie-flash`** in `/usr/local/bin`, so the
-ESP can be built (firmware + LittleFS data partition) and flashed from the Pi
-without the repo checkout in the way.
+the xtensa compiler, esptool, and `mklittlefs`) and the helpers on a fresh
+system as **`tankie-build`**, **`tankie-flash`**, **`tankie-flash-ota`** and
+**`tankie-flash-ota-test`** in `/usr/local/bin`, so the ESP can be built
+(firmware + LittleFS data partition) and flashed — over USB or over the air —
+from the Pi without the repo checkout in the way.
 
 Notes:
 
@@ -165,10 +172,16 @@ Notes:
 - **Power matters.** The ESP8266's WiFi TX bursts hit ~500 mA; if the D1 Mini
   is powered only through the passive hub + OTG, prefer powering it from the
   tank's 5 V rail and using USB for data only.
+- **OTA is the recommended path** when the TB6612FNG is connected: its
+  boot-strapping pins (AIN1=GPIO0, STBY=GPIO2, BIN1=GPIO15) can fight the
+  CH340's attempt to force download mode, so a USB flash can hang on
+  `Connecting…` (and the motors can spin at max speed) — see
+  [#44](https://github.com/a-i-a-d/Tankie/issues/44). `flash_ota.sh` pushes
+  the same images over WiFi via ElegantOTA (`/ota/start` → `/ota/upload`)
+  with no download mode at all.
 - **Fallbacks** if USB ever regresses: hold **BOOT** + tap **RST** on the D1
-  Mini to force download mode manually, or push the same `tankie.ino.bin`
-  over WiFi via ElegantOTA (`/ota/start` → `/ota/upload`) once the ESP is on
-  a reachable network.
+  Mini to force download mode manually, or use `flash_ota.sh` once the ESP is
+  on a reachable network.
 
 Full history and diagnosis: [#21](https://github.com/a-i-a-d/Tankie/issues/21).
 

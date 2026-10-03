@@ -15,8 +15,8 @@
 #      its UART0 console (the firmware streams "Battery Voltage: …" lines).
 #
 # Usage:
-#   bash flash.sh                 # port defaults to /dev/ttyUSB0
-#   PORT=/dev/ttyUSB1 bash flash.sh
+#   bash flash_serial.sh                 # port defaults to /dev/ttyUSB0 (flash.conf)
+#   FLASH_SERIAL_PORT=/dev/ttyUSB1 bash flash_serial.sh
 #
 # Requirements (one-time, see raspberry_pi/README.md "Flashing the ESP8266"):
 #   * arduino-cli with the esp8266 core:  arduino-cli core install esp8266:esp8266
@@ -26,18 +26,28 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-# --- configuration ----------------------------------------------------------
-PORT="${PORT:-/dev/ttyUSB0}"
-BAUD=115200
+log()  { printf '\033[1;32m[flash]\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[flash]\033[0m %s\n' "$*"; }
+die()  { printf '\033[1;31m[flash]\033[0m %s\n' "$*" >&2; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# System-wide overrides (written by setup.sh on the tank)
+# --- configuration ----------------------------------------------------------
+# Defaults live in flash.conf (issue #44 D, shared with flash_ota.sh). A value
+# already set in the environment wins over the flash.conf default, and the
+# system-wide /etc/tankie/flash.env (written by setup.sh) wins over both.
+FLASH_CONF="${SCRIPT_DIR}/flash.conf"
+[ -f "${FLASH_CONF}" ] || die "flash.conf not found next to flash_serial.sh: ${FLASH_CONF}"
+# shellcheck disable=SC1091
+. "${FLASH_CONF}"
 if [ -f /etc/tankie/flash.env ]; then
   # shellcheck disable=SC1091
   . /etc/tankie/flash.env
 fi
+
+PORT="${FLASH_SERIAL_PORT}"
+BAUD="${FLASH_SERIAL_BAUD}"
 
 SKETCH_DIR="${TANKIE_SKETCH_DIR:-${REPO_ROOT}/tankie}"
 OUT_DIR="${TANKIE_FLASH_DIR:-/tmp/tankie-flash}"   # stable dir -> shared with build.sh
@@ -45,12 +55,8 @@ BIN="${OUT_DIR}/tankie.ino.bin"
 DATA_BIN="${OUT_DIR}/tankie.ino.data.bin"
 BUILD_SH="${SCRIPT_DIR}/build.sh"
 
-log()  { printf '\033[1;32m[flash]\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m[flash]\033[0m %s\n' "$*"; }
-die()  { printf '\033[1;31m[flash]\033[0m %s\n' "$*" >&2; exit 1; }
-
 # --- preflight ---------------------------------------------------------------
-[ -f "${BUILD_SH}" ] || die "build.sh not found next to flash.sh: ${BUILD_SH}"
+[ -f "${BUILD_SH}" ] || die "build.sh not found next to flash_serial.sh: ${BUILD_SH}"
 [ -f "${SKETCH_DIR}/tankie.ino" ] || die "sketch not found: ${SKETCH_DIR}/tankie.ino"
 command -v arduino-cli >/dev/null 2>&1 || die "arduino-cli not found in PATH"
 [ -e "${PORT}" ] || die "serial port ${PORT} not present (is the CH340/D1 Mini connected?)"
