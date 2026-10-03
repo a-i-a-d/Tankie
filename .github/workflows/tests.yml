@@ -54,7 +54,7 @@ jobs:
       - name: Install the external libraries
         run: |
           arduino-cli lib update-index
-          arduino-cli lib install ElegantOTA
+          arduino-cli lib install ElegantOTA@4.0.0   # pinned: flash_ota.sh needs the 4.x /ota/metadata API (issue #44 D)
           arduino-cli lib install ESPAsyncWebServer
           arduino-cli lib install AsyncTCP
           arduino-cli lib install Servo

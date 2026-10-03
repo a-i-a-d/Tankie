@@ -41,6 +41,13 @@ MEDIAMTX_URL="https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMT
 # SHA256 of the official release tarball (pin for integrity)
 MEDIAMTX_SHA256="6a3aa635fb60ea9b8d566ec306f0a42ff1b6b52a3942bc2baffbe55880d4c3dd"
 
+# Pin the ElegantOTA firmware library (issue #44 D). flash_ota.sh drives the
+# 4.x ElegantOTA HTTP API (/ota/metadata, /ota/start?mode=fr|fs&hash=,
+# /ota/upload); ElegantOTA 3.x has no /ota/metadata and would die in the OTA
+# preflight. Section 7 installs this version so a fresh setup builds a firmware
+# the OTA flasher can talk to.
+ELEGANTOTA_VERSION="4.0.0"
+
 INSTALL_DIR="/opt/mediamtx"
 BIN="${INSTALL_DIR}/mediamtx"
 CONF="${INSTALL_DIR}/mediamtx.yml"
@@ -190,6 +197,17 @@ if [ -n "${ARDUINO_CLI}" ]; then
   log "Ensuring the esp8266 core is installed (arduino-cli core install esp8266:esp8266) …"
   "${ARDUINO_CLI}" core install esp8266:esp8266 \
     || warn "esp8266 core install failed — the ESP build/flash helpers will not work until you install it"
+  # Pin the ElegantOTA firmware library (issue #44 D). flash_ota.sh drives the
+  # 4.x HTTP API (/ota/metadata, /ota/start?mode=fr|fs&hash=, /ota/upload);
+  # 3.x has no /ota/metadata and would die in the OTA preflight. arduino-cli
+  # resolves the library from the user (~/Arduino/libraries) or managed
+  # location, so this pin is what makes a fresh setup build a firmware the OTA
+  # flasher can talk to. Idempotent: a no-op at 4.0.0, an upgrade otherwise.
+  log "Pinning the ElegantOTA library to ${ELEGANTOTA_VERSION} (needed by flash_ota.sh) …"
+  "${ARDUINO_CLI}" lib update-index 2>/dev/null \
+    || warn "could not refresh the library index — the ElegantOTA pin may use a cached index"
+  "${ARDUINO_CLI}" lib install "ElegantOTA@${ELEGANTOTA_VERSION}" \
+    || warn "ElegantOTA ${ELEGANTOTA_VERSION} install failed — run: arduino-cli lib install ElegantOTA@${ELEGANTOTA_VERSION}"
 fi
 
 # --- 8. install the ESP8266 build/flash helpers ----------------------------
