@@ -62,7 +62,7 @@ ESP_FLASH_OTA_TEST_SCRIPT="/usr/local/bin/tankie-flash-ota-test"
 ESP_ENV="/etc/tankie/flash.env"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SRC_CONF="${SCRIPT_DIR}/mediamtx.yml"
+SRC_CONF="${SCRIPT_DIR}/conf/mediamtx.yml"
 SRC_SERVICE="${SCRIPT_DIR}/mediamtx.service"
 SRC_WATCHDOG="${SCRIPT_DIR}/wlan0-watchdog.service"
 SRC_WATCHDOG_SCRIPT="${SCRIPT_DIR}/wlan0-watchdog.sh"

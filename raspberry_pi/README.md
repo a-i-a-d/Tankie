@@ -17,8 +17,10 @@ separate box bolted on top whose only job here is to turn the CSI camera
 | `flash_serial.sh` | Build (via `build.sh`) + flash the firmware **and the LittleFS data partition** + boot-verify the ESP8266 (D1 Mini) over USB (CH340 → `/dev/ttyUSB0`). Run with `bash flash_serial.sh`. |
 | `flash_ota.sh` | Flash the ESP8266 **over the air** (ElegantOTA over WiFi) — firmware + (by default) the LittleFS data partition. Run with `bash flash_ota.sh`. |
 | `tests/manual/flash_ota_test.sh` | **Manual, hardware-only** OTA acceptance test from the tank Pi: joins the `tankie-esp` AP, runs `flash_ota.sh`, then restores the infrastructure WiFi. Lives in `tests/manual/` (the home for manual/hardware-only tests). Run with `bash tests/manual/flash_ota_test.sh`. |
-| `flash.conf` | Shared flash configuration (serial port/baud, OTA URL, AP name/password, filesystem toggle). Sourced by both flash scripts; env overrides win. |
-| `mediamtx.yml` | The mediamtx configuration: two on-demand streams from the one camera (`cam` 1080p30 for humans, `cam_low` 480p15 for the AI). |
+| `conf/` | All Pi config files in one place (issue #48). |
+| `conf/flash.conf` | Shared flash configuration (serial port/baud, OTA URL, AP name/password, filesystem toggle). Sourced by both flash scripts; env overrides win. |
+| `conf/mediamtx.yml` | The mediamtx configuration: two on-demand streams from the one camera (`cam` 1080p30 for humans, `cam_low` 480p15 for the AI). |
+| `conf/serial_bridge.yaml` | Serial-bridge configuration (serial_port, baud, keepalive_ms, ack_timeout_ms, state_file, socket_path). Auto-discovered by `bridge.py` / `tankie-serial.py`; `--config` wins. |
 | `mediamtx.service` | systemd unit that runs `mediamtx` as a non-root user and keeps it alive. |
 | `wlan0-watchdog.service` | One-shot recovery unit: if `wlan0` is missing, reloads the `brcmfmac` driver (fallback: restarts NetworkManager). Never reboots. |
 | `wlan0-watchdog.sh` | The actual check/recovery logic (health check, driver reload, NetworkManager fallback), installed to `/usr/local/bin/wlan0-watchdog.sh` and called by the service. |

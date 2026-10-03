@@ -387,7 +387,7 @@ def main():
     cfg_path = args.config
     if cfg_path is None:
         here = os.path.dirname(os.path.abspath(__file__))
-        candidate = os.path.join(here, "config.yaml")
+        candidate = os.path.join(here, "..", "conf", "serial_bridge.yaml")
         if os.path.exists(candidate):
             cfg_path = candidate
 
