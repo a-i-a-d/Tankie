@@ -227,30 +227,37 @@ nmcli_wifi() {
 }
 
 log "connecting wlan0 to the '${OTA_AP_SSID}' AP …"
-# Drop the infrastructure connection so we actually land on the AP.
-if [ -n "${ACTIVE_CONN}" ]; then
-  nmcli_wifi connection down id "${ACTIVE_CONN}" || true
-fi
-if [ -n "${OTA_AP_PASSWORD}" ]; then
-  nmcli_wifi device wifi connect "${OTA_AP_SSID}" password "${OTA_AP_PASSWORD}" \
-    || die "could not connect to the '${OTA_AP_SSID}' AP"
-else
-  nmcli_wifi device wifi connect "${OTA_AP_SSID}" \
-    || die "could not connect to the '${OTA_AP_SSID}' AP"
-fi
-
-# Wait for the AP to hand us an address.
-log "waiting for an address on the AP …"
-deadline=$(( $(date +%s) + AP_WAIT_TIMEOUT ))
-while [ "$(date +%s)" -lt "${deadline}" ]; do
-  if ip -4 addr show wlan0 2>/dev/null | grep -q "inet 192\.168\.4\."; then
-    log "on the AP with IP $(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}')"
-    break
+# Join the AP directly: nmcli switches the device to it and deactivates the
+# infrastructure connection automatically. (Deactivating the infrastructure
+# connection *first* can race the radio and make the first DHCP lease time out
+# with 'IP configuration could not be reserved' — observed on the tank Pi.)
+join_ap() {
+  if [ -n "${OTA_AP_PASSWORD}" ]; then
+    nmcli_wifi device wifi connect "${OTA_AP_SSID}" password "${OTA_AP_PASSWORD}"
+  else
+    nmcli_wifi device wifi connect "${OTA_AP_SSID}"
   fi
-  sleep 1
+}
+
+# Wait for the AP to hand us an address; retry the join a couple of times if
+# the first DHCP lease times out while the radio settles.
+joined=0
+for attempt in 1 2 3; do
+  log "AP join attempt ${attempt} …"
+  join_ap || warn "AP join attempt ${attempt} reported an error — retrying"
+  deadline=$(( $(date +%s) + AP_WAIT_TIMEOUT ))
+  while [ "$(date +%s)" -lt "${deadline}" ]; do
+    if ip -4 addr show wlan0 2>/dev/null | grep -q "inet 192\.168\.4\."; then
+      joined=1
+      break
+    fi
+    sleep 1
+  done
+  [ "${joined}" = "1" ] && break
 done
-ip -4 addr show wlan0 2>/dev/null | grep -q "inet 192\.168\.4\." \
+[ "${joined}" = "1" ] \
   || die "no 192.168.4.x address on wlan0 after ${AP_WAIT_TIMEOUT}s — check the AP/SSID"
+log "on the AP with IP $(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}')"
 
 # --- 2. start the serial console capture -------------------------------------
 start_serial_capture
