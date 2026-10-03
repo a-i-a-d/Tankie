@@ -15,7 +15,8 @@
 //   {"type":"ack","seq":1}
 //   {"type":"error","seq":2,"code":"range","field":"speed"}
 //   {"type":"watchdog"}
-//   {"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,"pan":90,"tilt":90}
+//   {"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,"pan":90,"tilt":90,
+//    "net_mode":"sta"|"ap","net_ip":"192.168.x.y"}   (issue #46)
 //
 // Non-JSON lines (e.g. Serial.println debug output) are ignored, so the
 // protocol coexists safely with console logging (issue #29, T7).

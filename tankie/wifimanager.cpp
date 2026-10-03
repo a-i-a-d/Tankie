@@ -1,5 +1,6 @@
 #include "wifimanager.h"
 #include "LittleFS.h"
+#include "netstate.h"
 
 // File paths where the network configuration is stored on LittleFS.
 static const char* SSID_PATH = "/ssid.txt";
@@ -94,8 +95,16 @@ bool WiFiManager::connectSTA(unsigned long timeoutMs) {
   }
   Serial.println();
   Serial.println("[WiFiManager] WiFi connected");
+  IPAddress staIp = WiFi.localIP();
   Serial.print("[WiFiManager] IP address: ");
-  Serial.println(WiFi.localIP());
+  Serial.println(staIp);
+
+  // Issue #46: publish the network state so clients can read it from the
+  // state broadcast (serial + websocket) without needing the boot console.
+  netState.mode  = "sta";
+  netState.ip    = staIp.toString();
+  netState.ssid  = _ssid;
+
   return true;
 }
 
@@ -127,6 +136,12 @@ void WiFiManager::startPortal() {
   Serial.print("[WiFiManager] AP IP address: ");
   Serial.println(myIP);
   Serial.println("[WiFiManager] open the browser at http://192.168.4.1:8080 to configure WiFi");
+
+  // Issue #46: publish the AP state so clients can read it from the state
+  // broadcast (serial + websocket) without needing the boot console.
+  netState.mode  = "ap";
+  netState.ip    = myIP.toString();
+  netState.ssid  = "";
 
   _inConfigMode = true;
 }

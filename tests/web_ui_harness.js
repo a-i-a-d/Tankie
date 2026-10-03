@@ -152,12 +152,15 @@ assertNoKeyValue();
 // --- T5: incoming state -> all fields rendered ------------------------------
 console.log('T5: incoming state -> fields rendered');
 ws = StubWebSocket.last;
-ws._receive('{"type":"state","seq":7,"battery":7.42,"speed":50,"steer":0,"pan":90,"tilt":30}');
+ws._receive('{"type":"state","seq":7,"battery":7.42,"speed":50,"steer":0,"pan":90,"tilt":30,"net_mode":"sta","net_ip":"192.168.1.42"}');
 check(el('battery').value === 7.42, 'battery rendered: ' + el('battery').value);
 check(String(el('joy1Speed').value) === '50', 'speed rendered: ' + el('joy1Speed').value);
 check(String(el('joy1Steer').value) === '0', 'steer rendered: ' + el('joy1Steer').value);
 check(String(el('joy2Pan').value) === '90', 'pan rendered: ' + el('joy2Pan').value);
 check(String(el('joy2Tilt').value) === '30', 'tilt rendered: ' + el('joy2Tilt').value);
+// Issue #46: net_mode + net_ip rendered into the #netStatus field.
+check(String(el('netStatus').value) === 'sta 192.168.1.42',
+      'netStatus rendered: ' + el('netStatus').value);
 
 // --- T6: incoming ack/error/watchdog/hello ----------------------------------
 console.log('T6: incoming ack/error/watchdog/hello');

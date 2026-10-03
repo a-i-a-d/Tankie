@@ -9,6 +9,7 @@
 #include "batt.h"
 #include "serialproto.h"
 #include "wifimanager.h"
+#include "netstate.h"
 #include <Servo.h>
 #include <ESP8266WiFi.h>
 #include <ESPAsyncTCP.h>
@@ -410,11 +411,18 @@ static unsigned long wsSeq = 0;
 void broadcastState() {
   float battery = getBatVoltage(R1, R2);
   wsSeq++;
+  // Issue #46: include the network mode + IP in the websocket state
+  // broadcast so the web UI can display it without the boot console.
+  const char* mode = "sta";
+  const char* ip   = "0.0.0.0";
+  if (netState.mode.length() > 0) mode = netState.mode.c_str();
+  if (netState.ip.length() > 0)   ip   = netState.ip.c_str();
   char buf[160];
   snprintf(buf, sizeof(buf),
            "{\"type\":\"state\",\"seq\":%lu,\"battery\":%.2f,"
-           "\"speed\":%d,\"steer\":%d,\"pan\":%d,\"tilt\":%d}",
-           wsSeq, battery, currentSpeed, currentSteer, currentPan, currentTilt);
+           "\"speed\":%d,\"steer\":%d,\"pan\":%d,\"tilt\":%d,"
+           "\"net_mode\":\"%s\",\"net_ip\":\"%s\"}",
+           wsSeq, battery, currentSpeed, currentSteer, currentPan, currentTilt, mode, ip);
   ws.textAll(buf);
 }
 

@@ -111,7 +111,7 @@ The [ai-control](ai-control/) folder contains the code that connects an AI to th
 
 ### Safety & state feedback
 - **Safety watchdog (firmware):** if the tank is driving and no command is received for 5 seconds, the motors are stopped and the pan/tilt camera is recentered automatically. A watchdog event is broadcast to all websocket clients as `{"type":"watchdog"}` (issue #32).
-- **State feedback:** the periodic websocket broadcast includes the current state in addition to the battery voltage, in the contract shape: `{"type":"state","seq":N,"battery":...,"speed":...,"steer":...,"pan":...,"tilt":...}` (issue #32).
+- **State feedback:** the periodic websocket broadcast includes the current state in addition to the battery voltage, in the contract shape: `{"type":"state","seq":N,"battery":...,"speed":...,"steer":...,"pan":...,"tilt":...,"net_mode":"sta"|"ap","net_ip":"192.168.x.y"}` (issue #32, #46). The `net_mode` and `net_ip` fields let a client determine the ESP's IP address and WiFi mode (STA vs AP) without needing the boot console (issue #46).
 - **JSON protocol (ai_control.py):** the LocalAI client speaks the JSON protocol contract — `{"cmd":"pan","angle":N}` / `{"cmd":"tilt","angle":N}` for the camera and one combined `{"cmd":"drive","speed":N,"steer":M}` object for the drive (the legacy `key=value` dialect was retired by #32, issue #38).
 - **Continuous control (ai_control.py):** a background control loop re-issues the active drive command (the combined `drive` object) every second so the firmware watchdog stays armed while the AI is thinking between frames.
 - **Autonomous drive profile:** AI-issued drive commands are clamped to `max_speed = 40` (see `AUTO_PROFILE` in `ai_control/LocalAI/ai_control.py`), slower than the manual joystick range, so a misbehaving model cannot drive the tank at full speed.
@@ -140,7 +140,7 @@ ESP → Pi (responses):
 {"type":"ack","seq":1}
 {"type":"error","seq":2,"code":"range","field":"speed"}
 {"type":"watchdog"}
-{"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,"pan":90,"tilt":90}
+{"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,"pan":90,"tilt":90,"net_mode":"sta","net_ip":"192.168.1.42"}
 ```
 
 Rules: strict validation + clamping on the ESP (speed/steer ±255, pan/tilt
