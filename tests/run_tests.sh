@@ -27,6 +27,7 @@ MODULES=(
   tankie/batt.cpp
   tankie/serialproto.cpp
   tankie/wifimanager.cpp
+  tankie/netstate.cpp
 )
 
 # The sketch under test (issue #34): tankie.ino is a .ino, which g++ would
@@ -45,6 +46,7 @@ TESTS=(
   tests/test_serialproto.cpp
   tests/test_ws_fallback.cpp
   tests/test_safe_boot.cpp
+  tests/test_netstate.cpp
 )
 
 echo "[run_tests] compiling: ${MODULES[*]}"

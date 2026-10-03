@@ -20,7 +20,8 @@ Protocol (NDJSON, one object per line, 921600 8N1):
                {"type":"ack","seq":1}
                {"type":"error","seq":2,"code":"range","field":"speed"}
                {"type":"watchdog"}
-               {"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,"pan":90,"tilt":90}
+               {"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,
+                "pan":90,"tilt":90,"net_mode":"sta","net_ip":"192.168.1.42"}
 
 Usage:
   python3 bridge.py [--config config.yaml] [--daemon]
@@ -247,9 +248,11 @@ class Bridge:
                 self.state.update(watchdog_fired=True)
 
             elif mtype == "state":
-                log.debug("state: speed=%s steer=%s pan=%s tilt=%s battery=%s",
+                log.debug("state: speed=%s steer=%s pan=%s tilt=%s battery=%s "
+                          "net_mode=%s net_ip=%s",
                           msg.get("speed"), msg.get("steer"),
-                          msg.get("pan"), msg.get("tilt"), msg.get("battery"))
+                          msg.get("pan"), msg.get("tilt"), msg.get("battery"),
+                          msg.get("net_mode"), msg.get("net_ip"))
                 self.state.update(last_state=msg)
 
     # -- writer thread (keep-alive) ------------------------------------------

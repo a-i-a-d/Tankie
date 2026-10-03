@@ -334,8 +334,10 @@ TEST(state_broadcast_on_change) {
   resetProto();
   Serial.clearCapture();
   proto.injectLine("{\"cmd\":\"drive\",\"speed\":50,\"steer\":0}");
+  // Issue #46: the state line now carries net_mode + net_ip (defaults
+  // before WiFiManager has run: "sta" / "0.0.0.0").
   CHECK(capturedHasLine(
-    "{\"type\":\"state\",\"seq\":1,\"battery\":7.42,\"speed\":50,\"steer\":0,\"pan\":90,\"tilt\":90}"));
+    "{\"type\":\"state\",\"seq\":1,\"battery\":7.42,\"speed\":50,\"steer\":0,\"pan\":90,\"tilt\":90,\"net_mode\":\"sta\",\"net_ip\":\"0.0.0.0\"}"));
 }
 
 TEST(state_broadcast_at_1hz) {

@@ -8,7 +8,8 @@
 //   {"cmd":"stop"}
 //
 // Incoming messages are dispatched on "type":
-//   {"type":"state","seq":N,"battery":B,"speed":S,"steer":T,"pan":P,"tilt":U}
+//   {"type":"state","seq":N,"battery":B,"speed":S,"steer":T,"pan":P,"tilt":U,
+//    "net_mode":"sta"|"ap","net_ip":"192.168.x.y"}   (issue #46)
 //   {"type":"ack","seq":N}
 //   {"type":"error","seq":N,"code":C,"field":F}
 //   {"type":"watchdog"}
@@ -82,6 +83,14 @@ function onMessage(event) {
             if (typeof msg['steer'] === 'number') joy1Steer.value = msg['steer'];
             if (typeof msg['pan'] === 'number') joy2Pan.value = msg['pan'];
             if (typeof msg['tilt'] === 'number') joy2Tilt.value = msg['tilt'];
+            // Issue #46: show the network mode + IP so it is visible without
+            // the boot console (mode: sta/ap, ip: the ESP's address).
+            if (typeof msg['net_mode'] === 'string' || typeof msg['net_ip'] === 'string') {
+                var netEl = document.getElementById('netStatus');
+                if (netEl) {
+                    netEl.value = (msg['net_mode'] || '?') + ' ' + (msg['net_ip'] || '?');
+                }
+            }
             break;
         case 'ack':
             console.log('ack seq=' + msg['seq']);

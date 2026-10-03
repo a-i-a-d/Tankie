@@ -13,6 +13,7 @@
 //     message is a complete NDJSON line.
 
 #include "serialproto.h"
+#include "netstate.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -253,11 +254,25 @@ void SerialProto::emitWatchdog() {
 
 void SerialProto::emitState() {
   float battery = getBattery_(R1_, R2_);
+
+  // Issue #46: include the network mode + IP in the state broadcast so a
+  // client can determine the ESP's IP and mode (AP vs STA) without needing
+  // the boot console message. netState is set by WiFiManager on connect
+  // (STA) or when the config portal AP starts; defaults to "sta"/"0.0.0.0"
+  // before WiFi has been attempted. The fields are bounded strings
+  // (mode in {"sta","ap"}, ip is a dotted quad) so the line always fits
+  // and stays a single valid NDJSON object.
+  const char* mode = "sta";
+  const char* ip   = "0.0.0.0";
+  if (netState.mode.length() > 0) mode = netState.mode.c_str();
+  if (netState.ip.length() > 0)   ip   = netState.ip.c_str();
+
   char buf[160];
   snprintf(buf, sizeof(buf),
-                "{\"type\":\"state\",\"seq\":%lu,\"battery\":%.2f,"
-                "\"speed\":%d,\"steer\":%d,\"pan\":%d,\"tilt\":%d}",
-                seq_, battery, speed_, steer_, pan_, tilt_);
+           "{\"type\":\"state\",\"seq\":%lu,\"battery\":%.2f,"
+           "\"speed\":%d,\"steer\":%d,\"pan\":%d,\"tilt\":%d,"
+           "\"net_mode\":\"%s\",\"net_ip\":\"%s\"}",
+           seq_, battery, speed_, steer_, pan_, tilt_, mode, ip);
   emit(buf);
 }
 
