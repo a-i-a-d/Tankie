@@ -22,9 +22,9 @@
 #include <cstdio>
 #include <string>
 
-// The two motors, exactly as tankie.ino wires them (offset 1, shared STBY).
-static Motor mLeft(AIN1, AIN2, PWMA, 1, STBY);
-static Motor mRight(BIN1, BIN2, PWMB, 1, STBY);
+// The two motors, exactly as tankie.ino wires them (shared STBY).
+static Motor mLeft(AIN1, AIN2, PWMA, STBY);
+static Motor mRight(BIN1, BIN2, PWMB, STBY);
 static TankDrive tank(&mLeft, &mRight);
 static Servo panServo;
 static Servo tiltServo;

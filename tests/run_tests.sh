@@ -22,6 +22,7 @@ mkdir -p tests/build
 
 # Modules under test (the firmware .cpp files, compiled for the host).
 MODULES=(
+  tankie/wheels.cpp
   tankie/tankdrive.cpp
   tankie/SparkFun_TB6612.cpp
   tankie/batt.cpp
@@ -40,6 +41,7 @@ INO=(
 # Test files (one per module, plus the harness).
 TESTS=(
   tests/test_main.cpp
+  tests/test_wheels.cpp
   tests/test_tankdrive.cpp
   tests/test_motor.cpp
   tests/test_bat_voltage.cpp

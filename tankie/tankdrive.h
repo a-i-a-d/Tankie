@@ -14,13 +14,15 @@
 #endif
 
 #include "Arduino.h"
-//#include "m8833.h"
 #include "SparkFun_TB6612.h"
 
+// TankDrive: turns a (speed, steer) command into per-motor drive outputs.
+// The wheel math itself lives in the pure, Arduino-free tankie/wheels.cpp
+// (issue #14) so it is unit-testable on the host; this class only stores
+// the command and delegates to computeWheels().
 class TankDrive
 {
   public:
-    //TankDrive(M8833 *_mLeft, M8833 *_mRight);
     TankDrive(Motor *_mLeft, Motor *_mRight);
     ~TankDrive();
     void setSpeed(int speed);
@@ -29,12 +31,7 @@ class TankDrive
   private:
     int speed;
     int steer;
-    int r_steer;
-    void adjust();
     void updateMotors();
-    void updateRelativeSteer();
-    //M8833 *mLeft = nullptr;
-    //M8833 *mRight = nullptr;
     Motor *mLeft = nullptr;
     Motor *mRight = nullptr;
 };
