@@ -6,7 +6,8 @@
 //
 // Design notes:
 //   * Non-blocking: loop() only reads whatever bytes are available on
-//     Serial and accumulates them into lineBuf_. No delay() calls.
+//     Serial and accumulates them into lineBuf_. No delay() calls. The
+//     sweep (issue #31) is stepped from loop() the same way.
 //   * JSON parsing is a small, self-contained field extractor (no
 //     ArduinoJson dependency) — see jsonGetString/jsonGetInt below.
 //   * All emission goes through emit() which appends a newline, so every
@@ -47,6 +48,13 @@ SerialProto::SerialProto(TankDrive* tank, Servo* panServo, Servo* tiltServo,
   steer_ = 0;
   pan_ = 90;
   tilt_ = 90;
+  sweepActive_ = false;
+  sweepAxis_ = 0;
+  from_ = 0;
+  to_ = 0;
+  steps_ = 0;
+  stepIdx_ = 0;
+  nextStepMs_ = 0;
 }
 
 void SerialProto::begin() {
@@ -59,12 +67,14 @@ void SerialProto::begin() {
   steer_ = 0;
   pan_ = 90;
   tilt_ = 90;
+  sweepActive_ = false;
   emitHello();
 }
 
 void SerialProto::loop() {
   readSerial();
   checkWatchdog();
+  stepSweep();
   // ~1 Hz state broadcast (reuses the existing 1 s battery interval idea).
   unsigned long now = millis();
   if (now - lastStateBroadcastMs_ >= 1000UL) {
@@ -149,6 +159,45 @@ void SerialProto::handleLine(const char* line, size_t len) {
       return;
     }
     handleTilt(angle);
+  } else if (strcmp(cmd, "pan-rel") == 0) {
+    int delta = 0;
+    if (!jsonGetInt(line, "delta", &delta)) {
+      emitError("missing", "delta");
+      return;
+    }
+    handlePanRel(delta);
+  } else if (strcmp(cmd, "tilt-rel") == 0) {
+    int delta = 0;
+    if (!jsonGetInt(line, "delta", &delta)) {
+      emitError("missing", "delta");
+      return;
+    }
+    handleTiltRel(delta);
+  } else if (strcmp(cmd, "center") == 0) {
+    handleCenter();
+  } else if (strcmp(cmd, "sweep") == 0) {
+    char axis[8];
+    if (!jsonGetString(line, "axis", axis, sizeof(axis))) {
+      emitError("missing", "axis");
+      return;
+    }
+    int from = 0, to = 0, steps = 0;
+    if (!jsonGetInt(line, "from", &from)) { emitError("missing", "from"); return; }
+    if (!jsonGetInt(line, "to", &to))     { emitError("missing", "to");   return; }
+    if (!jsonGetInt(line, "steps", &steps)) { emitError("missing", "steps"); return; }
+    if (steps < SERIAL_SWEEP_MIN_STEPS || steps > SERIAL_SWEEP_MAX_STEPS) {
+      emitError("range", "steps");
+      return;
+    }
+    if (from < 0 || from > 180) { emitError("range", "from"); return; }
+    if (to < 0 || to > 180)     { emitError("range", "to");   return; }
+    if (strcmp(axis, "pan") == 0) {
+      handleSweep(0, from, to, steps);
+    } else if (strcmp(axis, "tilt") == 0) {
+      handleSweep(1, from, to, steps);
+    } else {
+      emitError("range", "axis");
+    }
   } else if (strcmp(cmd, "stop") == 0) {
     handleStop();
   } else if (strcmp(cmd, "set_stream") == 0) {
@@ -176,6 +225,7 @@ void SerialProto::handleDrive(int speed, int steer) {
 
 void SerialProto::handlePan(int angle) {
   if (angle < 0 || angle > 180) { emitError("range", "pan"); return; }
+  sweepActive_ = false;   // an explicit pan command cancels any running sweep
   panServo_->write(angle);
   pan_ = angle;
   seq_++;
@@ -185,6 +235,7 @@ void SerialProto::handlePan(int angle) {
 
 void SerialProto::handleTilt(int angle) {
   if (angle < 0 || angle > 180) { emitError("range", "tilt"); return; }
+  sweepActive_ = false;   // an explicit tilt command cancels any running sweep
   tiltServo_->write(angle);
   tilt_ = angle;
   seq_++;
@@ -192,11 +243,79 @@ void SerialProto::handleTilt(int angle) {
   emitState();
 }
 
+void SerialProto::handlePanRel(int delta) {
+  // Relative move from the current pan (issue #31), clamped to 0..180.
+  // Deltas are accepted in [-180, 180] (the full servo range) — anything
+  // larger is a range error rather than a silent clamp.
+  if (delta < -180 || delta > 180) { emitError("range", "delta"); return; }
+  int target = pan_ + delta;
+  if (target < 0) target = 0;
+  if (target > 180) target = 180;
+  sweepActive_ = false;   // an explicit relative move cancels any running sweep
+  panServo_->write(target);
+  pan_ = target;
+  seq_++;
+  emitAck();
+  emitState();
+}
+
+void SerialProto::handleTiltRel(int delta) {
+  if (delta < -180 || delta > 180) { emitError("range", "delta"); return; }
+  int target = tilt_ + delta;
+  if (target < 0) target = 0;
+  if (target > 180) target = 180;
+  sweepActive_ = false;
+  tiltServo_->write(target);
+  tilt_ = target;
+  seq_++;
+  emitAck();
+  emitState();
+}
+
+void SerialProto::handleCenter() {
+  // Center the camera: pan=90 AND tilt=90 in one ack (issue #31).
+  sweepActive_ = false;
+  panServo_->write(90);
+  tiltServo_->write(90);
+  pan_ = 90;
+  tilt_ = 90;
+  seq_++;
+  emitAck();
+  emitState();
+}
+
+void SerialProto::handleSweep(int axis, int from, int to, int steps) {
+  // Time-based sweep (issue #31): step from `from` to `to` across `steps`
+  // equally-spaced positions, spread over ~SERIAL_SWEEP_DEFAULT_MS.
+  // Non-blocking: stepSweep() in loop() applies one position at a time.
+  if (steps < SERIAL_SWEEP_MIN_STEPS || steps > SERIAL_SWEEP_MAX_STEPS) {
+    emitError("range", "steps");
+    return;
+  }
+  if (from < 0 || from > 180) { emitError("range", "from"); return; }
+  if (to < 0 || to > 180)     { emitError("range", "to");   return; }
+
+  sweepActive_ = true;
+  sweepAxis_ = axis;
+  from_ = from;
+  to_ = to;
+  steps_ = steps;
+  stepIdx_ = 0;
+  unsigned long interval = SERIAL_SWEEP_DEFAULT_MS / steps_;
+  if (interval < 1) interval = 1;
+  // First position applies on the very next loop() iteration (immediate),
+  // the rest are spread over ~SERIAL_SWEEP_DEFAULT_MS.
+  nextStepMs_ = millis();
+  seq_++;
+  emitAck();
+}
+
 void SerialProto::handleStop() {
   tank_->setSpeed(0);
   tank_->setSteer(0);
   speed_ = 0;
   steer_ = 0;
+  sweepActive_ = false;   // stop cancels a running sweep (issue #31)
   seq_++;
   lastDriveCmdMs_ = millis();
   if (watchdogFired_) watchdogFired_ = false;   // re-arm on next command
@@ -286,6 +405,36 @@ void SerialProto::handleSetStream(const char* line) {
 }
 
 // ---------------------------------------------------------------------------
+// Sweep stepper (issue #31)
+// ---------------------------------------------------------------------------
+
+void SerialProto::stepSweep() {
+  if (!sweepActive_) return;
+  unsigned long now = millis();
+  if (now < nextStepMs_) return;
+
+  // Apply the next position.
+  int pos = from_ + (to_ - from_) * stepIdx_ / steps_;
+  if (sweepAxis_ == 0) {
+    panServo_->write(pos);
+    pan_ = pos;
+  } else {
+    tiltServo_->write(pos);
+    tilt_ = pos;
+  }
+  stepIdx_++;
+
+  if (stepIdx_ >= steps_) {
+    // Sweep complete: emit the done line and stop.
+    sweepActive_ = false;
+    emitSweepDone();
+    emitState();
+  } else {
+    nextStepMs_ = now + (SERIAL_SWEEP_DEFAULT_MS / steps_);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Watchdog
 // ---------------------------------------------------------------------------
 
@@ -334,6 +483,12 @@ void SerialProto::emitError(const char* code, const char* field) {
 
 void SerialProto::emitWatchdog() {
   emit("{\"type\":\"watchdog\"}");
+}
+
+void SerialProto::emitSweepDone() {
+  emit(sweepAxis_ == 0
+       ? "{\"type\":\"sweep\",\"axis\":\"pan\",\"done\":true}"
+       : "{\"type\":\"sweep\",\"axis\":\"tilt\",\"done\":true}");
 }
 
 void SerialProto::emitState() {

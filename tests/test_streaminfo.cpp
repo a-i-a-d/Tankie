@@ -20,8 +20,8 @@
 #include "streaminfo.h"
 #include "netstate.h"
 
-static Motor mLeft(AIN1, AIN2, PWMA, 1, STBY);
-static Motor mRight(BIN1, BIN2, PWMB, 1, STBY);
+static Motor mLeft(AIN1, AIN2, PWMA, STBY);
+static Motor mRight(BIN1, BIN2, PWMB, STBY);
 static TankDrive tank(&mLeft, &mRight);
 static Servo panServo;
 static Servo tiltServo;

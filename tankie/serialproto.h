@@ -8,6 +8,10 @@
 //   {"cmd":"drive","speed":50,"steer":0}
 //   {"cmd":"pan","angle":90}
 //   {"cmd":"tilt","angle":30}
+//   {"cmd":"pan-rel","delta":+20}          (issue #31)
+//   {"cmd":"tilt-rel","delta":-10}         (issue #31)
+//   {"cmd":"center"}                       (issue #31)
+//   {"cmd":"sweep","axis":"pan","from":0,"to":180,"steps":20}  (issue #31)
 //   {"cmd":"stop"}
 //   {"cmd":"set_stream","ip":"192.168.1.42","port":8889,"path":"/cam/"}
 //        (issue #51: the Pi pushes its own stream endpoint; the ESP stores
@@ -18,6 +22,7 @@
 //   {"type":"ack","seq":1}
 //   {"type":"error","seq":2,"code":"range","field":"speed"}
 //   {"type":"watchdog"}
+//   {"type":"sweep","axis":"pan","done":true}    (issue #31, on completion)
 //   {"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,"pan":90,"tilt":90,
 //    "net_mode":"sta"|"ap","net_ip":"192.168.x.y",
 //    "stream_url":"http://192.168.1.42:8889/cam/"}   (issue #46, #51)
@@ -26,7 +31,8 @@
 // Non-JSON lines (e.g. Serial.println debug output) are ignored, so the
 // protocol coexists safely with console logging (issue #29, T7).
 //
-// See issue #29 for the full protocol specification.
+// See issue #29 for the full protocol specification and issue #31 for the
+// pan/tilt improvements (relative moves, centering, sweep).
 
 #ifndef _SERIALPROTO_H_
 #define _SERIALPROTO_H_
@@ -49,7 +55,7 @@ public:
               float (*getBattery)(float R1, float R2), float R1, float R2);
 
   void begin();   // reset state + emit the hello handshake
-  void loop();    // non-blocking: read lines, watchdog, 1 Hz state broadcast
+  void loop();    // non-blocking: read lines, watchdog, sweep step, 1 Hz state
 
   // --- State accessors ---
   unsigned long seq() const { return seq_; }
@@ -58,6 +64,7 @@ public:
   int           steer() const { return steer_; }
   int           pan()   const { return pan_; }
   int           tilt()  const { return tilt_; }
+  bool          sweepActive() const { return sweepActive_; }
   // The stream URL the Pi pushed via set_stream (issue #51); empty until set.
   String        streamUrl() const { return streamInfo.url; }
 
@@ -81,6 +88,18 @@ private:
   int pan_;
   int tilt_;
 
+  // Sweep state (issue #31): a time-based sweep across a range, stepped
+  // non-blockingly from loop(). from_/to_ are the endpoints, steps_ the
+  // number of positions, stepIdx_ the next position to apply,
+  // nextStepMs_ when it is due, sweepAxis_ which servo moves.
+  bool          sweepActive_;
+  int           sweepAxis_;    // 0 = pan, 1 = tilt
+  int           from_;
+  int           to_;
+  int           steps_;
+  int           stepIdx_;
+  unsigned long nextStepMs_;
+
   // Dependencies
   TankDrive* tank_;
   Servo*     panServo_;
@@ -95,6 +114,7 @@ private:
   void emitAck();
   void emitError(const char* code, const char* field);
   void emitWatchdog();
+  void emitSweepDone();
   void emitState();
 
   // Command handling (Pi → ESP)
@@ -102,9 +122,14 @@ private:
   void handleDrive(int speed, int steer);
   void handlePan(int angle);
   void handleTilt(int angle);
+  void handlePanRel(int delta);
+  void handleTiltRel(int delta);
+  void handleCenter();
+  void handleSweep(int axis, int from, int to, int steps);
   void handleStop();
   void handleSetStream(const char* line);   // issue #51
   void checkWatchdog();
+  void stepSweep();
   void readSerial();
 
   // Minimal JSON field extractors (no external dependency).

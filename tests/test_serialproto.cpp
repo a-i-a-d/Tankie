@@ -366,3 +366,200 @@ TEST(json_int_handles_whitespace) {
   proto.injectLine("{ \"cmd\" : \"drive\" , \"speed\" : 33 , \"steer\" : 0 }");
   CHECK(proto.speed() == 33);
 }
+
+// ===========================================================================
+// Issue #31 — pan/tilt improvements: pan-rel, tilt-rel, center, sweep
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// T8 — pan-rel: relative from current, clamped to 0..180
+// ---------------------------------------------------------------------------
+TEST(pan_rel_moves_from_current) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"pan\",\"angle\":90}");
+  CHECK_EQ_INT(panServo.read(), 90);
+  proto.injectLine("{\"cmd\":\"pan-rel\",\"delta\":+20}");
+  CHECK_EQ_INT(panServo.read(), 110);
+  CHECK_EQ_INT(proto.pan(), 110);
+  CHECK(capturedHasLine("{\"type\":\"ack\",\"seq\":2}"));
+}
+
+TEST(pan_rel_negative_delta) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"pan\",\"angle\":90}");
+  proto.injectLine("{\"cmd\":\"pan-rel\",\"delta\":-30}");
+  CHECK_EQ_INT(panServo.read(), 60);
+}
+
+TEST(pan_rel_clamps_at_zero) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"pan\",\"angle\":10}");
+  proto.injectLine("{\"cmd\":\"pan-rel\",\"delta\":-50}");
+  CHECK_EQ_INT(panServo.read(), 0);   // clamped, no underflow
+  CHECK_EQ_INT(proto.pan(), 0);
+}
+
+TEST(pan_rel_clamps_at_180) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"pan\",\"angle\":170}");
+  proto.injectLine("{\"cmd\":\"pan-rel\",\"delta\":+50}");
+  CHECK_EQ_INT(panServo.read(), 180); // clamped, no overflow
+  CHECK_EQ_INT(proto.pan(), 180);
+}
+
+TEST(pan_rel_delta_out_of_range_is_error) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"pan-rel\",\"delta\":+200}");
+  CHECK(capturedContains("\"code\":\"range\""));
+  CHECK(capturedContains("\"field\":\"delta\""));
+  CHECK_EQ_INT(panServo.read(), 0);   // servo untouched
+}
+
+// ---------------------------------------------------------------------------
+// T9 — tilt-rel: relative from current, clamped to 0..180
+// ---------------------------------------------------------------------------
+TEST(tilt_rel_moves_from_current) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"tilt\",\"angle\":90}");
+  proto.injectLine("{\"cmd\":\"tilt-rel\",\"delta\":-10}");
+  CHECK_EQ_INT(tiltServo.read(), 80);
+  CHECK_EQ_INT(proto.tilt(), 80);
+}
+
+TEST(tilt_rel_clamps_at_boundaries) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"tilt\",\"angle\":5}");
+  proto.injectLine("{\"cmd\":\"tilt-rel\",\"delta\":-50}");
+  CHECK_EQ_INT(tiltServo.read(), 0);
+  proto.injectLine("{\"cmd\":\"tilt\",\"angle\":175}");
+  proto.injectLine("{\"cmd\":\"tilt-rel\",\"delta\":+50}");
+  CHECK_EQ_INT(tiltServo.read(), 180);
+}
+
+// ---------------------------------------------------------------------------
+// T10 — center: pan=90 AND tilt=90 in one ack
+// ---------------------------------------------------------------------------
+TEST(center_sets_both_servos) {
+  resetProto();
+  // Move both off-center first.
+  proto.injectLine("{\"cmd\":\"pan\",\"angle\":20}");
+  proto.injectLine("{\"cmd\":\"tilt\",\"angle\":160}");
+  CHECK_EQ_INT(panServo.read(), 20);
+  CHECK_EQ_INT(tiltServo.read(), 160);
+  // Center in a single command -> one ack.
+  Serial.clearCapture();
+  proto.injectLine("{\"cmd\":\"center\"}");
+  CHECK_EQ_INT(panServo.read(), 90);
+  CHECK_EQ_INT(tiltServo.read(), 90);
+  CHECK_EQ_INT(proto.pan(), 90);
+  CHECK_EQ_INT(proto.tilt(), 90);
+  CHECK(capturedHasLine("{\"type\":\"ack\",\"seq\":3}"));
+  CHECK(capturedHasLine(
+    "{\"type\":\"state\",\"seq\":3,\"battery\":7.42,\"speed\":0,\"steer\":0,\"pan\":90,\"tilt\":90,"
+    "\"net_mode\":\"sta\",\"net_ip\":\"0.0.0.0\"}"));
+}
+
+// ---------------------------------------------------------------------------
+// T11 — sweep: step-by-step, completion line, stop-cancels
+// ---------------------------------------------------------------------------
+
+TEST(sweep_pan_steps_and_completes) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"sweep\",\"axis\":\"pan\",\"from\":0,\"to\":180,\"steps\":4}");
+  CHECK(proto.sweepActive());
+  CHECK(capturedHasLine("{\"type\":\"ack\",\"seq\":1}"));
+
+  // 4 steps @ (2000/4)=500 ms each. The first position (from=0) applies on
+  // the first loop(); the rest are spread over ~2 s. Positions: 0,45,90,135
+  // (from + (to-from)*idx/steps). The 4th step (idx=3) is the last -> done.
+  host_set_millis(500);  proto.loop();
+  CHECK_EQ_INT(panServo.read(), 0);
+  CHECK(proto.sweepActive());
+  host_set_millis(1000); proto.loop();
+  CHECK_EQ_INT(panServo.read(), 45);
+  CHECK(proto.sweepActive());
+  host_set_millis(1500); proto.loop();
+  CHECK_EQ_INT(panServo.read(), 90);
+  CHECK(proto.sweepActive());
+  host_set_millis(2000); proto.loop();
+  CHECK_EQ_INT(panServo.read(), 135);
+  CHECK(!proto.sweepActive());   // 4th step applied -> sweep complete
+  CHECK(capturedHasLine("{\"type\":\"sweep\",\"axis\":\"pan\",\"done\":true}"));
+}
+
+TEST(sweep_tilt_axis_uses_tilt_servo) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"sweep\",\"axis\":\"tilt\",\"from\":180,\"to\":0,\"steps\":2}");
+  CHECK(proto.sweepActive());
+  host_set_millis(1000); proto.loop();  // step 0: 180 + (0-180)*0/2 = 180
+  CHECK_EQ_INT(tiltServo.read(), 180);
+  CHECK_EQ_INT(panServo.read(), 0);    // pan untouched (shim default)
+  CHECK(proto.sweepActive());
+  host_set_millis(2000); proto.loop(); // step 1: 180 + (0-180)*1/2 = 90 (last)
+  CHECK_EQ_INT(tiltServo.read(), 90);
+  CHECK(!proto.sweepActive());
+  CHECK(capturedHasLine("{\"type\":\"sweep\",\"axis\":\"tilt\",\"done\":true}"));
+}
+
+TEST(sweep_stop_cancels_before_completion) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"sweep\",\"axis\":\"pan\",\"from\":0,\"to\":180,\"steps\":10}");
+  CHECK(proto.sweepActive());
+  host_set_millis(200); proto.loop();   // apply a couple of steps
+  // Cancel with stop.
+  proto.injectLine("{\"cmd\":\"stop\"}");
+  CHECK(!proto.sweepActive());
+  // No completion line should have been emitted.
+  CHECK(!capturedContains("\"done\":true"));
+  // The servo stays where stop left it (not forced to the sweep end).
+  int pos = panServo.read();
+  CHECK(pos >= 0 && pos <= 180);
+}
+
+TEST(sweep_explicit_pan_cancels) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"sweep\",\"axis\":\"pan\",\"from\":0,\"to\":180,\"steps\":10}");
+  CHECK(proto.sweepActive());
+  host_set_millis(200); proto.loop();
+  proto.injectLine("{\"cmd\":\"pan\",\"angle\":45}");
+  CHECK(!proto.sweepActive());
+  CHECK_EQ_INT(panServo.read(), 45);
+  CHECK(!capturedContains("\"done\":true"));
+}
+
+TEST(sweep_steps_out_of_range_is_error) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"sweep\",\"axis\":\"pan\",\"from\":0,\"to\":180,\"steps\":0}");
+  CHECK(capturedContains("\"field\":\"steps\""));
+  CHECK(!proto.sweepActive());
+  proto.injectLine("{\"cmd\":\"sweep\",\"axis\":\"pan\",\"from\":0,\"to\":180,\"steps\":51}");
+  CHECK(capturedContains("\"field\":\"steps\""));
+  CHECK(!proto.sweepActive());
+}
+
+TEST(sweep_bad_axis_is_error) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"sweep\",\"axis\":\"yaw\",\"from\":0,\"to\":180,\"steps\":5}");
+  CHECK(capturedContains("\"field\":\"axis\""));
+  CHECK(!proto.sweepActive());
+}
+
+TEST(sweep_missing_fields_are_errors) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"sweep\",\"axis\":\"pan\",\"to\":180,\"steps\":5}");
+  CHECK(capturedContains("\"field\":\"from\""));
+  proto.injectLine("{\"cmd\":\"sweep\",\"axis\":\"pan\",\"from\":0,\"steps\":5}");
+  CHECK(capturedContains("\"field\":\"to\""));
+  proto.injectLine("{\"cmd\":\"sweep\",\"axis\":\"pan\",\"from\":0,\"to\":180}");
+  CHECK(capturedContains("\"field\":\"steps\""));
+  CHECK(!proto.sweepActive());
+}
+
+TEST(sweep_out_of_range_endpoints_are_errors) {
+  resetProto();
+  proto.injectLine("{\"cmd\":\"sweep\",\"axis\":\"pan\",\"from\":-1,\"to\":180,\"steps\":5}");
+  CHECK(capturedContains("\"field\":\"from\""));
+  proto.injectLine("{\"cmd\":\"sweep\",\"axis\":\"pan\",\"from\":0,\"to\":181,\"steps\":5}");
+  CHECK(capturedContains("\"field\":\"to\""));
+  CHECK(!proto.sweepActive());
+}

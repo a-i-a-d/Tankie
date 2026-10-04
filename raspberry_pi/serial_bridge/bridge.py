@@ -16,6 +16,10 @@ Protocol (NDJSON, one object per line, 921600 8N1):
   Pi  → ESP:  {"cmd":"drive","speed":50,"steer":0}
                {"cmd":"pan","angle":90}
                {"cmd":"tilt","angle":30}
+               {"cmd":"pan-rel","delta":+20}         (issue #31)
+               {"cmd":"tilt-rel","delta":-10}        (issue #31)
+               {"cmd":"center"}                      (issue #31)
+               {"cmd":"sweep","axis":"pan","from":0,"to":180,"steps":20}
                {"cmd":"stop"}
                {"cmd":"set_stream","ip":"192.168.1.42","port":8889,"path":"/cam/"}
                 (issue #51: the Pi pushes its own stream endpoint so the ESP
@@ -24,6 +28,7 @@ Protocol (NDJSON, one object per line, 921600 8N1):
                {"type":"ack","seq":1}
                {"type":"error","seq":2,"code":"range","field":"speed"}
                {"type":"watchdog"}
+               {"type":"sweep","axis":"pan","done":true}   (issue #31)
                {"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,
                 "pan":90,"tilt":90,"net_mode":"sta","net_ip":"192.168.1.42"}
 
@@ -71,16 +76,35 @@ DEFAULTS = {
     # set_stream (the Pi owns the camera + mediamtx, so it knows its own IP).
     "stream_port": 8889,
     "stream_path": "/cam/",
+
+    # Autonomous drive profile (issue #31): clamp AI-issued drive commands.
+    # The ESP cannot tell AI from manual traffic, so the bridge enforces
+    # the limit. Manual (CLI / Web UI) traffic is NOT clamped.
+    "auto_profile": {
+        "enabled": True,
+        "max_speed": 40,
+        "max_steer": 120,
+    },
 }
 
 
 def load_config(path):
-    """Load config.yaml, falling back to defaults for missing keys."""
+    """Load config.yaml, falling back to defaults for missing keys.
+
+    Nested dicts (currently just `auto_profile`) are deep-merged so a
+    partial override (e.g. only `max_speed`) keeps the other defaults.
+    """
     cfg = dict(DEFAULTS)
     if path and os.path.exists(path) and yaml:
         with open(path) as f:
             user_cfg = yaml.safe_load(f) or {}
-        cfg.update(user_cfg)
+        for key, val in user_cfg.items():
+            if isinstance(val, dict) and isinstance(cfg.get(key), dict):
+                merged = dict(cfg[key])
+                merged.update(val)
+                cfg[key] = merged
+            else:
+                cfg[key] = val
         log.info("loaded config from %s", path)
     elif path and os.path.exists(path) and not yaml:
         log.warning("pyyaml not installed — using defaults (config file %s ignored)", path)
@@ -235,6 +259,28 @@ class Bridge:
             return
         ser.write(line.encode())
         ser.flush()
+
+    # -- autonomous drive profile (issue #31) --------------------------------
+    #
+    # The ESP8266 cannot distinguish AI-issued `drive` from manual `drive`.
+    # The bridge is therefore the enforcement layer for the AI speed/steer
+    # limit. Manual traffic (CLI / Web UI) is NOT clamped — only the AI path
+    # (ai_control.py) goes through this. The 250 ms keep-alive re-sends the
+    # CLAMPED values, so the ESP never sees an over-limit value from the AI
+    # path.
+    def _clamp_drive(self, speed, steer):
+        """Clamp speed/steer to the auto profile. Returns (speed, steer, clamped)."""
+        prof = self.cfg.get("auto_profile") or {}
+        if not prof.get("enabled", False):
+            return speed, steer, None
+        max_speed = int(prof.get("max_speed", 40))
+        max_steer = int(prof.get("max_steer", 120))
+        clamped = None
+        new_speed = max(-max_speed, min(max_speed, speed))
+        new_steer = max(-max_steer, min(max_steer, steer))
+        if new_speed != speed or new_steer != steer:
+            clamped = {"speed": new_speed, "steer": new_steer}
+        return new_speed, new_steer, clamped
 
     def _read_line(self):
         """Read one complete line from the serial port (blocking with timeout)."""
@@ -433,12 +479,18 @@ class Bridge:
         if c == "drive":
             speed = int(cmd.get("speed", 0))
             steer = int(cmd.get("steer", 0))
+            # Autonomous drive profile (issue #31): clamp before sending and
+            # before storing (so the keep-alive re-sends the clamped values).
+            speed, steer, clamped = self._clamp_drive(speed, steer)
             with self._active_drive_lock:
                 self._active_drive = {"speed": speed, "steer": steer}
             self._send_line({"cmd": "drive", "speed": speed, "steer": steer})
             self._last_send_ms = int(time.time() * 1000)
             self.state.update(last_command={"cmd": "drive", "speed": speed, "steer": steer})
-            return {"ok": True}
+            result = {"ok": True}
+            if clamped:
+                result["clamped"] = clamped
+            return result
 
         elif c == "pan":
             angle = int(cmd.get("angle", 90))
@@ -450,6 +502,43 @@ class Bridge:
             angle = int(cmd.get("angle", 90))
             self._send_line({"cmd": "tilt", "angle": angle})
             self.state.update(last_command={"cmd": "tilt", "angle": angle})
+            return {"ok": True}
+
+        elif c == "pan-rel":
+            delta = int(cmd.get("delta", 0))
+            self._send_line({"cmd": "pan-rel", "delta": delta})
+            self.state.update(last_command={"cmd": "pan-rel", "delta": delta})
+            return {"ok": True}
+
+        elif c == "tilt-rel":
+            delta = int(cmd.get("delta", 0))
+            self._send_line({"cmd": "tilt-rel", "delta": delta})
+            self.state.update(last_command={"cmd": "tilt-rel", "delta": delta})
+            return {"ok": True}
+
+        elif c == "center":
+            self._send_line({"cmd": "center"})
+            self.state.update(last_command={"cmd": "center"})
+            return {"ok": True}
+
+        elif c == "sweep":
+            axis = cmd.get("axis", "pan")
+            if axis not in ("pan", "tilt"):
+                return {"error": f"invalid axis: {axis} (must be pan|tilt)"}
+            try:
+                frm = int(cmd.get("from"))
+                to = int(cmd.get("to"))
+                steps = int(cmd.get("steps"))
+            except (TypeError, ValueError):
+                return {"error": "sweep requires integer from/to/steps"}
+            if not (0 <= frm <= 180 and 0 <= to <= 180):
+                return {"error": "sweep from/to must be in [0, 180]"}
+            if not (1 <= steps <= 50):
+                return {"error": "sweep steps must be in [1, 50]"}
+            self._send_line({"cmd": "sweep", "axis": axis, "from": frm,
+                             "to": to, "steps": steps})
+            self.state.update(last_command={"cmd": "sweep", "axis": axis,
+                                            "from": frm, "to": to, "steps": steps})
             return {"ok": True}
 
         elif c == "stop":
