@@ -1,6 +1,7 @@
 # Tankie serial bridge daemon — issue #29.
 #
-# Holds /dev/ttyUSB0 and provides the NDJSON control link to the ESP8266.
+# Holds the control-link serial port (default /dev/ttyS0, Pi native UART0)
+# and provides the NDJSON control link to the ESP8266.
 # Install with setup-serial.sh (or copy to /etc/systemd/system/ + enable).
 #
 #   systemctl enable --now tankie-serial
@@ -16,7 +17,7 @@ Wants=systemd-udev-settled.service
 
 [Service]
 Type=simple
-# Run as the pi user (dialout group gives access to /dev/ttyUSB0).
+# Run as the pi user (dialout group gives access to /dev/ttyS0).
 User=pi
 Group=pi
 SupplementaryGroups=dialout

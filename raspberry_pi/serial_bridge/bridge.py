@@ -2,7 +2,8 @@
 """
 Tankie serial bridge daemon — issue #29.
 
-Holds /dev/ttyUSB0 exclusively and provides:
+Holds the control-link serial port (default /dev/ttyS0, the Pi native
+UART0 wired to the ESP8266; see conf/serial_bridge.yaml) exclusively and provides:
   * a reader thread  (NDJSON in from the ESP8266, seq/ack tracking, link health)
   * a writer thread  (250 ms keep-alive re-send of the active drive command)
   * a state store    (JSON file: last command, last state, link up/down)
@@ -59,7 +60,7 @@ log = logging.getLogger("tankie-bridge")
 # Defaults (overridden by config.yaml)
 # ---------------------------------------------------------------------------
 DEFAULTS = {
-    "serial_port": "/dev/ttyUSB0",
+    "serial_port": "/dev/ttyS0",
     "baud": 921600,
     "keepalive_ms": 250,
     "ack_timeout_ms": 500,

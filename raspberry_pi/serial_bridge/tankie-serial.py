@@ -12,7 +12,7 @@ Usage:
   tankie-serial.py stop
   tankie-serial.py state
   tankie-serial.py watchdog-test
-  tankie-serial.py raw --port /dev/ttyUSB0        # direct, no daemon
+  tankie-serial.py raw --port /dev/ttyS0          # direct, no daemon
 
   --raw    Talk directly to the serial port (bypass the daemon).
   --config path to config.yaml (default: next to this script)
@@ -30,7 +30,7 @@ except ImportError:
     yaml = None
 
 DEFAULTS = {
-    "serial_port": "/dev/ttyUSB0",
+    "serial_port": "/dev/ttyS0",
     "baud": 921600,
     "socket_path": "/run/tankie/bridge.sock",
     "state_file": "/var/lib/tankie/state.json",

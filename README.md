@@ -118,8 +118,8 @@ The [ai-control](ai-control/) folder contains the code that connects an AI to th
 - **Pan/tilt:** the firmware clamps `pan`/`tilt` values to the 0-180 servo range; the AI tools already use relative moves (`up`/`down`/`left`/`right`/`center`) around the 90-degree center position.
 
 
-## Serial control protocol (ESP8266 over /dev/ttyUSB0)
-The ESP8266 is controlled over the USB-serial link (`/dev/ttyUSB0` @ 921600 8N1)
+## Serial control protocol (ESP8266 over the Pi native UART0)
+The ESP8266 is controlled over the Pi's native UART0 (`/dev/ttyS0` @ 921600 8N1, wired TX→RX / RX→TX / GND→GND — the permanent control link; `/dev/ttyUSB0` is only the USB flashing adapter)
 using a line-oriented JSON protocol (NDJSON) — see
 [issue #29](https://github.com/a-i-a-d/Tankie/issues/29). The WiFi/WebUI
 path above stays available as a fallback.
@@ -159,7 +159,7 @@ catches firmware/Pi mismatches. Non-JSON lines (debug output) are ignored.
 
 ### Pi-side bridge (`raspberry_pi/serial_bridge/`)
 
-- `bridge.py` — daemon holding `/dev/ttyUSB0`: reader thread (NDJSON in,
+- `bridge.py` — daemon holding the control link (`/dev/ttyS0` by default): reader thread (NDJSON in,
   seq/ack tracking, link health), writer thread (250 ms keep-alive
   re-send of the active drive command), state store
   (`/var/lib/tankie/state.json`), Unix socket (`/run/tankie/bridge.sock`).

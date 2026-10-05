@@ -5,7 +5,10 @@
 # tankie/config_serial.h (SERIAL_PROTO_BAUD, SERIAL_WATCHDOG_MS).
 # Keep the two in sync when changing baud or watchdog timing.
 
-serial_port: /dev/ttyUSB0
+serial_port: /dev/ttyS0
+# NOTE: the control link uses the Pi's native UART0 (GPIO14 TX / GPIO15 RX,
+# wired directly to the ESP8266 TX/RX). /dev/ttyUSB0 was the temporary
+# USB/CH340 flashing adapter and is NOT the control link (see README).
 baud: 921600
 
 # Keep-alive: the bridge re-sends the active drive command at this interval

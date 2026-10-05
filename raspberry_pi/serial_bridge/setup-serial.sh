@@ -53,8 +53,9 @@ sudo systemctl enable systemd-tmpfiles-setup.service 2>/dev/null || true
 # --- 3. udev rule (stable port name) ----------------------------------------
 # The CH340 (QinHeng 1a86:7523) on this tank is /dev/ttyUSB0. A udev symlink
 # /dev/tankie-serial keeps the name stable if a second USB-serial device
-# appears. The bridge config uses /dev/ttyUSB0 by default; point it at the
-# symlink if you prefer a stable name.
+# appears. The control link uses the Pi's native UART0 (/dev/ttyS0, the
+# permanent TX/RX wiring); the udev symlink is a convenience for the USB
+# flashing adapter if you prefer a stable name for that.
 log "installing udev rule for a stable serial port name …"
 sudo tee "${UDEV_RULE}" >/dev/null <<UDEV
 # Tankie ESP8266 CH340 USB-serial bridge (issue #29)
