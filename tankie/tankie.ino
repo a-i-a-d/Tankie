@@ -19,11 +19,8 @@
 #include "LittleFS.h"
 #include <time.h>
 
-const int offsetA = 1;
-const int offsetB = 1;
-
-Motor M2 = Motor(AIN1, AIN2, PWMA, offsetA, STBY);
-Motor M1 = Motor(BIN1, BIN2, PWMB, offsetB, STBY);
+Motor M2 = Motor(AIN1, AIN2, PWMA, STBY);
+Motor M1 = Motor(BIN1, BIN2, PWMB, STBY);
 
 AsyncWebServer server(80);
 AsyncWebServer configServer(8080);
