@@ -21,8 +21,8 @@ Type=simple
 User=pi
 Group=pi
 SupplementaryGroups=dialout
-WorkingDirectory=/home/pi/tankie/raspberry_pi/serial_bridge
-ExecStart=/usr/bin/python3 /home/pi/tankie/raspberry_pi/serial_bridge/bridge.py --config /home/pi/tankie/raspberry_pi/conf/serial_bridge.yaml
+WorkingDirectory=/home/pi/Tankie/raspberry_pi/serial_bridge
+ExecStart=/usr/bin/python3 /home/pi/Tankie/raspberry_pi/serial_bridge/bridge.py --config /home/pi/Tankie/raspberry_pi/conf/serial_bridge.yaml
 Restart=always
 RestartSec=2
 # Safety: if the daemon dies, the ESP8266 watchdog stops the motors within
