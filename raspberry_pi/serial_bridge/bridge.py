@@ -273,8 +273,7 @@ class Bridge:
             now_ms = int(time.time() * 1000)
 
             if mtype == "hello":
-                log.info("hello: proto=%s fw=%s", msg.get("proto"), msg.get("fw"))
-                self.state.update(link_up=True, watchdog_fired=False)
+                self._on_hello(msg)
 
             elif mtype == "ack":
                 seq = msg.get("seq", 0)
@@ -338,12 +337,33 @@ class Bridge:
                     break
                 time.sleep(1)
 
-    def _push_stream(self):
+    def _on_hello(self, msg):
+        """Handle the ESP's hello handshake (reader thread).
+
+        issue #51 (follow-up): re-push set_stream on every hello. The bridge
+        only re-sends when the IP changes, so after an ESP reboot (which loses
+        its in-memory streamInfo) or a bridge restart the ESP would otherwise
+        never learn the stream endpoint again. force=True bypasses the IP
+        dedup so the endpoint is always re-sent.
+        """
+        log.info("hello: proto=%s fw=%s", msg.get("proto"), msg.get("fw"))
+        self.state.update(link_up=True, watchdog_fired=False)
+        self._last_stream_ip = None
+        self._push_stream(force=True)
+
+    def _push_stream(self, force=False):
+        """Detect our LAN IP and push it to the ESP via set_stream.
+
+        Normally a no-op while the IP is unchanged (``_last_stream_ip``).
+        ``force=True`` bypasses that guard — used on the ESP's ``hello``
+        handshake so a reconnected ESP always gets the endpoint re-sent, even
+        when the IP is unchanged. (issue #51 follow-up)
+        """
         ip = detect_lan_ip()
         if not ip:
             log.debug("stream: no LAN IP yet (no route?) — skipping set_stream")
             return
-        if ip == self._last_stream_ip:
+        if not force and ip == self._last_stream_ip:
             return
         port = int(self.cfg.get("stream_port", 8889))
         path = self.cfg.get("stream_path", "/cam/")
@@ -351,8 +371,8 @@ class Bridge:
             self._send_line({"cmd": "set_stream", "ip": ip,
                              "port": port, "path": path})
             self._last_stream_ip = ip
-            log.info("stream: pushed set_stream ip=%s port=%d path=%s",
-                     ip, port, path)
+            log.info("stream: pushed set_stream ip=%s port=%d path=%s%s",
+                     ip, port, path, " (forced on hello)" if force else "")
         except Exception as e:
             log.warning("stream: set_stream push failed: %s", e)
 

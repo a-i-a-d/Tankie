@@ -29,13 +29,29 @@ log()  { printf '\033[1;32m[setup]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[setup]\033[0m %s\n' "$*"; }
 
 # --- 1. dependencies --------------------------------------------------------
-log "installing Python dependencies (pyserial, pyyaml) …"
-if command -v pip3 >/dev/null 2>&1; then
-  pip3 install --quiet pyserial pyyaml 2>/dev/null || \
-    pip3 install --quiet --user pyserial pyyaml 2>/dev/null || \
-    warn "pip3 install failed — ensure pyserial + pyyaml are available"
+# Install the Python deps (pyserial, pyyaml). Prefer the system packages
+# (apt) first — they work on a stock Raspberry Pi OS even when pip is broken
+# or PEP 668 "externally managed" — and only fall back to pip if apt has no
+# package for the distro. (issue #51 follow-up: pip failed silently on the
+# tank Pi, so apt is now tried first.)
+log "installing Python dependencies (pyserial, pyyaml) — apt first, pip fallback …"
+if command -v apt-get >/dev/null 2>&1; then
+  (apt-get update && \
+   apt-get install -y --no-install-recommends python3-serial python3-yaml) \
+    || warn "apt-get install failed — will try pip"
 else
-  warn "pip3 not found — ensure pyserial + pyyaml are installed"
+  warn "apt-get not found — falling back to pip"
+fi
+# Verify the modules import; if not (non-Debian distro, or the apt package is
+# missing), fall back to pip.
+if ! python3 -c "import serial, yaml" >/dev/null 2>&1; then
+  if command -v pip3 >/dev/null 2>&1; then
+    pip3 install --quiet pyserial pyyaml 2>/dev/null || \
+      pip3 install --quiet --user pyserial pyyaml 2>/dev/null || \
+      warn "pip3 install failed — ensure pyserial + pyyaml are available"
+  else
+    warn "pip3 not found — ensure pyserial + pyyaml are installed"
+  fi
 fi
 
 # --- 2. directories ---------------------------------------------------------
