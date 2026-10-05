@@ -12,9 +12,10 @@ through the protocol test matrix:
   T5  drive speed=999             -> error code=range field=speed
   T6  no keep-alive > watchdog    -> {"type":"watchdog"}
   T7  non-JSON garbage on the line-> ignored, link stays up
+  T8  set_stream (issue #51)      -> ack; state.stream_url set to the Pi IP
 
 Usage:
-  python3 test_serial_proto.py [--port /dev/ttyUSB0] [--baud 921600]
+  python3 test_serial_proto.py [--port /dev/ttyS0] [--baud 921600]
                                [--watchdog-ms 1000] [--verbose]
 
 Exits 0 if every test passes, 1 otherwise.
@@ -78,7 +79,7 @@ class Port:
 
 def main():
     ap = argparse.ArgumentParser(description="Tankie serial protocol test")
-    ap.add_argument("--port", default="/dev/ttyUSB0")
+    ap.add_argument("--port", default="/dev/ttyS0")
     ap.add_argument("--baud", type=int, default=921600)
     ap.add_argument("--watchdog-ms", type=int, default=1000)
     ap.add_argument("--verbose", action="store_true")
@@ -218,6 +219,20 @@ def main():
         lines = p.read_lines(timeout=1.0, want='"ack"')
         ack = next((m for m in lines if isinstance(m, dict) and m.get("type") == "ack"), None)
         check("link still up after garbage", ack is not None, f"lines={lines}")
+
+        # ------------------------------------------------------------------
+        # T8 — set_stream (issue #51): the Pi pushes its own stream endpoint
+        # ------------------------------------------------------------------
+        print("T8: set_stream -> ack + state.stream_url")
+        p.flush()
+        p.send({"cmd": "set_stream", "ip": "192.168.1.42", "port": 8889, "path": "/cam/"})
+        lines = p.read_lines(timeout=1.0, want='"ack"')
+        ack = next((m for m in lines if isinstance(m, dict) and m.get("type") == "ack"), None)
+        state = next((m for m in lines if isinstance(m, dict) and m.get("type") == "state"), None)
+        check("set_stream ack", ack is not None, f"lines={lines}")
+        check("state.stream_url set",
+              state is not None and state.get("stream_url") == "http://192.168.1.42:8889/cam/",
+              f"state={state}")
 
         # Clean up: stop the tank.
         p.send({"cmd": "stop"})

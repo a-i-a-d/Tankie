@@ -20,7 +20,7 @@ separate box bolted on top whose only job here is to turn the CSI camera
 | `conf/` | All Pi config files in one place (issue #48). |
 | `conf/flash.conf` | Shared flash configuration (serial port/baud, OTA URL, AP name/password, filesystem toggle). Sourced by both flash scripts; env overrides win. |
 | `conf/mediamtx.yml` | The mediamtx configuration: two on-demand streams from the one camera (`cam` 1080p30 for humans, `cam_low` 480p15 for the AI). |
-| `conf/serial_bridge.yaml` | Serial-bridge configuration (serial_port, baud, keepalive_ms, ack_timeout_ms, state_file, socket_path). Auto-discovered by `bridge.py` / `tankie-serial.py`; `--config` wins. |
+| `conf/serial_bridge.yaml` | Serial-bridge configuration (serial_port, baud, keepalive_ms, ack_timeout_ms, state_file, socket_path, stream_port, stream_path). Auto-discovered by `bridge.py` / `tankie-serial.py`; `--config` wins. |
 | `mediamtx.service` | systemd unit that runs `mediamtx` as a non-root user and keeps it alive. |
 | `wlan0-watchdog.service` | One-shot recovery unit: if `wlan0` is missing, reloads the `brcmfmac` driver (fallback: restarts NetworkManager). Never reboots. |
 | `wlan0-watchdog.sh` | The actual check/recovery logic (health check, driver reload, NetworkManager fallback), installed to `/usr/local/bin/wlan0-watchdog.sh` and called by the service. |
@@ -190,8 +190,13 @@ Full history and diagnosis: [#21](https://github.com/a-i-a-d/Tankie/issues/21).
 ## Notes / related issues
 
 - The Pi's IP is the single source of truth for both streams. The ESP8266 web
-  UI still hard-codes `http://10.42.0.1:8889/cam/` — that is tracked in
-  [#16](https://github.com/a-i-a-d/Tankie/issues/16) (one config source).
+  UI no longer hard-codes a stream IP: the bridge detects the Pi's own LAN IP
+  and pushes it to the ESP over the serial link via the `set_stream` command
+  (issue [#51](https://github.com/a-i-a-d/Tankie/issues/51)), and the web UI
+  only shows the "Start video stream" button once that `stream_url` has been
+  seen. The `stream_port` / `stream_path` are configured in
+  `conf/serial_bridge.yaml` (one config source, per
+  [#16](https://github.com/a-i-a-d/Tankie/issues/16)).
 - Audio (mic/speaker) is a separate concern and is being folded into the Pi
   web app; see [#20](https://github.com/a-i-a-d/Tankie/issues/20) and
   [#21](https://github.com/a-i-a-d/Tankie/issues/21).

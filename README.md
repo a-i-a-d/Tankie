@@ -111,15 +111,15 @@ The [ai-control](ai-control/) folder contains the code that connects an AI to th
 
 ### Safety & state feedback
 - **Safety watchdog (firmware):** if the tank is driving and no command is received for 5 seconds, the motors are stopped and the pan/tilt camera is recentered automatically. A watchdog event is broadcast to all websocket clients as `{"type":"watchdog"}` (issue #32).
-- **State feedback:** the periodic websocket broadcast includes the current state in addition to the battery voltage, in the contract shape: `{"type":"state","seq":N,"battery":...,"speed":...,"steer":...,"pan":...,"tilt":...,"net_mode":"sta"|"ap","net_ip":"192.168.x.y"}` (issue #32, #46). The `net_mode` and `net_ip` fields let a client determine the ESP's IP address and WiFi mode (STA vs AP) without needing the boot console (issue #46).
+- **State feedback:** the periodic websocket broadcast includes the current state in addition to the battery voltage, in the contract shape: `{"type":"state","seq":N,"battery":...,"speed":...,"steer":...,"pan":...,"tilt":...,"net_mode":"sta"|"ap","net_ip":"192.168.x.y","stream_url":"http://192.168.1.42:8889/cam/"}` (issue #32, #46, #51). The `net_mode` and `net_ip` fields let a client determine the ESP's IP address and WiFi mode (STA vs AP) without needing the boot console (issue #46). The `stream_url` field (issue #51) carries the Pi's own video-stream endpoint, pushed by the bridge via the `set_stream` command — the human web UI only shows the "Start video stream" button once a `stream_url` has been seen, so the iframe always points at the Pi's current (dynamic) IP.
 - **JSON protocol (ai_control.py):** the LocalAI client speaks the JSON protocol contract — `{"cmd":"pan","angle":N}` / `{"cmd":"tilt","angle":N}` for the camera and one combined `{"cmd":"drive","speed":N,"steer":M}` object for the drive (the legacy `key=value` dialect was retired by #32, issue #38).
 - **Continuous control (ai_control.py):** a background control loop re-issues the active drive command (the combined `drive` object) every second so the firmware watchdog stays armed while the AI is thinking between frames.
 - **Autonomous drive profile:** AI-issued drive commands are clamped to `max_speed = 40` (see `AUTO_PROFILE` in `ai_control/LocalAI/ai_control.py`), slower than the manual joystick range, so a misbehaving model cannot drive the tank at full speed.
 - **Pan/tilt:** the firmware clamps `pan`/`tilt` values to the 0-180 servo range; the AI tools already use relative moves (`up`/`down`/`left`/`right`/`center`) around the 90-degree center position.
 
 
-## Serial control protocol (ESP8266 over /dev/ttyUSB0)
-The ESP8266 is controlled over the USB-serial link (`/dev/ttyUSB0` @ 921600 8N1)
+## Serial control protocol (ESP8266 over the Pi native UART0)
+The ESP8266 is controlled over the Pi's native UART0 (`/dev/ttyS0` @ 921600 8N1, wired TX→RX / RX→TX / GND→GND — the permanent control link; `/dev/ttyUSB0` is only the USB flashing adapter)
 using a line-oriented JSON protocol (NDJSON) — see
 [issue #29](https://github.com/a-i-a-d/Tankie/issues/29). The WiFi/WebUI
 path above stays available as a fallback.
@@ -131,6 +131,7 @@ Pi → ESP (commands):
 {"cmd":"pan","angle":90}
 {"cmd":"tilt","angle":30}
 {"cmd":"stop"}
+{"cmd":"set_stream","ip":"192.168.1.42","port":8889,"path":"/cam/"}
 ```
 
 ESP → Pi (responses):
@@ -140,8 +141,15 @@ ESP → Pi (responses):
 {"type":"ack","seq":1}
 {"type":"error","seq":2,"code":"range","field":"speed"}
 {"type":"watchdog"}
-{"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,"pan":90,"tilt":90,"net_mode":"sta","net_ip":"192.168.1.42"}
+{"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,"pan":90,"tilt":90,"net_mode":"sta","net_ip":"192.168.1.42","stream_url":"http://192.168.1.42:8889/cam/"}
 ```
+
+`set_stream` (issue #51) lets the Pi — the only component that knows its own
+(dynamic) IP — push its video-stream endpoint to the ESP. The ESP stores it
+and appends it as `stream_url` to every `state` broadcast; the human web UI
+then points its video iframe at that URL instead of a hard-coded address. The
+field is omitted until the Pi has sent one, so the line shape is unchanged for
+pairs that do not use it.
 
 Rules: strict validation + clamping on the ESP (speed/steer ±255, pan/tilt
 0–180); a command watchdog stops the motors if the link goes quiet
@@ -151,7 +159,7 @@ catches firmware/Pi mismatches. Non-JSON lines (debug output) are ignored.
 
 ### Pi-side bridge (`raspberry_pi/serial_bridge/`)
 
-- `bridge.py` — daemon holding `/dev/ttyUSB0`: reader thread (NDJSON in,
+- `bridge.py` — daemon holding the control link (`/dev/ttyS0` by default): reader thread (NDJSON in,
   seq/ack tracking, link health), writer thread (250 ms keep-alive
   re-send of the active drive command), state store
   (`/var/lib/tankie/state.json`), Unix socket (`/run/tankie/bridge.sock`).

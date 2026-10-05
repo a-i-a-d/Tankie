@@ -2,7 +2,8 @@
 """
 Tankie serial bridge daemon — issue #29.
 
-Holds /dev/ttyUSB0 exclusively and provides:
+Holds the control-link serial port (default /dev/ttyS0, the Pi native
+UART0 wired to the ESP8266; see conf/serial_bridge.yaml) exclusively and provides:
   * a reader thread  (NDJSON in from the ESP8266, seq/ack tracking, link health)
   * a writer thread  (250 ms keep-alive re-send of the active drive command)
   * a state store    (JSON file: last command, last state, link up/down)
@@ -16,6 +17,9 @@ Protocol (NDJSON, one object per line, 921600 8N1):
                {"cmd":"pan","angle":90}
                {"cmd":"tilt","angle":30}
                {"cmd":"stop"}
+               {"cmd":"set_stream","ip":"192.168.1.42","port":8889,"path":"/cam/"}
+                (issue #51: the Pi pushes its own stream endpoint so the ESP
+                 web UI can point the video iframe at the correct IP)
   ESP → Pi:   {"type":"hello","proto":1,"fw":"v0.1-serial"}
                {"type":"ack","seq":1}
                {"type":"error","seq":2,"code":"range","field":"speed"}
@@ -56,13 +60,17 @@ log = logging.getLogger("tankie-bridge")
 # Defaults (overridden by config.yaml)
 # ---------------------------------------------------------------------------
 DEFAULTS = {
-    "serial_port": "/dev/ttyUSB0",
+    "serial_port": "/dev/ttyS0",
     "baud": 921600,
     "keepalive_ms": 250,
     "ack_timeout_ms": 500,
     "state_file": "/var/lib/tankie/state.json",
     "socket_path": "/run/tankie/bridge.sock",
     "log_level": "INFO",
+    # Issue #51: the stream endpoint the bridge pushes to the ESP via
+    # set_stream (the Pi owns the camera + mediamtx, so it knows its own IP).
+    "stream_port": 8889,
+    "stream_path": "/cam/",
 }
 
 
@@ -77,6 +85,29 @@ def load_config(path):
     elif path and os.path.exists(path) and not yaml:
         log.warning("pyyaml not installed — using defaults (config file %s ignored)", path)
     return cfg
+
+
+# ---------------------------------------------------------------------------
+# Stream endpoint (issue #51)
+# ---------------------------------------------------------------------------
+def detect_lan_ip():
+    """Return this host's LAN IP (the one reachable from other devices).
+
+    Uses the classic UDP ``connect()`` trick: the socket is never actually
+    sent on, but the kernel picks the egress interface for the destination,
+    and ``getsockname()`` then reports that interface's IP. No new
+    dependencies (no netifaces), works on the Pi's default-route setup.
+    Returns None if no route exists (e.g. no network yet).
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except OSError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +171,10 @@ class Bridge:
         self._last_send_ms = 0
         self._serial = None
         self._sock = None
+        # Guards the self._serial reference (the stream thread may race stop()).
+        self._serial_lock = threading.Lock()
+        # Issue #51: the stream endpoint we push to the ESP (set_stream).
+        self._last_stream_ip = None
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -153,9 +188,11 @@ class Bridge:
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._writer_thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._socket_thread = threading.Thread(target=self._socket_loop, daemon=True)
+        self._stream_thread = threading.Thread(target=self._stream_loop, daemon=True)
         self._reader_thread.start()
         self._writer_thread.start()
         self._socket_thread.start()
+        self._stream_thread.start()
         log.info("bridge started")
 
     def stop(self):
@@ -166,8 +203,10 @@ class Bridge:
                 self._send_line({"cmd": "stop"})
             except Exception:
                 pass
-        if self._serial:
-            self._serial.close()
+        with self._serial_lock:
+            ser, self._serial = self._serial, None
+        if ser:
+            ser.close()
         if self._sock:
             self._sock.close()
             try:
@@ -190,8 +229,12 @@ class Bridge:
 
     def _send_line(self, obj):
         line = json.dumps(obj, separators=(",", ":")) + "\n"
-        self._serial.write(line.encode())
-        self._serial.flush()
+        with self._serial_lock:
+            ser = self._serial
+        if ser is None:
+            return
+        ser.write(line.encode())
+        ser.flush()
 
     def _read_line(self):
         """Read one complete line from the serial port (blocking with timeout)."""
@@ -230,8 +273,7 @@ class Bridge:
             now_ms = int(time.time() * 1000)
 
             if mtype == "hello":
-                log.info("hello: proto=%s fw=%s", msg.get("proto"), msg.get("fw"))
-                self.state.update(link_up=True, watchdog_fired=False)
+                self._on_hello(msg)
 
             elif mtype == "ack":
                 seq = msg.get("seq", 0)
@@ -276,6 +318,63 @@ class Bridge:
                         self.state.update(link_up=False)
 
             time.sleep(keepalive_s)
+
+    # -- stream thread (issue #51) -------------------------------------------
+
+    def _stream_loop(self):
+        """Detect our own LAN IP and push it to the ESP via set_stream.
+
+        Runs on startup (after the hello handshake) and re-checks every 30 s
+        so an IP change (DHCP renew, AP <-> STA switch) is picked up without
+        a restart. The push is cheap: one short NDJSON line.
+        """
+        # Give the ESP a moment to boot + emit its hello before we talk.
+        time.sleep(1.0)
+        while not self._stop.is_set():
+            self._push_stream()
+            for _ in range(30):
+                if self._stop.is_set():
+                    break
+                time.sleep(1)
+
+    def _on_hello(self, msg):
+        """Handle the ESP's hello handshake (reader thread).
+
+        issue #51 (follow-up): re-push set_stream on every hello. The bridge
+        only re-sends when the IP changes, so after an ESP reboot (which loses
+        its in-memory streamInfo) or a bridge restart the ESP would otherwise
+        never learn the stream endpoint again. force=True bypasses the IP
+        dedup so the endpoint is always re-sent.
+        """
+        log.info("hello: proto=%s fw=%s", msg.get("proto"), msg.get("fw"))
+        self.state.update(link_up=True, watchdog_fired=False)
+        self._last_stream_ip = None
+        self._push_stream(force=True)
+
+    def _push_stream(self, force=False):
+        """Detect our LAN IP and push it to the ESP via set_stream.
+
+        Normally a no-op while the IP is unchanged (``_last_stream_ip``).
+        ``force=True`` bypasses that guard — used on the ESP's ``hello``
+        handshake so a reconnected ESP always gets the endpoint re-sent, even
+        when the IP is unchanged. (issue #51 follow-up)
+        """
+        ip = detect_lan_ip()
+        if not ip:
+            log.debug("stream: no LAN IP yet (no route?) — skipping set_stream")
+            return
+        if not force and ip == self._last_stream_ip:
+            return
+        port = int(self.cfg.get("stream_port", 8889))
+        path = self.cfg.get("stream_path", "/cam/")
+        try:
+            self._send_line({"cmd": "set_stream", "ip": ip,
+                             "port": port, "path": path})
+            self._last_stream_ip = ip
+            log.info("stream: pushed set_stream ip=%s port=%d path=%s%s",
+                     ip, port, path, " (forced on hello)" if force else "")
+        except Exception as e:
+            log.warning("stream: set_stream push failed: %s", e)
 
     # -- socket thread (CLI interface) ---------------------------------------
 

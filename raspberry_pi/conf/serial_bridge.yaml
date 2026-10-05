@@ -5,7 +5,10 @@
 # tankie/config_serial.h (SERIAL_PROTO_BAUD, SERIAL_WATCHDOG_MS).
 # Keep the two in sync when changing baud or watchdog timing.
 
-serial_port: /dev/ttyUSB0
+serial_port: /dev/ttyS0
+# NOTE: the control link uses the Pi's native UART0 (GPIO14 TX / GPIO15 RX,
+# wired directly to the ESP8266 TX/RX). /dev/ttyUSB0 was the temporary
+# USB/CH340 flashing adapter and is NOT the control link (see README).
 baud: 921600
 
 # Keep-alive: the bridge re-sends the active drive command at this interval
@@ -25,3 +28,13 @@ socket_path: /run/tankie/bridge.sock
 
 # Log level: DEBUG, INFO, WARNING, ERROR
 log_level: INFO
+
+# Issue #51: the stream endpoint the bridge pushes to the ESP via the
+# set_stream command. The Pi owns the camera + mediamtx, so it is the only
+# component that knows its own (dynamic) IP; it detects it at runtime and
+# sends it here so the ESP web UI can point the video iframe at the correct
+# address (no more hard-coded http://10.42.0.1:8889/cam/).
+#   stream_port - the mediamtx WebRTC port (conf/mediamtx.yml webrtcAddress)
+#   stream_path - the mediamtx path for the human stream (conf/mediamtx.yml)
+stream_port: 8889
+stream_path: /cam/

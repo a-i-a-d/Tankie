@@ -14,6 +14,7 @@
 
 #include "serialproto.h"
 #include "netstate.h"
+#include "streaminfo.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -150,6 +151,8 @@ void SerialProto::handleLine(const char* line, size_t len) {
     handleTilt(angle);
   } else if (strcmp(cmd, "stop") == 0) {
     handleStop();
+  } else if (strcmp(cmd, "set_stream") == 0) {
+    handleSetStream(line);
   }
   // Unknown cmd -> silently ignore (non-JSON / foreign lines coexist).
 }
@@ -199,6 +202,87 @@ void SerialProto::handleStop() {
   if (watchdogFired_) watchdogFired_ = false;   // re-arm on next command
   emitAck();
   emitState();
+}
+
+// ---------------------------------------------------------------------------
+// set_stream (issue #51) — the Pi pushes its own stream endpoint
+// ---------------------------------------------------------------------------
+
+// Validate an IPv4 dotted-quad (the only host form we accept). Restricting
+// the ip to digits + dots guarantees the assembled URL contains no
+// JSON-breaking characters (it is embedded verbatim in the state line).
+static bool validIpv4(const char* ip) {
+  if (!ip) return false;
+  int octets = 0;
+  int cur = 0;
+  bool inNum = false;
+  for (const char* p = ip; ; p++) {
+    if (*p >= '0' && *p <= '9') {
+      cur = cur * 10 + (*p - '0');
+      inNum = true;
+      if (cur > 255) return false;
+    } else if (*p == '.') {
+      if (!inNum) return false;      // empty octet (leading/trailing/double .)
+      octets++;
+      if (octets > 3) return false;  // more than 4 octets
+      cur = 0;
+      inNum = false;
+    } else if (*p == '\0') {
+      if (!inNum) return false;      // trailing dot / empty
+      octets++;
+      return octets == 4;
+    } else {
+      return false;                  // any other character (space, quote, ...)
+    }
+  }
+}
+
+// The stream path must start with '/' and contain only safe, printable,
+// non-JSON-breaking characters (it is embedded verbatim in the state line).
+static bool validStreamPath(const char* path) {
+  if (!path || path[0] != '/') return false;
+  size_t n = strlen(path);
+  if (n > 96) return false;
+  for (size_t i = 0; i < n; i++) {
+    char c = path[i];
+    if (c < 0x21 || c > 0x7e) return false;   // printable ASCII only
+    if (c == '"' || c == '\\' || c == '{' || c == '}' || c == ',') return false;
+  }
+  return true;
+}
+
+void SerialProto::handleSetStream(const char* line) {
+  char ip[32] = "";
+  char path[48] = "";
+  int port = 0;
+  bool hasIp = jsonGetString(line, "ip", ip, sizeof(ip));
+  bool hasPort = jsonGetInt(line, "port", &port);
+  bool hasPath = jsonGetString(line, "path", path, sizeof(path));
+
+  if (!hasIp || !hasPort || !hasPath) {
+    emitError("missing", "ip");
+    return;
+  }
+  if (!validIpv4(ip)) {
+    emitError("range", "ip");
+    return;
+  }
+  if (port < 1 || port > 65535) {
+    emitError("range", "port");
+    return;
+  }
+  if (!validStreamPath(path)) {
+    emitError("range", "path");
+    return;
+  }
+
+  char url[160];
+  snprintf(url, sizeof(url), "http://%s:%d%s", ip, port, path);
+
+  streamInfo.url = url;
+  seq_++;
+  emitAck();
+  emitState();   // state changed -> broadcast immediately (now with stream_url)
 }
 
 // ---------------------------------------------------------------------------
@@ -267,12 +351,27 @@ void SerialProto::emitState() {
   if (netState.mode.length() > 0) mode = netState.mode.c_str();
   if (netState.ip.length() > 0)   ip   = netState.ip.c_str();
 
-  char buf[160];
-  snprintf(buf, sizeof(buf),
-           "{\"type\":\"state\",\"seq\":%lu,\"battery\":%.2f,"
-           "\"speed\":%d,\"steer\":%d,\"pan\":%d,\"tilt\":%d,"
-           "\"net_mode\":\"%s\",\"net_ip\":\"%s\"}",
-           seq_, battery, speed_, steer_, pan_, tilt_, mode, ip);
+  // Issue #51: append the stream URL the Pi pushed via set_stream (if any).
+  // The field is omitted until the Pi has provided one, so the line shape
+  // is unchanged for firmware/bridge pairs that do not use it.
+  // (buf is 256: a realistic stream_url like "http://192.168.178.134:8889/cam/"
+  //  makes the full line 171 bytes — 160 would truncate it into invalid JSON.)
+  char buf[256];
+  if (streamInfo.url.length() > 0) {
+    snprintf(buf, sizeof(buf),
+             "{\"type\":\"state\",\"seq\":%lu,\"battery\":%.2f,"
+             "\"speed\":%d,\"steer\":%d,\"pan\":%d,\"tilt\":%d,"
+             "\"net_mode\":\"%s\",\"net_ip\":\"%s\","
+             "\"stream_url\":\"%s\"}",
+             seq_, battery, speed_, steer_, pan_, tilt_, mode, ip,
+             streamInfo.url.c_str());
+  } else {
+    snprintf(buf, sizeof(buf),
+             "{\"type\":\"state\",\"seq\":%lu,\"battery\":%.2f,"
+             "\"speed\":%d,\"steer\":%d,\"pan\":%d,\"tilt\":%d,"
+             "\"net_mode\":\"%s\",\"net_ip\":\"%s\"}",
+             seq_, battery, speed_, steer_, pan_, tilt_, mode, ip);
+  }
   emit(buf);
 }
 

@@ -42,7 +42,8 @@ StubWebSocket.CLOSED = 3;
 
 const elements = {};
 function el(id) {
-  if (!elements[id]) elements[id] = { id, value: '', textContent: '', src: '' };
+  if (!elements[id]) elements[id] = { id, value: '', textContent: '', src: '',
+                                     style: {}, onerror: null };
   return elements[id];
 }
 
@@ -185,6 +186,53 @@ try { joy1.x = 10; tick(); } catch (e) { threw = true; }
 check(!threw, 'no exception thrown');
 if (sent.length) console.log('  debug: sent while closed:', JSON.stringify(sent));
 check(sent.length === 0, 'nothing sent while closed');
+
+// --- T8: stream button hidden until the Pi provides a stream_url (issue #51)
+console.log('T8: stream button hidden until the Pi provides a stream_url');
+// Fresh context assumption: script.js starts with streamUrl=null and the
+// button hidden (onLoad ran updateStreamButton()).
+check(el('streamBtn').style.display === 'none',
+      'button hidden before any stream_url: display=' + el('streamBtn').style.display);
+// A state message WITHOUT stream_url must not reveal the button.
+ws = StubWebSocket.last;
+ws._receive('{"type":"state","seq":10,"battery":7.4,"speed":0,"steer":0,"pan":90,"tilt":90,"net_mode":"sta","net_ip":"192.168.1.42"}');
+check(el('streamBtn').style.display === 'none',
+      'button still hidden with no stream_url field');
+// connectStream() with no URL is a safe no-op (no null src).
+const srcBefore = el('videoStream').src;
+sandbox.connectStream();
+check(el('videoStream').src === srcBefore,
+      'connectStream() is a no-op without a stream_url');
+
+// --- T9: state with stream_url -> button visible + iframe pointed at it
+console.log('T9: state with stream_url -> button visible + iframe src set');
+ws._receive('{"type":"state","seq":11,"battery":7.4,"speed":0,"steer":0,"pan":90,"tilt":90,"net_mode":"sta","net_ip":"192.168.1.42","stream_url":"http://192.168.1.42:8889/cam/"}');
+check(el('streamBtn').style.display === '',
+      'button revealed once stream_url seen: display=' + JSON.stringify(el('streamBtn').style.display));
+check(sandbox.streamUrl === 'http://192.168.1.42:8889/cam/',
+      'streamUrl cached: ' + sandbox.streamUrl);
+sandbox.connectStream();
+check(el('videoStream').src === 'http://192.168.1.42:8889/cam/',
+      'iframe src set to the Pi stream URL: ' + el('videoStream').src);
+check(el('streamBtn').value === 'Stop video stream',
+      'button label -> Stop video stream');
+// Toggling off restores the placeholder.
+sandbox.connectStream();
+check(el('videoStream').src === '/tankie.png',
+      'iframe src reset to placeholder on stop: ' + el('videoStream').src);
+check(el('streamBtn').value === 'Start video stream',
+      'button label -> Start video stream');
+
+// --- T10: a dead stream (iframe onerror) resets the button (issue #51)
+console.log('T10: iframe onerror resets the stream button');
+sandbox.connectStream();   // stream on again
+check(el('streamBtn').value === 'Stop video stream', 'stream re-enabled');
+// Simulate the browser failing to load the (dead) stream.
+if (el('videoStream').onerror) el('videoStream').onerror();
+check(el('videoStream').src === '/tankie.png',
+      'iframe src reset after onerror: ' + el('videoStream').src);
+check(el('streamBtn').value === 'Start video stream',
+      'button reset to Start after onerror');
 
 // --- final ------------------------------------------------------------------
 console.log('');
