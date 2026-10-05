@@ -9,6 +9,9 @@
 //   {"cmd":"pan","angle":90}
 //   {"cmd":"tilt","angle":30}
 //   {"cmd":"stop"}
+//   {"cmd":"set_stream","ip":"192.168.1.42","port":8889,"path":"/cam/"}
+//        (issue #51: the Pi pushes its own stream endpoint; the ESP stores
+//         it and adds stream_url to every state broadcast)
 //
 // ESP → Pi (responses), one object per line:
 //   {"type":"hello","proto":1,"fw":"v0.1-serial"}
@@ -16,7 +19,9 @@
 //   {"type":"error","seq":2,"code":"range","field":"speed"}
 //   {"type":"watchdog"}
 //   {"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,"pan":90,"tilt":90,
-//    "net_mode":"sta"|"ap","net_ip":"192.168.x.y"}   (issue #46)
+//    "net_mode":"sta"|"ap","net_ip":"192.168.x.y",
+//    "stream_url":"http://192.168.1.42:8889/cam/"}   (issue #46, #51)
+//    (stream_url is present only once the Pi has sent set_stream)
 //
 // Non-JSON lines (e.g. Serial.println debug output) are ignored, so the
 // protocol coexists safely with console logging (issue #29, T7).
@@ -29,6 +34,7 @@
 #include "Arduino.h"
 #include "config_serial.h"
 #include "tankdrive.h"
+#include "streaminfo.h"
 
 class Servo;  // full definition in <Servo.h> (esp8266 core) or tests/shims
 
@@ -52,6 +58,8 @@ public:
   int           steer() const { return steer_; }
   int           pan()   const { return pan_; }
   int           tilt()  const { return tilt_; }
+  // The stream URL the Pi pushed via set_stream (issue #51); empty until set.
+  String        streamUrl() const { return streamInfo.url; }
 
   // Test hook: inject a command line directly (bypasses Serial).
   void injectLine(const char* line);
@@ -95,6 +103,7 @@ private:
   void handlePan(int angle);
   void handleTilt(int angle);
   void handleStop();
+  void handleSetStream(const char* line);   // issue #51
   void checkWatchdog();
   void readSerial();
 

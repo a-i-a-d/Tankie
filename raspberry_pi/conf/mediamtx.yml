@@ -49,7 +49,9 @@ api: yes
 apiAddress: 127.0.0.1:9997
 
 # --- protocols (same listeners as the previous setup) ---
-# WebRTC (human viewing, lowest latency; the ESP8266 UI embeds http://<pi>:8889/cam/)
+# WebRTC (human viewing, lowest latency). The ESP8266 web UI points its video
+# iframe at http://<pi>:8889/cam/ — the Pi's IP is pushed to the ESP by the
+# bridge via the set_stream command (issue #51), so no IP is hard-coded.
 webrtcAddress: :8889
 webrtcAllowOrigins: ["*"]
 webrtcLocalUDPAddress: :8189

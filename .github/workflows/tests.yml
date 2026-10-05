@@ -1,10 +1,16 @@
 # CI for the Tankie ESP8266 firmware (issue #5).
 #
-# Two jobs, both on push/PR:
+# Three jobs, all on push/PR:
 #
 #   unit-tests     - host-side unit tests (g++, no ESP toolchain): compiles
 #                    the pure firmware modules against tests/shims/Arduino.h
 #                    and runs the assertion suite (tests/run_tests.sh).
+#
+#   web-ui         - the web-UI JSON-protocol harness (Node, no browser):
+#                    drives the REAL tankie/data/script.js in a VM sandbox
+#                    and asserts the contract shapes + the stream-URL button
+#                    behaviour (issue #32, #51). This is the only automated
+#                    guard for script.js, so it runs in CI (issue #51, A5).
 #
 #   firmware-build - builds the REAL firmware with raspberry_pi/build.sh
 #                    (arduino-cli + esp8266 core 3.1.2, esp8266:esp8266:d1_mini,
@@ -27,6 +33,17 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y g++
       - name: Run host unit tests
         run: bash tests/run_tests.sh
+
+  web-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Node.js (for the web-UI harness)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run the web-UI JSON-protocol harness (issue #32, #51)
+        run: node tests/web_ui_harness.js
 
   firmware-build:
     runs-on: ubuntu-latest

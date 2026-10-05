@@ -10,6 +10,7 @@
 #include "serialproto.h"
 #include "wifimanager.h"
 #include "netstate.h"
+#include "streaminfo.h"
 #include <Servo.h>
 #include <ESP8266WiFi.h>
 #include <ESPAsyncTCP.h>
@@ -417,12 +418,29 @@ void broadcastState() {
   const char* ip   = "0.0.0.0";
   if (netState.mode.length() > 0) mode = netState.mode.c_str();
   if (netState.ip.length() > 0)   ip   = netState.ip.c_str();
-  char buf[160];
-  snprintf(buf, sizeof(buf),
-           "{\"type\":\"state\",\"seq\":%lu,\"battery\":%.2f,"
-           "\"speed\":%d,\"steer\":%d,\"pan\":%d,\"tilt\":%d,"
-           "\"net_mode\":\"%s\",\"net_ip\":\"%s\"}",
-           wsSeq, battery, currentSpeed, currentSteer, currentPan, currentTilt, mode, ip);
+
+  // Issue #51: append the stream URL the Pi pushed via set_stream (if any).
+  // The field is omitted until the Pi has provided one, so the line shape is
+  // unchanged for firmware/bridge pairs that do not use it. buf is 256: a
+  // realistic stream_url makes the full line 171 bytes (160 would truncate it
+  // into invalid JSON).
+  char buf[256];
+  if (streamInfo.url.length() > 0) {
+    snprintf(buf, sizeof(buf),
+             "{\"type\":\"state\",\"seq\":%lu,\"battery\":%.2f,"
+             "\"speed\":%d,\"steer\":%d,\"pan\":%d,\"tilt\":%d,"
+             "\"net_mode\":\"%s\",\"net_ip\":\"%s\","
+             "\"stream_url\":\"%s\"}",
+             wsSeq, battery, currentSpeed, currentSteer, currentPan, currentTilt,
+             mode, ip, streamInfo.url.c_str());
+  } else {
+    snprintf(buf, sizeof(buf),
+             "{\"type\":\"state\",\"seq\":%lu,\"battery\":%.2f,"
+             "\"speed\":%d,\"steer\":%d,\"pan\":%d,\"tilt\":%d,"
+             "\"net_mode\":\"%s\",\"net_ip\":\"%s\"}",
+             wsSeq, battery, currentSpeed, currentSteer, currentPan, currentTilt,
+             mode, ip);
+  }
   ws.textAll(buf);
 }
 
