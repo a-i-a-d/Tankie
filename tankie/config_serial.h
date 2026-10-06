@@ -16,3 +16,10 @@
 
 // Firmware version string, reported in the hello handshake.
 #define TANKIE_FW_VERSION "v0.1-serial"
+
+// Sweep defaults (issue #31). A `sweep` command runs for ~SERIAL_SWEEP_DEFAULT_MS
+// total, divided into `steps` equally-spaced positions (1..SERIAL_SWEEP_MAX_STEPS).
+// So `steps` controls the granularity, not the duration: 20 steps ≈ 100 ms apart.
+#define SERIAL_SWEEP_DEFAULT_MS 2000
+#define SERIAL_SWEEP_MIN_STEPS 1
+#define SERIAL_SWEEP_MAX_STEPS 50

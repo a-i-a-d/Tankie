@@ -38,3 +38,22 @@ log_level: INFO
 #   stream_path - the mediamtx path for the human stream (conf/mediamtx.yml)
 stream_port: 8889
 stream_path: /cam/
+
+# ---------------------------------------------------------------------------
+# Autonomous drive profile (issue #31)
+#
+# Speed/steer limits enforced in the bridge for AI-driven motion. The ESP
+# cannot distinguish AI from manual traffic (both arrive as `drive`), so the
+# bridge is the enforcement layer. Manual (CLI / Web UI) traffic is NOT
+# clamped — only the AI path (via ai_control.py) is.
+#
+# The 250 ms keep-alive re-sends the CLAMPED values, so the ESP never sees
+# an over-limit value from the AI path.
+#
+# Set enabled: false to disable clamping (all traffic passes through at
+# full ±255).
+# ---------------------------------------------------------------------------
+auto_profile:
+  enabled: true
+  max_speed: 40      # AI speed limit (manual stays ±255)
+  max_steer: 120     # AI steer limit (manual stays ±255)

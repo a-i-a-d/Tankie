@@ -49,10 +49,14 @@ camera_position = {
 }
 
 # Autonomous drive profile: safety limits for AI-issued drive commands.
-# Deliberately slower than the manual range (0-100) so a misbehaving model
-# cannot drive the tank at full speed.
+# Deliberately slower than the manual range (±255) so a misbehaving model
+# cannot drive the tank at full speed. This mirrors the bridge-side
+# auto_profile (raspberry_pi/conf/serial_bridge.yaml), which is the real
+# enforcement layer (issue #31); the client-side pre-clamp is a UX mirror
+# so the model sees the limit immediately.
 AUTO_PROFILE = {
     "max_speed": 40,          # clamp AI speed to this value
+    "max_steer": 120,         # clamp AI steer to this value
 }
 
 tank = {
@@ -81,6 +85,36 @@ tools = [
                     }
                 },
                 "required": ["direction"],
+            },
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "camera_sweep",
+            "description": "Use this function to sweep the camera across a range of angles (e.g. scan the room)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "axis": {
+                        "type": "string",
+                        "enum": ["pan", "tilt"],
+                        "description": "Which camera axis to sweep"
+                    },
+                    "from": {
+                        "type": "integer",
+                        "description": "Start angle (0-180)"
+                    },
+                    "to": {
+                        "type": "integer",
+                        "description": "End angle (0-180)"
+                    },
+                    "steps": {
+                        "type": "integer",
+                        "description": "Number of steps (1-50)"
+                    }
+                },
+                "required": ["axis", "from", "to", "steps"],
             },
         }
     },
@@ -254,7 +288,8 @@ def drive_tank(speed, direction):
         print ("Invalid amount")
         return("Invalid amount, Valid values are 0 - 100")
 
-    # Autonomous drive profile: clamp to the safe AI speed limit
+    # Autonomous drive profile: clamp to the safe AI speed limit (mirror of
+    # the bridge-side auto_profile, which is the enforcement layer — #31).
     speed = min(speed, AUTO_PROFILE["max_speed"])
 
     if direction == "forward":
@@ -273,6 +308,10 @@ def drive_tank(speed, direction):
     if direction == "right":
         tank["steer"] = 90
         tank["speed"] = speed
+
+    # Autonomous drive profile: clamp steer to the safe AI steer limit too.
+    tank["steer"] = max(-AUTO_PROFILE["max_steer"],
+                        min(AUTO_PROFILE["max_steer"], tank["steer"]))
 
     # One combined drive object over the bridge (issue #33). The bridge
     # re-sends the active drive command every 250 ms (keep-alive), so the
@@ -293,6 +332,20 @@ def camera_control(amount, direction):
         return("Invalid amount, Valid values are 0 - 90")
 
     print("Moving camera position ", amount, " degree ", direction)
+    if direction == "center":
+        # Use the real center command (issue #31): pan=90 + tilt=90 in one ack.
+        camera_position["pan"] = 90
+        camera_position["tilt"] = 90
+        reply = bridge_command({"cmd": "center"})
+        print("Sending bridge command: ", json.dumps({"cmd": "center"}))
+        print("Bridge reply: ", reply)
+        feedback = surface_feedback()
+        if reply.get("ok"):
+            return (f"ok: camera centered (pan=90 tilt=90)"
+                    + (f"; {feedback}" if feedback else ""))
+        return (f"error: {reply.get('error', 'unknown bridge error')}"
+                + (f"; {feedback}" if feedback else ""))
+
     if direction == "up":
         camera_position["tilt"] = 90 + amount
 
@@ -304,10 +357,6 @@ def camera_control(amount, direction):
 
     elif direction == "right":
         camera_position["pan"] = 90 + amount
-
-    elif direction == "center":
-        camera_position["tilt"] = 90
-        camera_position["pan"] = 90
 
     else:
         print("Unknown direction")
@@ -327,10 +376,38 @@ def camera_control(amount, direction):
             + (f"; {feedback}" if feedback else ""))
 
 
+def camera_sweep(axis="pan", frm=0, to=180, steps=20):
+    """Sweep the camera across a range (issue #31).
+
+    The ESP steps the servo non-blockingly and emits
+    {"type":"sweep","axis":...,"done":true} on completion; `stop` cancels.
+    """
+    if axis not in ("pan", "tilt"):
+        print("Invalid axis")
+        return("Invalid axis, valid values are pan or tilt")
+    cmd = {"cmd": "sweep", "axis": axis, "from": frm, "to": to, "steps": steps}
+    print("Sweeping camera ", axis, frm, "->", to, "over", steps, "steps")
+    reply = bridge_command(cmd)
+    print("Sending bridge command: ", json.dumps(cmd))
+    print("Bridge reply: ", reply)
+    feedback = surface_feedback()
+    if reply.get("ok"):
+        return (f"ok: sweep {axis} {frm}->{to} over {steps} steps"
+                + (f"; {feedback}" if feedback else ""))
+    return (f"error: {reply.get('error', 'unknown bridge error')}"
+            + (f"; {feedback}" if feedback else ""))
+
+
 def call_function(name,args):
     print("Calling ", name, " with ", args)
     if name == "camera_control":
         return camera_control(**args)
+    if name == "camera_sweep":
+        # "from"/"to" are reserved words, so map them to frm/to explicitly.
+        return camera_sweep(axis=args.get("axis", "pan"),
+                            frm=args.get("from", 0),
+                            to=args.get("to", 180),
+                            steps=args.get("steps", 20))
     if name == "drive_tank":
         return drive_tank(**args)
     else:

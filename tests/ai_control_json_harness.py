@@ -149,6 +149,13 @@ def is_contract(m):
     return isinstance(m, dict) and isinstance(m.get("cmd"), str)
 
 
+def is_known_cmd(m):
+    """The command is one of the protocol contract shapes (issue #31 added
+    pan-rel / tilt-rel / center / sweep)."""
+    return (is_contract(m) and m.get("cmd") in
+            ("drive", "pan", "tilt", "pan-rel", "tilt-rel", "center", "sweep"))
+
+
 # --- T1: drive forward -> ONE contract drive object ---------------------------
 print("T1: drive_tank forward -> contract drive object over the bridge")
 reset()
@@ -189,9 +196,10 @@ check(sent[-2:] == [{"cmd": "pan", "angle": 60}, {"cmd": "tilt", "angle": 90}],
       "pan left 30 -> pan=60,tilt=90: " + repr(sent))
 reset()
 res = mod.camera_control(0, "center")
-check(sent[-2:] == [{"cmd": "pan", "angle": 90}, {"cmd": "tilt", "angle": 90}],
-      "center -> pan=90,tilt=90: " + repr(sent))
-check(isinstance(res, str) and res.startswith("ok"), "camera result ok: " + repr(res))
+check(sent[-1] == {"cmd": "center"},
+      "center -> single center command: " + repr(sent))
+check(isinstance(res, str) and res.startswith("ok") and "center" in res,
+      "camera result ok: " + repr(res))
 
 # --- T5: bridge down -> graceful error, no crash -------------------------------
 print("T5: bridge down -> graceful error result")
@@ -269,6 +277,45 @@ bad = [m for m in sent if not is_contract(m)]
 check(not bad, "every sent command is contract JSON: " + repr(bad))
 keyval = [m for m in sent if isinstance(m, str) and "=" in m and not m.strip().startswith("{")]
 check(not keyval, "no key=value messages: " + repr(keyval))
+
+# --- T11: camera_sweep -> ONE contract sweep object --------------------------
+print("T11: camera_sweep -> contract sweep object over the bridge")
+reset()
+res = mod.camera_sweep(axis="pan", frm=0, to=180, steps=20)
+check(len(sent) == 1, "exactly one bridge command: " + repr(sent))
+check(sent and sent[0] == {"cmd": "sweep", "axis": "pan", "from": 0,
+                           "to": 180, "steps": 20},
+      "sweep object: " + repr(sent))
+check(isinstance(res, str) and res.startswith("ok"), "sweep result ok: " + repr(res))
+reset()
+res = mod.camera_sweep(axis="tilt", frm=180, to=0, steps=10)
+check(sent and sent[0] == {"cmd": "sweep", "axis": "tilt", "from": 180,
+                           "to": 0, "steps": 10},
+      "tilt sweep object: " + repr(sent))
+# Invalid axis -> graceful error, no command sent.
+reset()
+res = mod.camera_sweep(axis="yaw", frm=0, to=180, steps=5)
+check(len(sent) == 0, "invalid axis sends nothing: " + repr(sent))
+check(isinstance(res, str) and res.lower().startswith("invalid"),
+      "invalid axis result: " + repr(res))
+
+# --- T12: drive_tank steer is clamped to the AI steer limit ------------------
+print("T12: drive_tank steer clamped to the auto profile (max_steer)")
+reset()
+mod.tank["steer"] = 200   # a misbehaving model set an over-limit steer
+mod.drive_tank(40, "forward")
+check(sent and sent[0] == {"cmd": "drive", "speed": 40, "steer": 120},
+      "steer clamped to 120: " + repr(sent))
+reset()
+mod.tank["steer"] = -200
+mod.drive_tank(40, "forward")
+check(sent and sent[0] == {"cmd": "drive", "speed": 40, "steer": -120},
+      "negative steer clamped to -120: " + repr(sent))
+
+# --- T13: every command is a known contract shape ----------------------------
+print("T13: every sent command is a known contract shape")
+bad = [m for m in sent if not is_known_cmd(m)]
+check(not bad, "all commands are known contract shapes: " + repr(bad))
 
 print()
 if failures:

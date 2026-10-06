@@ -130,6 +130,10 @@ Pi → ESP (commands):
 {"cmd":"drive","speed":50,"steer":0}
 {"cmd":"pan","angle":90}
 {"cmd":"tilt","angle":30}
+{"cmd":"pan-rel","delta":+20}
+{"cmd":"tilt-rel","delta":-10}
+{"cmd":"center"}
+{"cmd":"sweep","axis":"pan","from":0,"to":180,"steps":20}
 {"cmd":"stop"}
 {"cmd":"set_stream","ip":"192.168.1.42","port":8889,"path":"/cam/"}
 ```
@@ -141,6 +145,7 @@ ESP → Pi (responses):
 {"type":"ack","seq":1}
 {"type":"error","seq":2,"code":"range","field":"speed"}
 {"type":"watchdog"}
+{"type":"sweep","axis":"pan","done":true}
 {"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,"pan":90,"tilt":90,"net_mode":"sta","net_ip":"192.168.1.42","stream_url":"http://192.168.1.42:8889/cam/"}
 ```
 
@@ -152,10 +157,24 @@ field is omitted until the Pi has sent one, so the line shape is unchanged for
 pairs that do not use it.
 
 Rules: strict validation + clamping on the ESP (speed/steer ±255, pan/tilt
-0–180); a command watchdog stops the motors if the link goes quiet
-(`SERIAL_WATCHDOG_MS`, compile-time in `tankie/config_serial.h`);
+0–180, relative deltas ±180); a command watchdog stops the motors if the
+link goes quiet (`SERIAL_WATCHDOG_MS`, compile-time in `tankie/config_serial.h`);
 seq-based acks so a dead link is detectable; a hello/proto handshake
 catches firmware/Pi mismatches. Non-JSON lines (debug output) are ignored.
+
+The pan/tilt improvements (issue #31) are additive — protocol version stays 1:
+- `pan-rel` / `tilt-rel` move the servo by a delta from the current angle
+  (clamped to 0–180).
+- `center` sets pan=90 **and** tilt=90 in one ack.
+- `sweep` steps the camera across a range non-blockingly (~2 s default,
+  `steps` 1–50) and emits `{"type":"sweep","axis":...,"done":true}` on
+  completion; `stop` (or an explicit pan/tilt) cancels it.
+
+The **autonomous drive profile** (issue #31) is enforced in the bridge
+(`raspberry_pi/conf/serial_bridge.yaml` → `auto_profile`): AI-issued `drive`
+commands are clamped to `max_speed`/`max_steer` before they reach the ESP,
+and the 250 ms keep-alive re-sends the clamped values. Manual (CLI / Web UI)
+traffic is not clamped.
 
 ### Pi-side bridge (`raspberry_pi/serial_bridge/`)
 
@@ -164,12 +183,15 @@ catches firmware/Pi mismatches. Non-JSON lines (debug output) are ignored.
   re-send of the active drive command), state store
   (`/var/lib/tankie/state.json`), Unix socket (`/run/tankie/bridge.sock`).
 - `tankie-serial.py` — CLI: `drive --speed 50 --steer 0`, `pan 90`, `tilt 30`,
-  `stop`, `state`, `watchdog-test` (or `--raw` to talk to the port directly).
+  `pan-rel 20`, `tilt-rel -10`, `center`, `sweep --axis pan --from 0 --to 180
+  [--steps 20]`, `stop`, `state`, `watchdog-test` (or `--raw` to talk to the
+  port directly).
 - `conf/serial_bridge.yaml` — single config source (serial_port, baud, keepalive_ms,
   ack_timeout_ms, state_file, socket_path).
 - `tankie-serial.service` — systemd unit (`Restart=always`, dialout group).
 - `setup-serial.sh` — idempotent installer (deps, udev rule, systemd).
-- `test_serial_proto.py` — raw-port protocol test (T1–T7 of the issue).
+- `test_serial_proto.py` — raw-port protocol test (T1–T10 of the issue, incl.
+  the pan-rel / tilt-rel / center / sweep commands from issue #31).
 
 ```sh
 sudo bash raspberry_pi/serial_bridge/setup-serial.sh   # install + start
@@ -212,9 +234,15 @@ sketch in [.github/workflows/tests.yml](.github/workflows/tests.yml):
   (issue #32)
 - `tests/ai_control_json_harness.py` - the LocalAI client
   (ai-control/LocalAI/ai_control.py) with stubbed deps: every outgoing
-  message is a contract JSON object (drive / pan / tilt), the control
-  loop re-issues the combined drive object, and the state/watchdog
-  broadcasts parse (issue #38)
+  message is a contract JSON object (drive / pan / tilt / pan-rel /
+  tilt-rel / center / sweep), the AUTO_PROFILE speed + steer clamp is
+  applied, the control loop re-issues the combined drive object, and the
+  state/watchdog broadcasts parse (issue #38, #31)
+- `tests/bridge_auto_profile_harness.py` - the Pi bridge daemon
+  (raspberry_pi/serial_bridge/bridge.py) with stubbed serial/yaml: the
+  autonomous drive profile clamps speed/steer (and reports `clamped`),
+  and the new pan-rel / tilt-rel / center / sweep commands dispatch the
+  correct NDJSON line with validation (issue #31)
 - `ai-control/tankieControl/main_test.go` - the LocalAGI wrapper's
   drive/steer/camera handlers against a stub websocket tank: contract
   JSON shapes only, steer combined with the active speed, center =
@@ -226,6 +254,7 @@ Run it locally (any machine with g++, node, go):
 bash tests/run_tests.sh
 node tests/web_ui_harness.js   # web UI JSON protocol (node)
 python3 tests/ai_control_json_harness.py   # LocalAI client JSON protocol
+python3 tests/bridge_auto_profile_harness.py   # bridge auto-profile + new commands
 (cd ai-control/tankieControl && go test ./...)   # LocalAGI wrapper JSON protocol
 ```
 

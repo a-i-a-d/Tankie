@@ -9,6 +9,10 @@ Usage:
   tankie-serial.py drive --speed 50 --steer 0
   tankie-serial.py pan 90
   tankie-serial.py tilt 30
+  tankie-serial.py pan-rel 20                 # relative from current pan (issue #31)
+  tankie-serial.py tilt-rel -10               # relative from current tilt (issue #31)
+  tankie-serial.py center                     # pan=90 + tilt=90 (issue #31)
+  tankie-serial.py sweep --axis pan --from 0 --to 180 [--steps 20]  (issue #31)
   tankie-serial.py stop
   tankie-serial.py state
   tankie-serial.py watchdog-test
@@ -116,6 +120,20 @@ def main():
     t = sub.add_parser("tilt", help="set tilt angle (0-180)")
     t.add_argument("angle", type=int)
 
+    pr = sub.add_parser("pan-rel", help="pan by a delta from the current angle (issue #31)")
+    pr.add_argument("delta", type=int, help="-180..180")
+
+    tr = sub.add_parser("tilt-rel", help="tilt by a delta from the current angle (issue #31)")
+    tr.add_argument("delta", type=int, help="-180..180")
+
+    sub.add_parser("center", help="center the camera: pan=90 + tilt=90 (issue #31)")
+
+    sw = sub.add_parser("sweep", help="sweep the camera across a range (issue #31)")
+    sw.add_argument("--axis", choices=["pan", "tilt"], default="pan")
+    sw.add_argument("--from", dest="frm", type=int, default=0, help="start angle (0-180)")
+    sw.add_argument("--to", type=int, default=180, help="end angle (0-180)")
+    sw.add_argument("--steps", type=int, default=20, help="1..50")
+
     sub.add_parser("stop", help="stop the motors")
     sub.add_parser("state", help="show the bridge state")
     sub.add_parser("watchdog-test", help="disable keep-alive (ESP watchdog will fire)")
@@ -137,6 +155,15 @@ def main():
         cmd = {"cmd": "pan", "angle": args.angle}
     elif args.cmd == "tilt":
         cmd = {"cmd": "tilt", "angle": args.angle}
+    elif args.cmd == "pan-rel":
+        cmd = {"cmd": "pan-rel", "delta": args.delta}
+    elif args.cmd == "tilt-rel":
+        cmd = {"cmd": "tilt-rel", "delta": args.delta}
+    elif args.cmd == "center":
+        cmd = {"cmd": "center"}
+    elif args.cmd == "sweep":
+        cmd = {"cmd": "sweep", "axis": args.axis, "from": args.frm,
+               "to": args.to, "steps": args.steps}
     elif args.cmd == "stop":
         cmd = {"cmd": "stop"}
     elif args.cmd == "state":

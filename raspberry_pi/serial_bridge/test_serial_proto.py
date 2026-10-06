@@ -13,6 +13,9 @@ through the protocol test matrix:
   T6  no keep-alive > watchdog    -> {"type":"watchdog"}
   T7  non-JSON garbage on the line-> ignored, link stays up
   T8  set_stream (issue #51)      -> ack; state.stream_url set to the Pi IP
+  T9  pan-rel / tilt-rel relative moves -> ack; state.pan/tilt moved (issue #31)
+  T10 center -> ack; state.pan=90 AND state.tilt=90 (issue #31)
+  T11 sweep pan 0->180 -> ack; servo steps; {"type":"sweep","done":true} (issue #31)
 
 Usage:
   python3 test_serial_proto.py [--port /dev/ttyS0] [--baud 921600]
@@ -233,6 +236,64 @@ def main():
         check("state.stream_url set",
               state is not None and state.get("stream_url") == "http://192.168.1.42:8889/cam/",
               f"state={state}")
+        # T9 — pan-rel / tilt-rel (issue #31)
+        # ------------------------------------------------------------------
+        print("T9: pan-rel / tilt-rel relative moves")
+        p.flush()
+        p.send({"cmd": "pan", "angle": 90})
+        time.sleep(0.3)
+        p.flush()
+        p.send({"cmd": "pan-rel", "delta": 20})
+        lines = p.read_lines(timeout=1.0, want='"ack"')
+        ack = next((m for m in lines if isinstance(m, dict) and m.get("type") == "ack"), None)
+        state = next((m for m in lines if isinstance(m, dict) and m.get("type") == "state"), None)
+        check("pan-rel ack", ack is not None, f"lines={lines}")
+        check("state.pan==110", state is not None and state.get("pan") == 110, f"state={state}")
+
+        p.flush()
+        p.send({"cmd": "tilt", "angle": 90})
+        time.sleep(0.3)
+        p.flush()
+        p.send({"cmd": "tilt-rel", "delta": -10})
+        lines = p.read_lines(timeout=1.0, want='"ack"')
+        state = next((m for m in lines if isinstance(m, dict) and m.get("type") == "state"), None)
+        check("state.tilt==80", state is not None and state.get("tilt") == 80, f"state={state}")
+
+        # ------------------------------------------------------------------
+        # T10 — center (issue #31)
+        # ------------------------------------------------------------------
+        print("T10: center -> pan=90 AND tilt=90")
+        p.flush()
+        p.send({"cmd": "pan", "angle": 20})
+        p.send({"cmd": "tilt", "angle": 160})
+        time.sleep(0.3)
+        p.flush()
+        p.send({"cmd": "center"})
+        lines = p.read_lines(timeout=1.0, want='"ack"')
+        ack = next((m for m in lines if isinstance(m, dict) and m.get("type") == "ack"), None)
+        state = next((m for m in lines if isinstance(m, dict) and m.get("type") == "state"), None)
+        check("center ack", ack is not None, f"lines={lines}")
+        check("state.pan==90", state is not None and state.get("pan") == 90, f"state={state}")
+        check("state.tilt==90", state is not None and state.get("tilt") == 90, f"state={state}")
+
+        # ------------------------------------------------------------------
+        # T11 — sweep (issue #31)
+        # ------------------------------------------------------------------
+        print("T11: sweep pan 0->180")
+        p.flush()
+        p.send({"cmd": "sweep", "axis": "pan", "from": 0, "to": 180, "steps": 4})
+        lines = p.read_lines(timeout=1.0, want='"ack"')
+        ack = next((m for m in lines if isinstance(m, dict) and m.get("type") == "ack"), None)
+        check("sweep ack", ack is not None, f"lines={lines}")
+        # Let the sweep run to completion (~2 s) and read the done line.
+        time.sleep(2.5)
+        lines = p.read_lines(timeout=1.0, want='"sweep"')
+        verbose(f"sweep done lines: {lines}")
+        done = next((m for m in lines if isinstance(m, dict) and m.get("type") == "sweep"
+                     and m.get("done") is True), None)
+        check("sweep done emitted", done is not None, f"lines={lines}")
+        if done:
+            check("sweep done axis==pan", done.get("axis") == "pan", f"done={done}")
 
         # Clean up: stop the tank.
         p.send({"cmd": "stop"})
