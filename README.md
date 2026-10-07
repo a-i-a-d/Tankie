@@ -204,24 +204,29 @@ traffic is not clamped.
   seq/ack tracking, link health), writer thread (250 ms keep-alive
   re-send of the active drive command), state store
   (`/var/lib/tankie/state.json`), Unix socket (`/run/tankie/bridge.sock`).
+  Installed by `setup.sh` to `/usr/local/lib/tankie/bridge.py`.
 - `tankie-serial.py` — CLI: `drive --speed 50 --steer 0`, `pan 90`, `tilt 30`,
   `pan-rel 20`, `tilt-rel -10`, `center`, `sweep --axis pan --from 0 --to 180
   [--steps 20]`, `stop`, `state`, `watchdog-test` (or `--raw` to talk to the
-  port directly).
-- `conf/serial_bridge.yaml` — single config source (serial_port, baud, keepalive_ms,
-  ack_timeout_ms, state_file, socket_path).
-- `tankie-serial.service` — systemd unit (`Restart=always`, dialout group).
-- `setup-serial.sh` — idempotent installer (deps, udev rule, systemd).
+  port directly). Installed by `setup.sh` as `tankie-serial` in
+  `/usr/local/bin`.
+- `conf/serial_bridge.yaml` — single config source (serial_port, baud,
+  keepalive_ms, ack_timeout_ms, state_file, socket_path, stream_port,
+  stream_path). Installed by `setup.sh` to `/etc/tankie/serial_bridge.yaml`;
+  `--config` wins, then the installed system config, then the checkout-relative
+  `conf/` (dev execution).
+- `tankie-serial.service` — systemd unit (`Restart=always`, dialout group),
+  installed by `setup.sh` to `/etc/systemd/system`. References only installed
+  system paths (issue #53).
+- `setup-serial.sh` — idempotent installer (deps, udev rule, systemd). Invoked
+  by `setup.sh`; also runnable standalone for just the serial bridge.
 - `test_serial_proto.py` — raw-port protocol test (T1–T10 of the issue, incl.
   the pan-rel / tilt-rel / center / sweep commands from issue #31).
 
 ```sh
-sudo bash raspberry_pi/serial_bridge/setup-serial.sh   # install + start
-raspberry_pi/serial_bridge/tankie-serial.py drive --speed 50 --steer 0
-raspberry_pi/serial_bridge/tankie-serial.py state
-python3 raspberry_pi/serial_bridge/test_serial_proto.py   # raw-port test
-```
-
+sudo bash raspberry_pi/setup.sh                          # install everything (incl. serial bridge)
+tankie-serial drive --speed 50 --steer 0
+tankie-serial state
 
 ## Testing
 The ESP8266 firmware logic is covered by a host-side unit-test suite (no ESP

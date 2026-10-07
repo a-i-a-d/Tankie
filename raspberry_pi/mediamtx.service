@@ -6,8 +6,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/mediamtx
-ExecStart=/opt/mediamtx/mediamtx /opt/mediamtx/mediamtx.yml
+# /usr/local/mediamtx holds the binary; the config lives in /etc/tankie (issue #53).
+WorkingDirectory=/usr/local/mediamtx
+ExecStart=/usr/local/mediamtx /etc/tankie/mediamtx.yml
 Restart=on-failure
 RestartSec=3
 # The camera source is started/stopped on demand by mediamtx itself, so the

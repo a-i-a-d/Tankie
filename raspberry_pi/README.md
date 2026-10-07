@@ -12,7 +12,7 @@ separate box bolted on top whose only job here is to turn the CSI camera
 
 | File | Purpose |
 |------|---------|
-| `setup.sh` | Idempotent installer. Downloads the pinned, self-contained `mediamtx` binary, enables the CSI camera, installs the config + systemd service, and starts streaming. Run with `sudo bash setup.sh`. |
+| `setup.sh` | Idempotent installer. Downloads the pinned, self-contained `mediamtx` binary (now in `/usr/local/mediamtx`, config in `/etc/tankie/`), enables the CSI camera, and installs the streaming stack **plus the serial-bridge stack** system-wide (daemon, CLI, config, unit — no repo checkout needed at runtime). Run with `sudo bash setup.sh` (add `--reset-config` to also replace `/etc/tankie/serial_bridge.yaml`, backing up the current file, MMDDhhmm). |
 | `build.sh` | Build the ESP8266 (D1 Mini) firmware **and the LittleFS data partition** with arduino-cli (esp8266 core) → `tankie.ino.bin` + `tankie.ino.data.bin`. Run with `bash build.sh`. |
 | `flash_serial.sh` | Build (via `build.sh`) + flash the firmware **and the LittleFS data partition** + boot-verify the ESP8266 (D1 Mini) over USB (CH340 → `/dev/ttyUSB0`). Run with `bash flash_serial.sh`. |
 | `flash_ota.sh` | Flash the ESP8266 **over the air** (ElegantOTA over WiFi) — firmware + (by default) the LittleFS data partition. Run with `bash flash_ota.sh`. |
@@ -20,8 +20,8 @@ separate box bolted on top whose only job here is to turn the CSI camera
 | `conf/` | All Pi config files in one place (issue #48). |
 | `conf/flash.conf` | Shared flash configuration (serial port/baud, OTA URL, AP name/password, filesystem toggle). Sourced by both flash scripts; env overrides win. |
 | `conf/mediamtx.yml` | The mediamtx configuration: two on-demand streams from the one camera (`cam` 1080p30 for humans, `cam_low` 480p15 for the AI). |
-| `conf/serial_bridge.yaml` | Serial-bridge configuration (serial_port, baud, keepalive_ms, ack_timeout_ms, state_file, socket_path, stream_port, stream_path). Auto-discovered by `bridge.py` / `tankie-serial.py`; `--config` wins. |
-| `mediamtx.service` | systemd unit that runs `mediamtx` as a non-root user and keeps it alive. |
+| `conf/serial_bridge.yaml` | Serial-bridge configuration (serial_port, baud, keepalive_ms, ack_timeout_ms, state_file, socket_path, stream_port, stream_path). Auto-discovered by `bridge.py` / `tankie-serial` as: `--config` wins, then the installed `/etc/tankie/serial_bridge.yaml`, then the checkout-relative `conf/` (dev execution). |
+| `mediamtx.service` | systemd unit that runs `mediamtx` (as root) and keeps it alive (WorkingDirectory `/usr/local/mediamtx`, config `/etc/tankie/mediamtx.yml`).|
 | `wlan0-watchdog.service` | One-shot recovery unit: if `wlan0` is missing, reloads the `brcmfmac` driver (fallback: restarts NetworkManager). Never reboots. |
 | `wlan0-watchdog.sh` | The actual check/recovery logic (health check, driver reload, NetworkManager fallback), installed to `/usr/local/bin/wlan0-watchdog.sh` and called by the service. |
 | `wlan0-watchdog.timer` | systemd timer that triggers the watchdog 90 s after boot, then every 60 s. |
