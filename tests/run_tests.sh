@@ -28,6 +28,7 @@ MODULES=(
   tankie/batt.cpp
   tankie/serialproto.cpp
   tankie/wifimanager.cpp
+  tankie/wificfg.cpp
   tankie/netstate.cpp
   tankie/streaminfo.cpp
 )
@@ -51,6 +52,7 @@ TESTS=(
   tests/test_safe_boot.cpp
   tests/test_netstate.cpp
   tests/test_streaminfo.cpp
+  tests/test_wifimanager.cpp
 )
 
 echo "[run_tests] compiling: ${MODULES[*]}"

@@ -54,12 +54,14 @@ on top of the already-running `ESPAsyncWebServer`, so it does not clash with
 `ElegantOTA` / `ESPAsyncWebServer` the way the `WiFiManager` library does).
 
 On boot the ESP:
-1. reads the saved network (`ssid.txt` / `pass.txt` / `ip.txt` / `gateway.txt`)
-   from LittleFS and tries to connect in **STA mode**;
+1. reads the saved network from the **reserved EEPROM flash sector
+   `0x3FB000`** (a dedicated 4 KB sector, see below) and tries to connect in
+   **STA mode**;
 2. if that fails (or nothing is saved yet) it opens its own access point
    `tankie-esp` (password `tankie1234`) and serves the **setup web page** at
    `http://192.168.4.1:8080` where you can enter the SSID / password / static
-   IP / gateway. Saving reboots the ESP and retries step 1.
+   IP / gateway. Saving writes the EEPROM sector and reboots the ESP, retrying
+   step 1.
 
    The setup form runs on a dedicated config server (port **8080**); port 80
    always serves the tank control page, even in config mode (it shows a hint
@@ -71,10 +73,20 @@ The AP name + password are set in [config.h](tankie/config.h):
 #define APPSK  "tankie1234"
 ```
 
-The saved network lives in LittleFS, so it can also be (re)configured at any
-time by deleting `ssid.txt` / `pass.txt` (or by using the setup page), without
-re-flashing. See issue [#21](https://github.com/a-i-a-d/Tankie/issues/21) for
-the background on why the `WiFiManager` library was replaced.
+**Where the network config lives (issue #54):** the saved network is stored in
+the reserved **EEPROM flash sector `0x3FB000`** (4 KB), *not* on LittleFS.
+That sector is outside both the firmware region (`0x0`) and the LittleFS data
+partition (`0x200000`), so the config **survives both firmware OTA and
+filesystem/data-partition OTA** — a failed or corrupt fs-OTA no longer wipes
+the WiFi credentials and strands the ESP on the `tankie-esp` config portal.
+The blob is a small length-prefixed structure (magic + version +
+ssid/pass/ip/gateway + a trailing CRC32) managed by
+[`wificfg.h`](tankie/wificfg.h) / [`wificfg.cpp`](tankie/wificfg.cpp); a blank
+or corrupt sector is detected via the magic + CRC and cleanly falls back to the
+config portal. See
+[issue #54](https://github.com/a-i-a-d/Tankie/issues/54) for the background,
+and issue [#21](https://github.com/a-i-a-d/Tankie/issues/21) for why the
+`WiFiManager` library was replaced.
 
 ### Upload via USB
 The first upload has to happen via usb and can be done as usual with the Arduino IDE
@@ -219,6 +231,12 @@ sketch in [.github/workflows/tests.yml](.github/workflows/tests.yml):
   `forward/back/left/right/brake` free functions
 - `tests/test_bat_voltage.cpp` - the battery voltage-divider math
   (`getBatVoltage()`, extracted from `tankie.ino` into [tankie/batt.cpp](tankie/batt.cpp))
+- `tests/test_wifimanager.cpp` - the WiFi config blob codec + EEPROM
+  adapter ([tankie/wificfg.cpp](tankie/wificfg.cpp), issue #54):
+  encode/decode round-trip, the CRC32 (known IEEE vector), and the
+  blank-sector / corrupt-byte / bad-magic / wrong-version / oversized-field
+  / truncated-blob rejection paths, plus the EEPROM save→load, wipe, and
+  "survives an fs-OTA wipe" round-trips
 - `tests/test_ws_fallback.cpp` - the WebSocket fallback handler
   (`handleWebSocketMessage()` in [tankie/tankie.ino](tankie/tankie.ino))
   compiled against the network shims in [tests/shims/](tests/shims/):

@@ -1,12 +1,6 @@
 #include "wifimanager.h"
-#include "LittleFS.h"
 #include "netstate.h"
-
-// File paths where the network configuration is stored on LittleFS.
-static const char* SSID_PATH = "/ssid.txt";
-static const char* PASS_PATH = "/pass.txt";
-static const char* IP_PATH = "/ip.txt";
-static const char* GATEWAY_PATH = "/gateway.txt";
+#include "wificfg.h"
 
 // How long to wait for the stored network before falling back to the portal.
 static const unsigned long STA_CONNECT_TIMEOUT_MS = 15000;
@@ -17,34 +11,49 @@ static const unsigned long REBOOT_DELAY_MS = 3000;
 WiFiManager::WiFiManager() {}
 
 // ---------------------------------------------------------------------------
-// LittleFS helpers
+// Config load/save (EEPROM sector 0x3FB000 - the single source of truth)
 // ---------------------------------------------------------------------------
 
-String WiFiManager::readFile(const char* path) {
-  if (!LittleFS.exists(path)) {
-    return String();
+// Load the stored configuration from the EEPROM sector (issue #54). A blank
+// or corrupt sector (magic + CRC check fails) means "no config" -> return
+// false so the config portal is started.
+bool WiFiManager::loadStoredConfig() {
+  WifiCfg cfg;
+  if (wifiCfgLoad(&cfg)) {
+    _ssid = cfg.ssid;
+    _pass = cfg.pass;
+    _ip = cfg.ip;
+    _gateway = cfg.gateway;
+    Serial.println("[WiFiManager] loaded config from EEPROM sector 0x3FB000");
+    return true;
   }
-  File file = LittleFS.open(path, "r");
-  if (!file || file.isDirectory()) {
-    return String();
-  }
-  String content = file.readString();
-  file.close();
-  // Strip trailing whitespace/newline (files are written with a trailing \n).
-  content.trim();
-  return content;
+  Serial.println("[WiFiManager] no stored config (blank/corrupt EEPROM sector) - starting config portal");
+  return false;
 }
 
-bool WiFiManager::writeFile(const char* path, const String& content) {
-  File file = LittleFS.open(path, "w");
-  if (!file) {
-    Serial.printf("[WiFiManager] failed to open %s for writing\n", path);
-    return false;
-  }
-  bool ok = file.print(content) > 0;
-  file.close();
-  Serial.printf("[WiFiManager] %s %s\n", ok ? "wrote" : "FAILED to write", path);
+// Persist the stored configuration to the EEPROM sector (single source of
+// truth, issue #54). Returns true on success.
+bool WiFiManager::saveStoredConfig() {
+  WifiCfg cfg;
+  cfg.ssid = _ssid;
+  cfg.pass = _pass;
+  cfg.ip = _ip;
+  cfg.gateway = _gateway;
+  bool ok = wifiCfgSave(cfg);
+  Serial.printf("[WiFiManager] %s config to EEPROM sector 0x3FB000\n",
+                ok ? "saved" : "FAILED to save");
   return ok;
+}
+
+// Clear the stored configuration (factory reset): wipe the EEPROM sector
+// and the in-memory copy, so the next boot opens the config portal.
+void WiFiManager::clearStoredConfig() {
+  wifiCfgWipe();
+  _ssid = String();
+  _pass = String();
+  _ip = String();
+  _gateway = String();
+  Serial.println("[WiFiManager] stored config cleared (EEPROM sector wiped)");
 }
 
 // ---------------------------------------------------------------------------
@@ -154,11 +163,8 @@ bool WiFiManager::begin(const char* apSsid, const char* apPassword) {
   _apSsid = (apSsid != NULL) ? String(apSsid) : String("tankie-esp");
   _apPassword = (apPassword != NULL) ? String(apPassword) : String();
 
-  // Load the stored configuration (empty on first boot).
-  _ssid = readFile(SSID_PATH);
-  _pass = readFile(PASS_PATH);
-  _ip = readFile(IP_PATH);
-  _gateway = readFile(GATEWAY_PATH);
+  // Load the stored configuration (EEPROM sector 0x3FB000 - issue #54).
+  loadStoredConfig();
   Serial.printf("[WiFiManager] stored ssid=%s ip=%s gateway=%s\n",
                 _ssid.c_str(), _ip.c_str(), _gateway.c_str());
 
@@ -189,26 +195,21 @@ void WiFiManager::handleConfigPost(AsyncWebServerRequest* request) {
 
     if (name == "ssid") {
       _ssid = value;
-      writeFile(SSID_PATH, _ssid);
     } else if (name == "pass") {
       _pass = value;
-      writeFile(PASS_PATH, _pass);
     } else if (name == "ip") {
       _ip = value;
-      writeFile(IP_PATH, _ip);
     } else if (name == "gateway") {
       _gateway = value;
-      writeFile(GATEWAY_PATH, _gateway);
     }
   }
 
   if (request->hasParam("reset", true)) {
-    // "Factory reset" button: wipe the stored network configuration.
+    // "Factory reset": wipe the stored network configuration (EEPROM sector).
     Serial.println("[WiFiManager] reset requested - clearing stored config");
-    writeFile(SSID_PATH, String(""));
-    writeFile(PASS_PATH, String(""));
-    writeFile(IP_PATH, String(""));
-    writeFile(GATEWAY_PATH, String(""));
+    clearStoredConfig();
+  } else {
+    saveStoredConfig();
   }
 
   _rebootPending = true;

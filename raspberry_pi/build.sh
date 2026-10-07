@@ -35,15 +35,61 @@ FQBN="esp8266:esp8266:d1_mini"
 EXTRA_FLAGS="-DELEGANTOTA_USE_ASYNC_WEBSERVER=1"
 
 # Parallel jobs for arduino-cli compile (0 = auto: one job per CPU core).
+#
 # Low-RAM boxes (e.g. a Pi Zero 2 W with 416 MB) can crash under the default
-# parallel build (observed on PR #26) — cap at one job when total RAM is
-# 512 MB or less. Override with ARDUINO_JOBS=<n> if needed.
+# parallel build (observed on PR #26) — cap the job count to what the
+# *effective* memory allows. Override with ARDUINO_JOBS=<n> if needed.
+#
+# IMPORTANT (issue #54 / OOM): the effective limit must come from the
+# cgroup, not /proc/meminfo. Inside a container /proc/meminfo reports the
+# HOST's RAM (e.g. 64 GB), so a naive "auto = all cores" build launches one
+# xtensa compiler per core and OOMs a 4 GB container. Read the cgroup memory
+# limit first (v2 memory.max, then v1 memory.limit_in_bytes), falling back to
+# /proc/meminfo only when no cgroup limit is set.
+#
+# Per-job budget: a single xtensa C++ compile (cc1plus) can use ~100-300 MB,
+# and arduino-cli also runs the assembler/linker concurrently. Reserve 512 MB
+# per job so the total stays well inside the container limit.
+PER_JOB_KB=524288
+MIN_JOBS=1
+MAX_JOBS=32
+
+# Effective memory in KB: cgroup v2 -> cgroup v1 -> /proc/meminfo.
+effective_mem_kb() {
+  local kb=""
+  # cgroup v2
+  if [ -r /sys/fs/cgroup/memory.max ]; then
+    kb="$(cat /sys/fs/cgroup/memory.max 2>/dev/null || true)"
+  fi
+  # cgroup v1 (unlimited is reported as a huge value ~ 9.2e18)
+  if { [ -z "${kb}" ] || [ "${kb}" = "max" ]; } && [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+    local v1
+    v1="$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || true)"
+    if [ -n "${v1}" ] && [ "${v1}" -lt 1000000000000 ] 2>/dev/null; then
+      kb="${v1}"
+    fi
+  fi
+  # bytes -> KB
+  if [ -n "${kb}" ] && [ "${kb}" != "max" ] && [ "${kb}" -gt 0 ] 2>/dev/null; then
+    echo $(( kb / 1024 ))
+    return
+  fi
+  # fall back to /proc/meminfo (bare metal / no cgroup limit)
+  awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null
+}
+
 JOBS="${ARDUINO_JOBS:-0}"
 if [ "${JOBS}" -eq 0 ]; then
-  TOTAL_KB="$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || true)"
-  if [ -n "${TOTAL_KB}" ] && [ "${TOTAL_KB}" -le 524288 ]; then
-    JOBS=1
+  MEM_KB="$(effective_mem_kb)"
+  MEM_KB="${MEM_KB:-0}"
+  if [ "${MEM_KB}" -gt 0 ]; then
+    JOBS=$(( MEM_KB / PER_JOB_KB ))
+    [ "${JOBS}" -lt "${MIN_JOBS}" ] && JOBS="${MIN_JOBS}"
+    [ "${JOBS}" -gt "${MAX_JOBS}" ] && JOBS="${MAX_JOBS}"
   fi
+  # Also never exceed the number of online CPU cores.
+  NCPU="$(nproc 2>/dev/null || echo 1)"
+  [ "${JOBS}" -gt "${NCPU}" ] && JOBS="${NCPU}"
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
