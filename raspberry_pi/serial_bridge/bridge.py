@@ -199,6 +199,12 @@ class Bridge:
         self._serial_lock = threading.Lock()
         # Issue #51: the stream endpoint we push to the ESP (set_stream).
         self._last_stream_ip = None
+        # Issue #57: does the ESP currently hold a stream endpoint? Set from
+        # every `state` broadcast (the ESP only includes `stream_url` in a
+        # state line when it has one). Gates the self-healing re-arm in
+        # _maybe_rearm_stream() so we only force-push while the ESP is
+        # actually missing its streamInfo (e.g. right after its reboot).
+        self._esp_has_stream = False
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -295,6 +301,32 @@ class Bridge:
             if len(buf) > 1024:
                 return buf.decode("utf-8", errors="replace")
 
+    @staticmethod
+    def _extract_json(line):
+        """Pull the first parseable JSON object out of a serial line.
+
+        Returns the parsed object, or None if the line carries no valid
+        JSON object. After an ESP8266 reset the UART carries a burst of
+        non-newline boot noise immediately before the first protocol line,
+        so a single "line" (bytes up to the first newline) can look like
+        b"\x00\xff...garbage...{\\"type\\":\\"hello\\",...}" — the hello and the
+        garbage share one line (issue #57). The old startswith("{") gate
+        dropped those, which silently lost the hello handshake and left the
+        ESP without its stream endpoint after every reboot.
+
+        Scan for "{" and try json.loads on the remainder; on a parse error
+        (e.g. a stray brace inside the garbage broke the span) fall through
+        to the next "{" and retry.
+        """
+        i = line.find("{")
+        while i != -1:
+            try:
+                return json.loads(line[i:])
+            except json.JSONDecodeError:
+                pass
+            i = line.find("{", i + 1)
+        return None
+
     # -- reader thread -------------------------------------------------------
 
     def _reader_loop(self):
@@ -307,13 +339,19 @@ class Bridge:
                 time.sleep(1)
                 continue
 
-            if not line or not line.startswith("{"):
-                continue  # non-JSON (debug output, etc.)
-
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
+            # issue #57: the ESP emits a burst of non-newline boot noise right
+            # before its first protocol line after a reset, so garbage and a
+            # real message (e.g. the hello handshake) can share one line.
+            # Extract the first parseable JSON object instead of requiring
+            # the line to start with "{" (which dropped the hello, and with
+            # it the set_stream re-arm, after every ESP reboot).
+            if not line:
                 continue
+            log.debug("rx: %r", line)
+
+            msg = self._extract_json(line)
+            if msg is None:
+                continue  # non-JSON (debug output, etc.)
 
             mtype = msg.get("type")
             now_ms = int(time.time() * 1000)
@@ -336,12 +374,7 @@ class Bridge:
                 self.state.update(watchdog_fired=True)
 
             elif mtype == "state":
-                log.debug("state: speed=%s steer=%s pan=%s tilt=%s battery=%s "
-                          "net_mode=%s net_ip=%s",
-                          msg.get("speed"), msg.get("steer"),
-                          msg.get("pan"), msg.get("tilt"), msg.get("battery"),
-                          msg.get("net_mode"), msg.get("net_ip"))
-                self.state.update(last_state=msg)
+                self._on_state(msg)
 
     # -- writer thread (keep-alive) ------------------------------------------
 
@@ -378,6 +411,7 @@ class Bridge:
         time.sleep(1.0)
         while not self._stop.is_set():
             self._push_stream()
+            self._maybe_rearm_stream()
             for _ in range(30):
                 if self._stop.is_set():
                     break
@@ -395,9 +429,12 @@ class Bridge:
         log.info("hello: proto=%s fw=%s", msg.get("proto"), msg.get("fw"))
         self.state.update(link_up=True, watchdog_fired=False)
         self._last_stream_ip = None
+        # Fresh handshake: we have no knowledge of the ESP's stream state
+        # until its next state broadcast (issue #57).
+        self._esp_has_stream = False
         self._push_stream(force=True)
 
-    def _push_stream(self, force=False):
+    def _push_stream(self, force=False, _rearm=False):
         """Detect our LAN IP and push it to the ESP via set_stream.
 
         Normally a no-op while the IP is unchanged (``_last_stream_ip``).
@@ -418,9 +455,46 @@ class Bridge:
                              "port": port, "path": path})
             self._last_stream_ip = ip
             log.info("stream: pushed set_stream ip=%s port=%d path=%s%s",
-                     ip, port, path, " (forced on hello)" if force else "")
+                     ip, port, path, " (forced on hello)" if force else (" (re-arm)" if _rearm else ""))
         except Exception as e:
             log.warning("stream: set_stream push failed: %s", e)
+
+    def _on_state(self, msg):
+        """Handle a periodic state broadcast from the ESP (reader thread).
+
+        issue #57: the ESP only includes `stream_url` in a state broadcast
+        while it holds one (set_stream was applied). Track that here so the
+        30 s stream tick can tell whether the ESP is missing its endpoint
+        (e.g. right after its reboot) and needs a re-arm.
+        """
+        self._esp_has_stream = "stream_url" in msg
+        log.debug("state: speed=%s steer=%s pan=%s tilt=%s battery=%s "
+                  "net_mode=%s net_ip=%s stream_url=%s",
+                  msg.get("speed"), msg.get("steer"),
+                  msg.get("pan"), msg.get("tilt"), msg.get("battery"),
+                  msg.get("net_mode"), msg.get("net_ip"),
+                  msg.get("stream_url"))
+        self.state.update(last_state=msg)
+
+    def _maybe_rearm_stream(self):
+        """Self-healing stream re-arm (issue #57).
+
+        The ESP keeps its stream endpoint only in RAM: after an ESP reboot
+        (brown-out, watchdog, power cycle) it has none, and the only
+        re-arm path was the hello handshake — which can be lost when boot
+        noise and the hello land on the same serial line. So: if we have a
+        LAN IP to offer (we have pushed before) but the ESP's latest state
+        broadcast carries no stream_url, force-push set_stream once. The
+        `_esp_has_stream` flag (set by the ESP's own state feedback) gates
+        the push, so once the ESP confirms the URL we stop — no spam.
+        """
+        if self._esp_has_stream:
+            return
+        ip = detect_lan_ip()
+        if not ip:
+            return
+        log.info("stream: ESP reports no stream_url — re-arming set_stream")
+        self._push_stream(force=True, _rearm=True)
 
     # -- socket thread (CLI interface) ---------------------------------------
 
