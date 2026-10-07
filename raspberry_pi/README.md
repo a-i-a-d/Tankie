@@ -197,6 +197,15 @@ Full history and diagnosis: [#21](https://github.com/a-i-a-d/Tankie/issues/21).
   seen. The `stream_port` / `stream_path` are configured in
   `conf/serial_bridge.yaml` (one config source, per
   [#16](https://github.com/a-i-a-d/Tankie/issues/16)).
+- The ESP keeps the stream endpoint only in RAM, so an ESP reboot loses it. The
+  bridge self-heals (issue [#57](https://github.com/a-i-a-d/Tankie/issues/57)):
+  it tracks whether the ESP currently holds a `stream_url` (from the ESP's own
+  `state` broadcasts) and, on its 30 s stream tick, force-pushes `set_stream`
+  once whenever the Pi has a LAN IP but the ESP reports no `stream_url`; the
+  push stops as soon as the ESP confirms the URL, so it never spams. The reader
+  also extracts the first parseable JSON object from a serial line instead of
+  requiring it to start with `{`, so a `hello` that shares a line with ESP boot
+  noise is no longer dropped.
 - Audio (mic/speaker) is a separate concern and is being folded into the Pi
   web app; see [#20](https://github.com/a-i-a-d/Tankie/issues/20) and
   [#21](https://github.com/a-i-a-d/Tankie/issues/21).

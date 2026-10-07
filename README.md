@@ -168,6 +168,16 @@ then points its video iframe at that URL instead of a hard-coded address. The
 field is omitted until the Pi has sent one, so the line shape is unchanged for
 pairs that do not use it.
 
+The ESP keeps that endpoint only in RAM, so an ESP reboot loses it. The bridge
+therefore self-heals (issue #57): it tracks whether the ESP currently holds a
+`stream_url` (from the ESP's own `state` broadcasts) and, on its 30 s stream
+tick, force-pushes `set_stream` once whenever the Pi has a LAN IP but the ESP
+reports no `stream_url`; the push stops as soon as the ESP confirms the URL, so
+it never spams. This restores the "Start video stream" button within ~30 s of an
+ESP reboot even if the `hello` handshake is missed (e.g. when boot noise and the
+`hello` land on the same serial line — the reader now extracts the first
+parseable JSON object instead of requiring the line to start with `{`).
+
 Rules: strict validation + clamping on the ESP (speed/steer ±255, pan/tilt
 0–180, relative deltas ±180); a command watchdog stops the motors if the
 link goes quiet (`SERIAL_WATCHDOG_MS`, compile-time in `tankie/config_serial.h`);
@@ -261,6 +271,13 @@ sketch in [.github/workflows/tests.yml](.github/workflows/tests.yml):
   autonomous drive profile clamps speed/steer (and reports `clamped`),
   and the new pan-rel / tilt-rel / center / sweep commands dispatch the
   correct NDJSON line with validation (issue #31)
+- `tests/bridge_stream_rearm_harness.py` - the Pi bridge daemon's stream
+  re-arm (issue #57) with stubbed serial/yaml: `_extract_json` recovers a
+  JSON object from a clean line, a garbage-prefixed line (the ESP boot-noise
+  + `hello` that share one serial line), a no-brace line, and a stray-brace
+  line; `_on_state` tracks the ESP's `stream_url` presence; and the 30 s
+  re-arm tick force-pushes `set_stream` exactly once when the Pi has a LAN IP
+  but the ESP reports no stream, and stops once the ESP confirms it
 - `ai-control/tankieControl/main_test.go` - the LocalAGI wrapper's
   drive/steer/camera handlers against a stub websocket tank: contract
   JSON shapes only, steer combined with the active speed, center =
@@ -273,6 +290,7 @@ bash tests/run_tests.sh
 node tests/web_ui_harness.js   # web UI JSON protocol (node)
 python3 tests/ai_control_json_harness.py   # LocalAI client JSON protocol
 python3 tests/bridge_auto_profile_harness.py   # bridge auto-profile + new commands
+python3 tests/bridge_stream_rearm_harness.py   # bridge stream re-arm (issue #57)
 (cd ai-control/tankieControl && go test ./...)   # LocalAGI wrapper JSON protocol
 ```
 

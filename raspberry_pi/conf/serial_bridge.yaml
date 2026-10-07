@@ -36,6 +36,15 @@ log_level: INFO
 # address (no more hard-coded http://10.42.0.1:8889/cam/).
 #   stream_port - the mediamtx WebRTC port (conf/mediamtx.yml webrtcAddress)
 #   stream_path - the mediamtx path for the human stream (conf/mediamtx.yml)
+#
+# Self-healing re-arm (issue #57): the ESP keeps this endpoint only in RAM, so
+# after an ESP reboot it has none. The bridge tracks whether the ESP currently
+# holds a stream_url (from the ESP's own state broadcasts) and, on its 30 s
+# stream tick, force-pushes set_stream once whenever the Pi has a LAN IP but
+# the ESP reports no stream_url. Once the ESP confirms the URL the push stops,
+# so this never spams. This restores the "Start video stream" button within
+# ~30 s of an ESP reboot even if the hello handshake is missed (e.g. when boot
+# noise and the hello land on the same serial line).
 stream_port: 8889
 stream_path: /cam/
 
