@@ -1,8 +1,11 @@
 #include "wifimanager.h"
 #include "LittleFS.h"
 #include "netstate.h"
+#include "wificfg.h"
 
-// File paths where the network configuration is stored on LittleFS.
+// Legacy LittleFS paths. The network config now lives in the reserved EEPROM
+// flash sector 0x3FB000 (see wificfg.h, issue #54); these files are only read
+// once on boot to migrate pre-#54 devices, then ignored.
 static const char* SSID_PATH = "/ssid.txt";
 static const char* PASS_PATH = "/pass.txt";
 static const char* IP_PATH = "/ip.txt";
@@ -17,7 +20,9 @@ static const unsigned long REBOOT_DELAY_MS = 3000;
 WiFiManager::WiFiManager() {}
 
 // ---------------------------------------------------------------------------
-// LittleFS helpers
+// Legacy LittleFS read (migration path only - issue #54). The config now
+// lives in the EEPROM sector; these files are only consulted when the
+// EEPROM sector is blank/corrupt, so pre-#54 devices keep their network.
 // ---------------------------------------------------------------------------
 
 String WiFiManager::readFile(const char* path) {
@@ -35,16 +40,74 @@ String WiFiManager::readFile(const char* path) {
   return content;
 }
 
-bool WiFiManager::writeFile(const char* path, const String& content) {
-  File file = LittleFS.open(path, "w");
-  if (!file) {
-    Serial.printf("[WiFiManager] failed to open %s for writing\n", path);
+// ---------------------------------------------------------------------------
+// Config load/save (EEPROM sector 0x3FB000 - the single source of truth)
+// ---------------------------------------------------------------------------
+
+// Load the stored configuration. Tries the EEPROM sector first (issue #54);
+// if that is blank/corrupt, falls back to the legacy LittleFS files and
+// migrates them into the EEPROM sector (one-time, so the LittleFS copy is
+// no longer needed and a future fs-OTA cannot wipe the config).
+bool WiFiManager::loadStoredConfig() {
+  WifiCfg cfg;
+  if (wifiCfgLoad(&cfg)) {
+    _ssid = cfg.ssid;
+    _pass = cfg.pass;
+    _ip = cfg.ip;
+    _gateway = cfg.gateway;
+    Serial.println("[WiFiManager] loaded config from EEPROM sector 0x3FB000");
+    return true;
+  }
+
+  // EEPROM blank/corrupt: try the legacy LittleFS files (pre-#54 devices).
+  Serial.println("[WiFiManager] EEPROM sector blank/corrupt - checking legacy LittleFS files");
+  _ssid = readFile(SSID_PATH);
+  _pass = readFile(PASS_PATH);
+  _ip = readFile(IP_PATH);
+  _gateway = readFile(GATEWAY_PATH);
+
+  if (_ssid.length() == 0) {
+    Serial.println("[WiFiManager] no stored config (first boot)");
     return false;
   }
-  bool ok = file.print(content) > 0;
-  file.close();
-  Serial.printf("[WiFiManager] %s %s\n", ok ? "wrote" : "FAILED to write", path);
+
+  Serial.println("[WiFiManager] migrating legacy LittleFS config to the EEPROM sector");
+  WifiCfg legacy;
+  legacy.ssid = _ssid;
+  legacy.pass = _pass;
+  legacy.ip = _ip;
+  legacy.gateway = _gateway;
+  if (wifiCfgSave(legacy)) {
+    Serial.println("[WiFiManager] migration complete - config now lives in the EEPROM sector");
+    return true;
+  }
+  Serial.println("[WiFiManager] migration to EEPROM failed - using the in-memory copy for this boot");
+  return true;   // in-memory copy is valid for this boot, even if persist failed
+}
+
+// Persist the stored configuration to the EEPROM sector (single source of
+// truth, issue #54). Returns true on success.
+bool WiFiManager::saveStoredConfig() {
+  WifiCfg cfg;
+  cfg.ssid = _ssid;
+  cfg.pass = _pass;
+  cfg.ip = _ip;
+  cfg.gateway = _gateway;
+  bool ok = wifiCfgSave(cfg);
+  Serial.printf("[WiFiManager] %s config to EEPROM sector 0x3FB000\n",
+                ok ? "saved" : "FAILED to save");
   return ok;
+}
+
+// Clear the stored configuration (factory reset): wipe the EEPROM sector
+// and the in-memory copy, so the next boot opens the config portal.
+void WiFiManager::clearStoredConfig() {
+  wifiCfgWipe();
+  _ssid = String();
+  _pass = String();
+  _ip = String();
+  _gateway = String();
+  Serial.println("[WiFiManager] stored config cleared (EEPROM sector wiped)");
 }
 
 // ---------------------------------------------------------------------------
@@ -154,11 +217,9 @@ bool WiFiManager::begin(const char* apSsid, const char* apPassword) {
   _apSsid = (apSsid != NULL) ? String(apSsid) : String("tankie-esp");
   _apPassword = (apPassword != NULL) ? String(apPassword) : String();
 
-  // Load the stored configuration (empty on first boot).
-  _ssid = readFile(SSID_PATH);
-  _pass = readFile(PASS_PATH);
-  _ip = readFile(IP_PATH);
-  _gateway = readFile(GATEWAY_PATH);
+  // Load the stored configuration (EEPROM sector 0x3FB000, with a one-time
+  // migration from the legacy LittleFS files - issue #54).
+  loadStoredConfig();
   Serial.printf("[WiFiManager] stored ssid=%s ip=%s gateway=%s\n",
                 _ssid.c_str(), _ip.c_str(), _gateway.c_str());
 
@@ -189,26 +250,21 @@ void WiFiManager::handleConfigPost(AsyncWebServerRequest* request) {
 
     if (name == "ssid") {
       _ssid = value;
-      writeFile(SSID_PATH, _ssid);
     } else if (name == "pass") {
       _pass = value;
-      writeFile(PASS_PATH, _pass);
     } else if (name == "ip") {
       _ip = value;
-      writeFile(IP_PATH, _ip);
     } else if (name == "gateway") {
       _gateway = value;
-      writeFile(GATEWAY_PATH, _gateway);
     }
   }
 
   if (request->hasParam("reset", true)) {
-    // "Factory reset" button: wipe the stored network configuration.
+    // "Factory reset": wipe the stored network configuration (EEPROM sector).
     Serial.println("[WiFiManager] reset requested - clearing stored config");
-    writeFile(SSID_PATH, String(""));
-    writeFile(PASS_PATH, String(""));
-    writeFile(IP_PATH, String(""));
-    writeFile(GATEWAY_PATH, String(""));
+    clearStoredConfig();
+  } else {
+    saveStoredConfig();
   }
 
   _rebootPending = true;

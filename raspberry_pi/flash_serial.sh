@@ -78,6 +78,12 @@ fi
 # --- 2. flash ----------------------------------------------------------------
 # Default esptool reset (DTR/RTS) puts the ESP8266 into download mode and
 # hard-resets it afterwards — this is exactly what the CH340 wiring provides.
+#
+# NOTE (issue #54): only 0x0 (firmware) and 0x200000 (LittleFS data partition)
+# are written. The WiFi config now lives in the reserved EEPROM flash sector
+# 0x3FB000 (see tankie/wificfg.h), which is intentionally NOT erased here —
+# so a serial re-flash keeps the saved network (and a failed/corrupt fs-OTA no
+# longer strands the ESP on the config-portal AP).
 log "flashing ${PORT} @ ${BAUD} baud …"
 python3 "${ESPTOOL}" --chip esp8266 --port "${PORT}" --baud "${BAUD}" \
   write_flash 0x0 "${BIN}" 0x200000 "${DATA_BIN}"

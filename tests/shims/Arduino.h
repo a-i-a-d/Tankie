@@ -115,6 +115,8 @@ class String {
   String(double v) { char b[32]; std::snprintf(b, sizeof b, "%g", v); s_ = b; }
 
   bool empty() const { return s_.empty(); }
+  void clear() { s_.clear(); }
+
   size_t length() const { return s_.size(); }
   char charAt(size_t i) const { return (i < s_.size()) ? s_[i] : '\0'; }
   const char* c_str() const { return s_.c_str(); }
@@ -138,6 +140,7 @@ class String {
 
   bool equals(const char* o) const { return s_ == (o ? o : ""); }
   bool operator==(const char* o) const { return s_ == (o ? o : ""); }
+  bool operator==(const String& o) const { return s_ == o.s_; }
   bool operator!=(const char* o) const { return !(*this == o); }
 
  private:

@@ -13,19 +13,23 @@
 // ESPAsyncWebServer / ElegantOTA) with a small class that implements the
 // same idea on top of the already-running ESPAsyncWebServer:
 //
-//   1. Credentials + static IP are read from files on LittleFS
-//      (ssid.txt / pass.txt / ip.txt / gateway.txt).
+//   1. Credentials + static IP are read from the reserved EEPROM flash
+//      sector 0x3FB000 (wificfg.h, issue #54) - a dedicated 4 KB sector
+//      that survives BOTH firmware OTA and LittleFS/data-partition writes.
+//      (Pre-#54 devices stored the config in LittleFS files; those are
+//      read once on boot and migrated into the EEPROM sector.)
 //   2. If the stored network connects in time -> STA mode, done.
 //   3. Otherwise the ESP opens its own access point (default "tankie-esp")
 //      and the web form (data/wifimanager.html) served at
 //      http://192.168.4.1:8080 (dedicated config server, port 8080) can be
 //      used to enter SSID / password / IP / gateway.
-//   4. The form POSTs back to the ESP; the values are written to LittleFS
-//      and the ESP reboots, retrying step 2 with the new credentials.
+//   4. The form POSTs back to the ESP; the values are written to the
+//      EEPROM sector and the ESP reboots, retrying step 2.
 //
 // Approach based on:
 //   https://randomnerdtutorials.com/esp8266-nodemcu-wi-fi-manager-asyncwebserver/
 // Requested in: https://github.com/a-i-a-d/Tankie/issues/21
+// Storage moved to the EEPROM sector in: https://github.com/a-i-a-d/Tankie/issues/54
 //
 // Usage (see tankie.ino):
 //   WiFiManager wifiManager;
@@ -53,8 +57,8 @@ class WiFiManager {
   // True while the ESP is serving the config portal (stored network failed).
   bool inConfigMode() const { return _inConfigMode; }
 
-  // Handle the POST of the config form: stores the submitted fields in
-  // LittleFS and schedules the reboot. Call from the config server's
+  // Handle the POST of the config form: stores the submitted fields in the
+  // EEPROM sector and schedules the reboot. Call from the config server's
   // (port 8080) "/" POST handler.
   void handleConfigPost(AsyncWebServerRequest* request);
 
@@ -76,8 +80,10 @@ class WiFiManager {
 
   bool connectSTA(unsigned long timeoutMs);
   void startPortal();
-  String readFile(const char* path);
-  bool writeFile(const char* path, const String& content);
+  String readFile(const char* path);   // legacy LittleFS read (migration only)
+  bool loadStoredConfig();             // EEPROM -> legacy LittleFS fallback
+  bool saveStoredConfig();             // EEPROM (single source of truth)
+  void clearStoredConfig();            // factory reset (wipe EEPROM)
 };
 
 #endif  // _TANKIE_WIFIMANAGER_H_

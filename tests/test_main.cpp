@@ -33,11 +33,18 @@ SerialClass Serial;
 #include <ESP8266WiFi.h>
 #include <LittleFS.h>
 #include <ElegantOTA.h>
+#include <EEPROM.h>
+
 std::string host_ws_text_all;   // AsyncWebSocket::textAll() capture
 WiFiClass WiFi;
 FSClass LittleFS;
 ESPClass ESP;
 ElegantOTAClass ElegantOTA;
+
+// --- EEPROM shim state (issue #54): the 4 KB reserved sector image (0xFF = blank) ---
+uint8_t host_eeprom_sector[HOST_EEPROM_SECTOR_SIZE];
+EEPROMClass EEPROM;
+
 
 // ---------------------------------------------------------------------------
 // Assertion-framework implementation
@@ -88,6 +95,9 @@ void register_test(const char* name, TestFn fn) { g_tests.emplace_back(name, fn)
 // main: run every registered test, print a summary, exit non-zero on failure
 // ---------------------------------------------------------------------------
 int main() {
+  // Blank the EEPROM sector (issue #54) so tests start from a fresh chip.
+  host_eeprom_reset();
+
   // Pin table defaults to HIGH (released / pull-up), like the real hardware.
   for (int i = 0; i < 64; i++) host_pin_level[i] = HIGH;
   for (int i = 0; i < 64; i++) host_pwm[i] = 0;
