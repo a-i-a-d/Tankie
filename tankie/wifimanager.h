@@ -16,8 +16,6 @@
 //   1. Credentials + static IP are read from the reserved EEPROM flash
 //      sector 0x3FB000 (wificfg.h, issue #54) - a dedicated 4 KB sector
 //      that survives BOTH firmware OTA and LittleFS/data-partition writes.
-//      (Pre-#54 devices stored the config in LittleFS files; those are
-//      read once on boot and migrated into the EEPROM sector.)
 //   2. If the stored network connects in time -> STA mode, done.
 //   3. Otherwise the ESP opens its own access point (default "tankie-esp")
 //      and the web form (data/wifimanager.html) served at
@@ -80,9 +78,8 @@ class WiFiManager {
 
   bool connectSTA(unsigned long timeoutMs);
   void startPortal();
-  String readFile(const char* path);   // legacy LittleFS read (migration only)
-  bool loadStoredConfig();             // EEPROM -> legacy LittleFS fallback
-  bool saveStoredConfig();             // EEPROM (single source of truth)
+  bool loadStoredConfig();             // EEPROM sector (single source of truth)
+  bool saveStoredConfig();             // EEPROM sector (single source of truth)
   void clearStoredConfig();            // factory reset (wipe EEPROM)
 };
 

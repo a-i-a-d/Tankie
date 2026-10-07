@@ -83,9 +83,7 @@ The blob is a small length-prefixed structure (magic + version +
 ssid/pass/ip/gateway + a trailing CRC32) managed by
 [`wificfg.h`](tankie/wificfg.h) / [`wificfg.cpp`](tankie/wificfg.cpp); a blank
 or corrupt sector is detected via the magic + CRC and cleanly falls back to the
-config portal. Pre-#54 devices that still keep the config in the LittleFS
-`ssid.txt` / `pass.txt` / `ip.txt` / `gateway.txt` files are migrated into the
-EEPROM sector automatically on their first boot after the update. See
+config portal. See
 [issue #54](https://github.com/a-i-a-d/Tankie/issues/54) for the background,
 and issue [#21](https://github.com/a-i-a-d/Tankie/issues/21) for why the
 `WiFiManager` library was replaced.
