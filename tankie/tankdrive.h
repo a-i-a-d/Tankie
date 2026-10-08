@@ -1,7 +1,6 @@
 #ifndef _TANKDRIVE_H_
 #define _TANKDRIVE_H_
 
-//#define DEBUG true
 
 #ifdef DEBUG
 #define D_TD(x) Serial.print("[TANKDRIVE] "); Serial.print(x)

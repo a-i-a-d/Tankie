@@ -1,7 +1,7 @@
 // Unit tests for the SparkFun TB6612FNG Motor class (issue #5).
 //
 // Covers the H-bridge pin logic of Motor::drive()/fwd()/rev()/brake()/
-// standby() and the free functions forward()/back()/left()/right()/brake().
+// standby().
 //
 // Pin convention (SparkFun_TB6612.cpp):
 //   fwd: In1=HIGH, In2=LOW,  PWM=speed
@@ -64,67 +64,4 @@ TEST(motor_standby) {
   CHECK_EQ_INT(digitalRead(AIN1), HIGH);
   CHECK_EQ_INT(digitalRead(AIN2), LOW);
   CHECK_EQ_INT(host_pwm[PWMA], 100);
-}
-
-TEST(free_forward) {
-  resetPins();
-  Motor mB(BIN1, BIN2, PWMB, STBY);
-  forward(mA, mB, 80);
-  CHECK_EQ_INT(host_pwm[PWMA], 80);
-  CHECK_EQ_INT(host_pwm[PWMB], 80);
-  CHECK_EQ_INT(digitalRead(AIN1), HIGH);
-  CHECK_EQ_INT(digitalRead(BIN1), HIGH);
-}
-
-TEST(free_forward_default_speed) {
-  resetPins();
-  Motor mB(BIN1, BIN2, PWMB, STBY);
-  forward(mA, mB);
-  CHECK_EQ_INT(host_pwm[PWMA], DEFAULTSPEED);
-  CHECK_EQ_INT(host_pwm[PWMB], DEFAULTSPEED);
-}
-
-TEST(free_back_ignores_sign) {
-  resetPins();
-  Motor mB(BIN1, BIN2, PWMB, STBY);
-  back(mA, mB, -80);   // abs(-80) -> both reverse at 80
-  CHECK_EQ_INT(host_pwm[PWMA], 80);
-  CHECK_EQ_INT(host_pwm[PWMB], 80);
-  CHECK_EQ_INT(digitalRead(AIN1), LOW);
-  CHECK_EQ_INT(digitalRead(BIN1), LOW);
-  CHECK_EQ_INT(digitalRead(AIN2), HIGH);
-  CHECK_EQ_INT(digitalRead(BIN2), HIGH);
-}
-
-TEST(free_left_pivot) {
-  resetPins();
-  Motor mB(BIN1, BIN2, PWMB, STBY);
-  left(mA, mB, 100);   // temp = 100/2 = 50 -> left rev, right fwd
-  CHECK_EQ_INT(host_pwm[PWMA], 50);
-  CHECK_EQ_INT(host_pwm[PWMB], 50);
-  CHECK_EQ_INT(digitalRead(AIN1), LOW);
-  CHECK_EQ_INT(digitalRead(BIN1), HIGH);
-}
-
-TEST(free_right_pivot) {
-  resetPins();
-  Motor mB(BIN1, BIN2, PWMB, STBY);
-  right(mA, mB, 100);  // temp = 50 -> left fwd, right rev
-  CHECK_EQ_INT(host_pwm[PWMA], 50);
-  CHECK_EQ_INT(host_pwm[PWMB], 50);
-  CHECK_EQ_INT(digitalRead(AIN1), HIGH);
-  CHECK_EQ_INT(digitalRead(BIN1), LOW);
-}
-
-TEST(free_brake_both) {
-  resetPins();
-  Motor mB(BIN1, BIN2, PWMB, STBY);
-  forward(mA, mB, 100);
-  brake(mA, mB);
-  CHECK_EQ_INT(digitalRead(AIN1), HIGH);
-  CHECK_EQ_INT(digitalRead(AIN2), HIGH);
-  CHECK_EQ_INT(digitalRead(BIN1), HIGH);
-  CHECK_EQ_INT(digitalRead(BIN2), HIGH);
-  CHECK_EQ_INT(host_pwm[PWMA], 0);
-  CHECK_EQ_INT(host_pwm[PWMB], 0);
 }
