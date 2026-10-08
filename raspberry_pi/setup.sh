@@ -101,9 +101,16 @@ for arg in "$@"; do
   esac
 done
 
+# Log prefix scheme (one script -> one prefix, so every helper line can be
+# grep'ed by colour/word without knowing which script emitted it):
+#   log -> [setup] green/stdout
+#   warn-> [setup] yellow/stderr
+#   die -> [error] red/stderr
+# warn uses [setup] to match setup-serial.sh (which setup.sh now invokes);
+# die writes to stderr, like every other helper script in the repo.
 log()  { printf '\033[1;32m[setup]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[setup]\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*"; exit 1; }
+die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # --- 0. sanity checks -------------------------------------------------------
 [ "$(id -u)" -eq 0 ] || die "Please run as root (sudo bash setup.sh)"
