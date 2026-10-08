@@ -3,7 +3,6 @@
 // compile flag: build with -DELEGANTOTA_USE_ASYNC_WEBSERVER=1 (see README /
 // arduino-cli --build-property "compiler.cpp.extra_flags=-DELEGANTOTA_USE_ASYNC_WEBSERVER=1").
 #include <ElegantOTA.h>
-//#include "m8833.h"
 #include "tankdrive.h"
 #include "config.h"
 #include "batt.h"
@@ -17,7 +16,6 @@
 #include <ESPAsyncWebServer.h>
 #include <FS.h>
 #include "LittleFS.h"
-#include <time.h>
 
 Motor M2 = Motor(AIN1, AIN2, PWMA, STBY);
 Motor M1 = Motor(BIN1, BIN2, PWMB, STBY);
@@ -25,9 +23,6 @@ Motor M1 = Motor(BIN1, BIN2, PWMB, STBY);
 AsyncWebServer server(80);
 AsyncWebServer configServer(8080);
 AsyncWebSocket ws("/ws");
-//M8833 M1(D1,D2);
-//M8833 M2(D4,D3);
-//TankDrive tank(&M1, &M2);
 TankDrive tank(&M1, &M2);
 Servo servoPan;
 Servo servoTilt;
@@ -68,8 +63,6 @@ bool watchdogActive = false;
 void setMotorsSafe();   // issue #44 C: safe motor state at the top of setup()
 void broadcastState();
 void broadcastWatchdog();
-void listDir(const char *dirname);
-String processor(const String &var);
 void notFound(AsyncWebServerRequest *request);
 void eventHandler(AsyncWebSocket *server, AsyncWebSocketClient *client,
                   AwsEventType type, void *arg, uint8_t *data, size_t len);
@@ -127,7 +120,7 @@ void setup() {
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request)
   {
     Serial.println("requested /");
-    request->send(LittleFS, "/index.html", String(), false, processor);
+    request->send(LittleFS, "/index.html", String(), false);
   });
 
   // Config portal server (only meaningful while wifiManager.inConfigMode()):
@@ -166,7 +159,6 @@ void setup() {
   server.begin();
   configServer.begin();
 
-  listDir("/");
 }
 
 void loop()
@@ -211,11 +203,6 @@ void loop()
 
 void notFound(AsyncWebServerRequest *request) {
     request->send(404, "text/plain", "Not found");
-}
-
-String processor(const String &var)
-{
-  return String("unknown");
 }
 
 // ---------------------------------------------------------------------------
@@ -459,26 +446,5 @@ void eventHandler(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEvent
     case WS_EVT_PONG:
     case WS_EVT_ERROR:
       break;
-  }
-}
-
-void listDir(const char *dirname) {
-  Serial.printf("Listing directory: %s\n", dirname);
-
-  Dir root = LittleFS.openDir(dirname);
-
-  while (root.next()) {
-    File file = root.openFile("r");
-    Serial.print("  FILE: ");
-    Serial.print(root.fileName());
-    Serial.print("  SIZE: ");
-    Serial.print(file.size());
-    time_t cr = file.getCreationTime();
-    time_t lw = file.getLastWrite();
-    file.close();
-    struct tm *tmstruct = localtime(&cr);
-    Serial.printf("    CREATION: %d-%02d-%02d %02d:%02d:%02d\n", (tmstruct->tm_year) + 1900, (tmstruct->tm_mon) + 1, tmstruct->tm_mday, tmstruct->tm_hour, tmstruct->tm_min, tmstruct->tm_sec);
-    tmstruct = localtime(&lw);
-    Serial.printf("  LAST WRITE: %d-%02d-%02d %02d:%02d:%02d\n", (tmstruct->tm_year) + 1900, (tmstruct->tm_mon) + 1, tmstruct->tm_mday, tmstruct->tm_hour, tmstruct->tm_min, tmstruct->tm_sec);
   }
 }
