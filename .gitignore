@@ -5,3 +5,17 @@ tests/build/
 __pycache__/
 *.pyc
 .pio/
+
+# Build artifacts
+tankie/build/
+build-webflasher/
+*.bin
+*.elf
+*.map
+
+# Editor / OS
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db

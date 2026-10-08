@@ -21,7 +21,7 @@ This repository contains the motor and pan/tilt control (ESP8266) as well as the
 
 ## Hardware Setup
 ![](media/Tankie_fritzing.png)
-**Please note:** The DC-DC converter and 9V power source in the image are wrong, a 9V battery won't be sufficient to power Tankie, use instead the 6x 1.5V battery bos that comes with the Devastator Kit. The DC-DC converter in the image can be used, however, it requires to have the output value adjusted manually, I'd suggest to use the converter in the parts list instead.
+**Please note:** The DC-DC converter and 9V power source in the image are wrong, a 9V battery won't be sufficient to power Tankie, use instead the 6x 1.5V battery box that comes with the Devastator Kit. The DC-DC converter in the image can be used, however, it requires to have the output value adjusted manually, I'd suggest to use the converter in the parts list instead.
 
 ## Software Requirements
 
@@ -144,13 +144,13 @@ and issue [#21](https://github.com/a-i-a-d/Tankie/issues/21) for why the
 `WiFiManager` library was replaced.
 
 ### Upload via USB
-The first upload has to happen via usb and can be done as usual with the Arduino IDE
+The first upload has to happen via USB and can be done as usual with the Arduino IDE
 - select Wemos D1 Mini as board
-- select the usb board it is connected to
+- select the USB board it is connected to
 - click on upload
 
-### Upload via ElegantOTG
-The firmware makes use of [ElegantOTG](https://github.com/ayushsharma82/ElegantOTA), which allows to update firmware and littlefs data via the browser over Wifi. This can be used after installing the firmware once via USB.
+### Upload via ElegantOTA
+The firmware makes use of [ElegantOTA](https://github.com/ayushsharma82/ElegantOTA), which allows to update firmware and littlefs data via the browser over Wifi. This can be used after installing the firmware once via USB.
 
 In the Arduino IDE, select __Sketch->Export Compiled Binary__. The exported .bin file will end up in the [build](tankie/build) folder. Upload it through the ElegantOTA web ui available at __http://<ip_of_tankie>/update__.
 
@@ -159,12 +159,12 @@ Additional to the firmware, files from the [data folder](tankie/data/) have to b
 
 
 ### Upload via USB
-- Install the [LittleFS uploader plugin for Arduno 2.2.1 and higher](https://github.com/earlephilhower/arduino-littlefs-upload)
+- Install the [LittleFS uploader plugin for Arduino 2.2.1 and higher](https://github.com/earlephilhower/arduino-littlefs-upload)
 - In the Arduino IDE press __[Shift]__+__[Control]__+__[p]__. A menu will appear, enter __littlefs__ and click __Upload LittleFS to Pico/ESP...__
 - It will create the littlefs .bin file and upload it
 
-### Upload via ElegantOTG 
-Follow the instructions for the usb data upload. It will fail if not connected via usb, but create the data .bin file in the **/tmp** directory. To find the exact name, look at the console output of the tool in the arduinoIDE. You can simply copy that file from /tmp and upload it via the ElegantOTG UI. 
+### Upload via ElegantOTA 
+Follow the instructions for the USB data upload. It will fail if not connected via USB, but create the data .bin file in the **/tmp** directory. To find the exact name, look at the console output of the tool in the arduinoIDE. You can simply copy that file from /tmp and upload it via the ElegantOTA UI. 
 
 ## RC Usage
 Connect to __http://<ip_of_tankie>__ address with a browser. You should see a control interface with two joysticks and fields that display steer, speed, pan and tilt values as well as the current voltage of the power supply.
