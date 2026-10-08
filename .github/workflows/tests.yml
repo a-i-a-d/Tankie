@@ -1,6 +1,6 @@
 # CI for the Tankie ESP8266 firmware (issue #5).
 #
-# Three jobs, all on push/PR:
+# 5 jobs, all on push/PR:
 #
 #   unit-tests     - host-side unit tests (g++, no ESP toolchain): compiles
 #                    the pure firmware modules against tests/shims/Arduino.h
@@ -17,6 +17,7 @@
 #                    -DELEGANTOTA_USE_ASYNC_WEBSERVER=1) — firmware AND the
 #                    LittleFS data partition — exactly the build the tank Pi
 #                    runs (PR #25, #29).
+#   platformio-build - builds with PlatformIO (platformio.ini)
 name: tests
 
 on:
@@ -91,3 +92,25 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run the static Pi install guard (issue #53)
         run: bash tests/pi_install_check.sh
+
+  platformio-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PlatformIO (isolated venv)
+        run: |
+          # PlatformIO installs to the venv; the /usr/local/bin/pio wrapper is
+          # NOT installed with it, so always use the full venv path.
+          python3 -m venv /tmp/pioenv
+          /tmp/pioenv/bin/pip install platformio
+      - name: Build firmware with PlatformIO
+        run: |
+          /tmp/pioenv/bin/pio run
+      - name: Build LittleFS data partition with PlatformIO
+        run: |
+          /tmp/pioenv/bin/pio run -t buildfs
+      - name: Check the binaries
+        run: |
+          ls -l .pio/build/tankie/*.bin
+          test -s .pio/build/tankie/firmware.bin
+          test -s .pio/build/tankie/littlefs.bin

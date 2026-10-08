@@ -23,27 +23,82 @@ This repository contains the motor and pan/tilt control (ESP8266) as well as the
 ![](media/Tankie_fritzing.png)
 **Please note:** The DC-DC converter and 9V power source in the image are wrong, a 9V battery won't be sufficient to power Tankie, use instead the 6x 1.5V battery bos that comes with the Devastator Kit. The DC-DC converter in the image can be used, however, it requires to have the output value adjusted manually, I'd suggest to use the converter in the parts list instead.
 
-## Software Requirments
-This project is currently built with ArduinoIDE, but eventually will be switched to PlatformIO. To build the firmware, you will need to install aditional arduino libraries listed below.
+## Software Requirements
 
-### Tools
-- [ArduinoIDE 2.2.1 or newer](https://www.arduino.cc/en/software/)
-- [Arduino core for ESP8266 WiFi chip](https://github.com/esp8266/Arduino)
-- [LittleFS uploader plugin for Arduno 2.2.1 and higher](https://github.com/earlephilhower/arduino-littlefs-upload)
+The ESP8266 firmware (in [`tankie/`](tankie/)) can be built with **any** of the
+three toolchains below. They all target the same board — **Wemos D1 Mini**
+(`esp8266:esp8266:d1_mini`, ESP8266 core 3.1.2) — and produce a compatible
+firmware + LittleFS data partition. The only thing that differs between them
+is how the `ELEGANTOTA_USE_ASYNC_WEBSERVER=1` build flag and the dependencies
+are declared (see each method's notes).
 
-> **Build note (ElegantOTA + AsyncWebServer):** this sketch uses the async web stack, so ElegantOTA has to be compiled in async mode. With ArduinoIDE add `ELEGANTOTA_USE_ASYNC_WEBSERVER=1` to *File → Preferences → Additional compiler flags* (or the board's custom flags). With arduino-cli:
-> ```
-> arduino-cli compile --fqbn esp8266:esp8266:d1_mini \
->   --build-property "compiler.cpp.extra_flags=-DELEGANTOTA_USE_ASYNC_WEBSERVER=1" tankie
-> ```
+### 1. PlatformIO (recommended for local dev)
 
-### Libraries
-To be installed within the ArduinoIDE
-- AsyncTCP
-- ESPAsyncTCP
-- ESPAsyncWebServer
-- ElegantOTA
+Install [PlatformIO](https://platformio.org/): `pip install platformio`
 
+The config lives at the repo root in [`platformio.ini`](platformio.ini).
+Build, upload, and monitor from the CLI:
+```
+pio run                 # firmware
+pio run -t buildfs      # LittleFS data partition (tankie/data/)
+pio run -t upload       # flash firmware (USB, once / reflashable boards)
+pio run -t uploadfs     # flash the LittleFS data partition
+```
+`platformio.ini` pins the board, the LittleFS layout
+(`board_build.ldscript = eagle.flash.4m2m.ld`, matching the 4M/FS:2MB
+`2072576`-byte image), the `ELEGANTOTA_USE_ASYNC_WEBSERVER=1` flag, and the
+library dependencies. No file moves are needed — `src_dir`/`data_dir` point at
+the existing `tankie/` and `tankie/data/`.
+
+### 2. arduino-cli (used on the tank Pi)
+
+The Pi build script (`raspberry_pi/build.sh`) uses `arduino-cli` and produces
+the exact image the firmware + LittleFS partition expect:
+```
+bash raspberry_pi/build.sh
+```
+For a one-off manual compile:
+```
+arduino-cli compile --fqbn esp8266:esp8266:d1_mini \
+  --build-property "compiler.cpp.extra_flags=-DELEGANTOTA_USE_ASYNC_WEBSERVER=1" \
+  tankie
+```
+`sketch.yaml` (in [`tankie/`](tankie/)) pins the FQBN, the esp8266 core
+(3.1.2), and every external library version, so the build is reproducible
+without relying on a personal IDE state.
+
+### 3. Arduino IDE
+
+- Install [Arduino IDE 2.2.1 or newer](https://www.arduino.cc/en/software/)
+  and the [Arduino core for ESP8266](https://github.com/esp8266/Arduino).
+- Open `tankie/` as a project. Install the libraries from
+  [`tankie/libraries.json`](tankie/libraries.json) (or add them via *Sketch →
+  Include Library → Manage Libraries*):
+  - ElegantOTA 4.0.0
+  - ESPAsyncWebServer 3.1.0
+  - ESPAsyncTCP 1.2.4
+  - AsyncTCP 1.1.4
+  - Servo 1.3.0
+- Select **Wemos D1 Mini** as the board.
+- **Build note:** the sketch uses the async web stack, so ElegantOTA must be
+  compiled in async mode — add `ELEGANTOTA_USE_ASYNC_WEBSERVER=1` to
+  *File → Preferences → Additional compiler flags* (or the board's custom
+  flags). The same flag is applied automatically by the PlatformIO and
+  arduino-cli methods above.
+
+### Libraries (reference)
+
+| Library | Version |
+|---|---|
+| [ElegantOTA](https://github.com/ayushsharma82/ElegantOTA) | 4.0.0 |
+| [ESPAsyncWebServer](https://github.com/me-no-dev/ESPAsyncWebServer) | 3.1.0 |
+| [ESPAsyncTCP](https://github.com/me-no-dev/ESPAsyncTCP) | 1.2.4 |
+| [AsyncTCP](https://github.com/me-no-dev/AsyncTCP) | 1.1.4 |
+| [Servo](https://github.com/arduino/arduino-libraries) | 1.3.0 |
+
+The ESP8266 core also bundles its own interrupt-driven Servo, so the
+`Servo.h` used by the sketch is the core's (the generic arduino-libraries
+Servo is for the arduino-cli path).
 ## Firmware
 - Pinout and other config setting can be set in the [config.h](tankie/config.h) file.
 
@@ -95,9 +150,9 @@ The first upload has to happen via usb and can be done as usual with the Arduino
 - click on upload
 
 ### Upload via ElegantOTG
-The firmware makes use of [ElegantOTG](https://github.com/ayushsharma82/ElegantOTA), which allows to update firmware and littlefs data via the browser over Wifi. This can be used after installing the firmwar once vi usb.
+The firmware makes use of [ElegantOTG](https://github.com/ayushsharma82/ElegantOTA), which allows to update firmware and littlefs data via the browser over Wifi. This can be used after installing the firmware once via USB.
 
-In the ArduinoIDE, select __Sketch->Export Compiled Binary__. The exported .bin file will end up in the [build](tankie/build) folder. Upload it through the ElegantOTA web ui available at __http://<ip_of_tankie>/update__.
+In the Arduino IDE, select __Sketch->Export Compiled Binary__. The exported .bin file will end up in the [build](tankie/build) folder. Upload it through the ElegantOTA web ui available at __http://<ip_of_tankie>/update__.
 
 ## Data
 Additional to the firmware, files from the [data folder](tankie/data/) have to be uploaded as littlefs filesystem.
@@ -105,11 +160,11 @@ Additional to the firmware, files from the [data folder](tankie/data/) have to b
 
 ### Upload via USB
 - Install the [LittleFS uploader plugin for Arduno 2.2.1 and higher](https://github.com/earlephilhower/arduino-littlefs-upload)
-- In the ArduinoIDE press __[Shift]__+__[Control]__+__[p]__. A menu will appear, enter __littlefs__ and click __Upload LittleFS to Pico/ESP...__
+- In the Arduino IDE press __[Shift]__+__[Control]__+__[p]__. A menu will appear, enter __littlefs__ and click __Upload LittleFS to Pico/ESP...__
 - It will create the littlefs .bin file and upload it
 
 ### Upload via ElegantOTG 
-Follow the instructions for the usb data upload. It will fail if not connected via usb, but create the data .bin file in the **/tmp** directory. To find the exact name, look at the consle output of the tool in the arduinoIDE. You can simply copy that file from /tmp and upload it via the ElegantOTG UI. 
+Follow the instructions for the usb data upload. It will fail if not connected via usb, but create the data .bin file in the **/tmp** directory. To find the exact name, look at the console output of the tool in the arduinoIDE. You can simply copy that file from /tmp and upload it via the ElegantOTG UI. 
 
 ## RC Usage
 Connect to __http://<ip_of_tankie>__ address with a browser. You should see a control interface with two joysticks and fields that display steer, speed, pan and tilt values as well as the current voltage of the power supply.
