@@ -145,6 +145,8 @@ def main():
     if cfg_path is None:
         here = os.path.dirname(os.path.abspath(__file__))
         candidate = os.path.join(here, "..", "conf", "serial_bridge.yaml")
+        if not os.path.exists(candidate):
+            candidate = "/etc/tankie/serial_bridge.yaml"
         if os.path.exists(candidate):
             cfg_path = candidate
     cfg = load_config(cfg_path)

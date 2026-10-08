@@ -1,8 +1,12 @@
-# Tankie serial bridge daemon — issue #29.
+# Tankie serial bridge daemon — issue #29, #53.
 #
 # Holds the control-link serial port (default /dev/ttyS0, Pi native UART0)
 # and provides the NDJSON control link to the ESP8266.
-# Install with setup-serial.sh (or copy to /etc/systemd/system/ + enable).
+#
+# Installed system-wide (location-independent, issue #53):
+#   daemon  -> /usr/local/lib/tankie/bridge.py
+#   config  -> /etc/tankie/serial_bridge.yaml
+#   CLI     -> /usr/local/bin/tankie-serial
 #
 #   systemctl enable --now tankie-serial
 #   systemctl status tankie-serial
@@ -21,8 +25,9 @@ Type=simple
 User=pi
 Group=pi
 SupplementaryGroups=dialout
-WorkingDirectory=/home/pi/Tankie/raspberry_pi/serial_bridge
-ExecStart=/usr/bin/python3 /home/pi/Tankie/raspberry_pi/serial_bridge/bridge.py --config /home/pi/Tankie/raspberry_pi/conf/serial_bridge.yaml
+# /var/lib/tankie is where the state file lives.
+WorkingDirectory=/var/lib/tankie
+ExecStart=/usr/bin/python3 /usr/local/lib/tankie/bridge.py --config /etc/tankie/serial_bridge.yaml
 Restart=always
 RestartSec=2
 # Safety: if the daemon dies, the ESP8266 watchdog stops the motors within

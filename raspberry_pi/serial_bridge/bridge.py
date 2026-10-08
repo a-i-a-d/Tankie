@@ -645,11 +645,15 @@ def main():
     ap.add_argument("--daemon", action="store_true", help="fork into background")
     args = ap.parse_args()
 
-    # Resolve config path relative to this file if not absolute
+    # Resolve config path: --config wins, then the installed system config
+    # (/etc/tankie/serial_bridge.yaml, installed by setup.sh), then the checkout-relative
+    # conf/ (dev execution from the repo), then built-in defaults.
     cfg_path = args.config
     if cfg_path is None:
         here = os.path.dirname(os.path.abspath(__file__))
         candidate = os.path.join(here, "..", "conf", "serial_bridge.yaml")
+        if not os.path.exists(candidate):
+            candidate = "/etc/tankie/serial_bridge.yaml"
         if os.path.exists(candidate):
             cfg_path = candidate
 

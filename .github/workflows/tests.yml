@@ -84,3 +84,10 @@ jobs:
           ls -l /tmp/tankie-flash/tankie.ino.bin /tmp/tankie-flash/tankie.ino.data.bin
           test -s /tmp/tankie-flash/tankie.ino.bin
           test -s /tmp/tankie-flash/tankie.ino.data.bin
+
+  pi-install-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the static Pi install guard (issue #53)
+        run: bash tests/pi_install_check.sh

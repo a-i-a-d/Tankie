@@ -27,8 +27,15 @@
 # ESP from the Pi out of the box (see
 # https://github.com/a-i-a-d/Tankie/issues/21).
 #
+# And (issue #53) it installs the Pi-side serial-bridge stack system-wide
+# (daemon -> /usr/local/lib/tankie/bridge.py, CLI -> /usr/local/bin/tankie-serial,
+# config -> /etc/tankie/serial_bridge.yaml, unit -> /etc/systemd/system) so the
+# runtime never depends on where the repo checkout lives.
+#
 # Usage:
 #   sudo bash setup.sh
+#   sudo bash setup.sh --reset-config   # also replaces /etc/tankie/serial_bridge.yaml
+#                                       # (backing up the current file, MMDDhhmm)
 #
 # The script is idempotent — safe to re-run to re-apply the configuration.
 # ---------------------------------------------------------------------------
@@ -48,9 +55,13 @@ MEDIAMTX_SHA256="6a3aa635fb60ea9b8d566ec306f0a42ff1b6b52a3942bc2baffbe55880d4c3d
 # the OTA flasher can talk to.
 ELEGANTOTA_VERSION="4.0.0"
 
-INSTALL_DIR="/opt/mediamtx"
+# --- system install locations (issue #53: everything location-independent) ---
+# mediamtx lives in /usr/local (not /opt) and its config is in /etc/tankie,
+# matching the serial-bridge layout below. All under /etc/tankie so the Pi
+# config has one home (issue #48).
+INSTALL_DIR="/usr/local/mediamtx"
 BIN="${INSTALL_DIR}/mediamtx"
-CONF="${INSTALL_DIR}/mediamtx.yml"
+CONF="/etc/tankie/mediamtx.yml"
 SERVICE="mediamtx.service"
 WATCHDOG_SERVICE="wlan0-watchdog.service"
 WATCHDOG_SCRIPT="/usr/local/bin/wlan0-watchdog.sh"
@@ -60,6 +71,13 @@ ESP_FLASH_SCRIPT="/usr/local/bin/tankie-flash"
 ESP_FLASH_OTA_SCRIPT="/usr/local/bin/tankie-flash-ota"
 ESP_FLASH_OTA_TEST_SCRIPT="/usr/local/bin/tankie-flash-ota-test"
 ESP_ENV="/etc/tankie/flash.env"
+
+# Serial-bridge install locations (issue #53).
+TANKIE_SER_DIR="/usr/local/lib/tankie"
+TANKIE_SER_CLI="/usr/local/bin/tankie-serial"
+TANKIE_SER_CONF="/etc/tankie/serial_bridge.yaml"
+TANKIE_SER_UNIT="/etc/systemd/system/tankie-serial.service"
+TANKIE_SER_RUN_USER="${TANKIE_USER:-pi}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_CONF="${SCRIPT_DIR}/conf/mediamtx.yml"
@@ -71,9 +89,27 @@ SRC_ESP_BUILD="${SCRIPT_DIR}/build.sh"
 SRC_ESP_FLASH="${SCRIPT_DIR}/flash_serial.sh"
 SRC_ESP_FLASH_OTA="${SCRIPT_DIR}/flash_ota.sh"
 SRC_ESP_FLASH_OTA_TEST="${SCRIPT_DIR}/../tests/manual/flash_ota_test.sh"
+SRC_SERIAL_YAML="${SCRIPT_DIR}/conf/serial_bridge.yaml"
+SER_SETUP="${SCRIPT_DIR}/serial_bridge/setup-serial.sh"
 
+# Forward --reset-config (if the caller passed it) into the serial-bridge install.
+SER_SETUP_ARGS=()
+for arg in "$@"; do
+  case "${arg}" in
+    --reset-config) SER_SETUP_ARGS+=("--reset-config") ;;
+    *) : ;;
+  esac
+done
+
+# Log prefix scheme (one script -> one prefix, so every helper line can be
+# grep'ed by colour/word without knowing which script emitted it):
+#   log -> [setup] green/stdout
+#   warn-> [setup] yellow/stderr
+#   die -> [error] red/stderr
+# warn uses [setup] to match setup-serial.sh (which setup.sh now invokes);
+# die writes to stderr, like every other helper script in the repo.
 log()  { printf '\033[1;32m[setup]\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
+warn() { printf '\033[1;33m[setup]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # --- 0. sanity checks -------------------------------------------------------
@@ -198,11 +234,10 @@ if [ -n "${ARDUINO_CLI}" ]; then
   "${ARDUINO_CLI}" core install esp8266:esp8266 \
     || warn "esp8266 core install failed — the ESP build/flash helpers will not work until you install it"
   # Pin the ElegantOTA firmware library (issue #44 D). flash_ota.sh drives the
-  # 4.x HTTP API (/ota/metadata, /ota/start?mode=fr|fs&hash=, /ota/upload);
-  # 3.x has no /ota/metadata and would die in the OTA preflight. arduino-cli
-  # resolves the library from the user (~/Arduino/libraries) or managed
-  # location, so this pin is what makes a fresh setup build a firmware the OTA
-  # flasher can talk to. Idempotent: a no-op at 4.0.0, an upgrade otherwise.
+  # 4.x HTTP API. arduino-cli resolves the library from the user
+  # (~/Arduino/libraries) or managed location, so this pin is what makes a
+  # fresh setup build a firmware the OTA flasher can talk to. Idempotent: a
+  # no-op at 4.0.0, an upgrade otherwise.
   log "Pinning the ElegantOTA library to ${ELEGANTOTA_VERSION} (needed by flash_ota.sh) …"
   "${ARDUINO_CLI}" lib update-index 2>/dev/null \
     || warn "could not refresh the library index — the ElegantOTA pin may use a cached index"
@@ -248,6 +283,41 @@ else
   log "ESP8266 env already present: ${ESP_ENV} (left untouched)"
 fi
 
+# --- 8b. install the serial bridge (issue #53) ------------------------------
+# The Pi-side serial control link to the ESP8266 (bridge.py daemon + CLI),
+# installed system-wide so the runtime does not depend on a repo checkout
+# location: daemon -> /usr/local/lib/tankie, CLI -> /usr/local/bin, config ->
+# /etc/tankie/serial_bridge.yaml, unit -> /etc/systemd/system.
+log "Installing the serial bridge (issue #53) …"
+if [ ! -f "${SER_SETUP}" ]; then
+  die "setup-serial.sh not found next to setup.sh: ${SER_SETUP}"
+fi
+"${SER_SETUP}" "${SER_SETUP_ARGS[@]}"
+
+# --- 8c. install the serial-bridge configuration ---------------------------
+# /etc/tankie is the runtime home for all Pi config (issue #53): the template
+# from the checkout is installed only if the file is missing, so admin edits
+# (auto_profile tuning, port changes) survive a re-run. --reset-config is the
+# escape hatch: when forwarded, the existing file is backed up (MMDDhhmm) and
+# the template replaces it.
+if [ "${SER_SETUP_ARGS[@]}" = "--reset-config" ]; then
+  if [ -f "${TANKIE_SER_CONF}" ]; then
+    BACKUP="${TANKIE_SER_CONF}.$(date +%m%d%H%M)"
+    cp "${TANKIE_SER_CONF}" "${BACKUP}"
+    chmod 0644 "${BACKUP}"
+    log "  serial-bridge config backed up to ${BACKUP}"
+  fi
+  log "Installing serial-bridge configuration to ${TANKIE_SER_CONF} (reset requested)"
+  install -m 0644 "${SRC_SERIAL_YAML}" "${TANKIE_SER_CONF}"
+else
+  if [ ! -f "${TANKIE_SER_CONF}" ]; then
+    install -m 0644 "${SRC_SERIAL_YAML}" "${TANKIE_SER_CONF}"
+    log "Serial-bridge configuration installed to ${TANKIE_SER_CONF}"
+  else
+    log "Serial-bridge configuration already present at ${TANKIE_SER_CONF} (left untouched — pass --reset-config to replace it)"
+  fi
+fi
+
 # --- 9. verify -------------------------------------------------------------
 log "Verifying installation..."
 "${BIN}" --version | head -1
@@ -257,7 +327,7 @@ log "Validating configuration..."
 if systemctl is-active --quiet "${SERVICE}"; then
   log "Service '${SERVICE}' is active."
 else
-  warn "Service is not active — check: journalctl -u ${SERVICE} -n 50"
+  warn "Service '${SERVICE}' is not active — check: journalctl -u ${SERVICE} -n 50"
 fi
 
 if systemctl is-active --quiet "${WATCHDOG_TIMER}"; then
@@ -276,6 +346,13 @@ if ls -d "${HOME}"/.arduino15/packages/esp8266/tools/mklittlefs/*/mklittlefs >/d
   log "esp8266 core + mklittlefs present (LittleFS data partition build ready)"
 else
   warn "esp8266 core / mklittlefs not found — the LittleFS data partition build will be skipped until you run: arduino-cli core install esp8266:esp8266"
+fi
+
+# Serial bridge verify (issue #53)
+if [ -x "${TANKIE_SER_CLI}" ] && [ -f "${TANKIE_SER_UNIT}" ] && [ -f "${TANKIE_SER_CONF}" ] && [ -f "${TANKIE_SER_DIR}/bridge.py" ]; then
+  log "Serial bridge installed: ${TANKIE_SER_CLI} (daemon ${TANKIE_SER_DIR}/bridge.py, config ${TANKIE_SER_CONF})"
+else
+  warn "serial-bridge install incomplete — check ${TANKIE_SER_CLI}"
 fi
 
 # Show the live path status (camera will be 'ready' only once a client connects)
@@ -304,6 +381,11 @@ Next steps / how to use:
   * Flash ESP8266 fw    :  tankie-flash        (USB/CH340, D1 Mini on /dev/ttyUSB0)
   * Flash ESP8266 via OTA: tankie-flash-ota     (over WiFi, ElegantOTA)
   * Test OTA from the Pi: tankie-flash-ota-test (joins the tankie-esp AP, runs the OTA, restores WiFi)
+  * Serial bridge status:   systemctl status tankie-serial
+  * Serial bridge logs     :  journalctl -u tankie-serial -f
+  * Drive the tank         :  tankie-serial drive --speed 50 --steer 0
+  * Show bridge state      :  tankie-serial state
+  * Stop the motors        :  tankie-serial stop
 
 Note: if you just enabled the camera for the first time, reboot once so the
       camera driver loads and /dev/video0 appears.
