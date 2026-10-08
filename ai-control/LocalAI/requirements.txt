@@ -1,0 +1,11 @@
+# Dependencies for ai_control.py (LocalAI control client, issue #16).
+#
+# Lower-bound ranges: raise the floor only when a release diverges and
+# breaks the client; then pin the last known-good major until a fix lands.
+#
+# cv2 uses the headless wheel: the Pi never has a display (see issue #16)
+# and the script's cv2.imshow/waitKey is only a local debug aid, not a
+# runtime requirement.
+opencv-python-headless>=4.8,<5
+openai>=1.0,<2
+termcolor>=2.2,<3

@@ -128,7 +128,22 @@ The [ai-control](ai-control/) folder contains the code that connects an AI to th
 - **Continuous control (ai_control.py):** a background control loop re-issues the active drive command (the combined `drive` object) every second so the firmware watchdog stays armed while the AI is thinking between frames.
 - **Autonomous drive profile:** AI-issued drive commands are clamped to `max_speed = 40` (see `AUTO_PROFILE` in `ai_control/LocalAI/ai_control.py`), slower than the manual joystick range, so a misbehaving model cannot drive the tank at full speed.
 - **Pan/tilt:** the firmware clamps `pan`/`tilt` values to the 0-180 servo range; the AI tools already use relative moves (`up`/`down`/`left`/`right`/`center`) around the 90-degree center position.
+### Configuration (issue #16)
+No network endpoints are hard-coded in the AI code:
 
+- **`ai-control/LocalAI/ai_control.py`** (LocalAI client) — one config source: env vars >
+  optional `ai_control.json` (next to the script) > built-in defaults.
+  | env var | json key | default | meaning |
+  |---|---|---|---|
+  | `LOCALAI_API_URL` | `api_base` | `http://localai.local:8080/v1` | LocalAI base URL (OpenAI-compatible) |
+  | `LOCALAI_API_KEY` | `api_key` | `sk-0123456789` | LocalAI accepts any key or none |
+  | `TANKIE_VIDEO_URL` | `video_url` | `rtsp://tankie_pi.local:8554/cam_low` | camera stream for OpenCV (fallbacks in the script) |
+- **`raspberry_pi/serial_bridge/`** (Pi bridge) — `TANKIE_BRIDGE_SOCK` / `TANKIE_STATE_FILE`
+  (section below); it pushes the Pi's own `stream_url` to the ESP (issue #51).
+- **`tankie/data/`** (web UI) — stream URL is never hard-coded: the `stream_url`
+  field in every `state` broadcast (see above), pushed by the bridge.
+- **`ai-control/tankieControl`** — LocalAGI path, parked (mudler/LocalAGI#340);
+  removed in a later cleanup step.
 
 ## Serial control protocol (ESP8266 over the Pi native UART0)
 The ESP8266 is controlled over the Pi's native UART0 (`/dev/ttyS0` @ 921600 8N1, wired TX→RX / RX→TX / GND→GND — the permanent control link; `/dev/ttyUSB0` is only the USB flashing adapter)

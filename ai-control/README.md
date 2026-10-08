@@ -15,7 +15,21 @@ For LocalAGI Functions can be used by agents to send control commands to the tan
 
 ## LocalAI
 
-For using the tank with LocalAI, use the ai_control.py script. It's more a proof of concept at the moment and requires you to edit the global variables for your setup.
+For using the tank with LocalAI, use `ai_control.py`. It is a proof of
+concept at the moment.
+
+**Configuration (issue #16):** the script reads one config source —
+env vars > optional `ai_control.json` next to the script > built-in
+defaults:
+
+| env var        | `ai_control.json` key | default                        | meaning                          |
+|----------------|-----------------------|--------------------------------|----------------------------------|
+| `LOCALAI_API_URL`   | `api_base`  | `http://localai.local:8080/v1` | LocalAI base URL (OpenAI-compatible) |
+| `LOCALAI_API_KEY`   | `api_key`   | `sk-0123456789`                | LocalAI accepts any key or none   |
+| `TANKIE_VIDEO_URL`  | `video_url` | `rtsp://tankie_pi.local:8554/cam_low` | camera stream for OpenCV |
+
+Dependencies are in `requirements.txt` (headless OpenCV; the Pi has no
+display). `ai_control.json` may contain any subset of the keys above.
 
 ## Transport (issue #33)
 
