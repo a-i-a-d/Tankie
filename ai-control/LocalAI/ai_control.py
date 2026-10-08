@@ -12,10 +12,45 @@ from termcolor import colored
 from collections import deque
 
 GPT_MODEL = "moondream2-20250414"
-API_BASE_URL='http://192.168.1.5:8081/v1'
-API_KEY='sk-0123456789'
-#VIDEO_URL='http://10.42.0.1:8888/cam/index.m3u8'
-VIDEO_URL='http://192.168.100.10:8888/cam/index.m3u8'
+
+# One config source per component (issue #16): env var > ai_control.json >
+# built-in defaults. ai_control.json is optional, lives next to this
+# script, and may contain any subset of the keys below.
+_API_DEFAULTS = {
+    # LocalAI accepts any key (or none) unless it is configured.
+    "api_base": "http://localai.local:8080/v1",
+    "api_key": "sk-0123456789",
+    # AI camera stream: the Pi's own low-bandwidth mediamtx path
+    # (rtsp://tankie_pi.local:8554/cam_low). Fallbacks — the full stream
+    # rtsp://tankie_pi.local:8554/cam, or LL-HLS
+    # http://tankie_pi.local:8888/cam_low/index.m3u8 — drop one of them
+    # in the same field.
+    "video_url": "rtsp://tankie_pi.local:8554/cam_low",
+}
+
+
+def _read_json_config():
+    """Load the optional ai_control.json next to this script (issue #16).
+
+    Missing/corrupt/non-dict file -> {} (the client never crashes on config).
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "ai_control.json")
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+_CFG = _read_json_config()
+API_BASE_URL = os.environ.get(
+    "LOCALAI_API_URL", _CFG.get("api_base", _API_DEFAULTS["api_base"]))
+API_KEY = os.environ.get(
+    "LOCALAI_API_KEY", _CFG.get("api_key", _API_DEFAULTS["api_key"]))
+VIDEO_URL = os.environ.get(
+    "TANKIE_VIDEO_URL", _CFG.get("video_url", _API_DEFAULTS["video_url"]))
 
 # Serial bridge (issue #33, architecture #20): the AI no longer talks to the
 # ESP8266's WebSocket. It sends JSON commands to the Pi bridge daemon over
