@@ -371,8 +371,14 @@ python3 tests/bridge_stream_rearm_harness.py   # bridge stream re-arm (issue #57
 
 The tests compile the real firmware `.cpp` files against a minimal Arduino
 shim ([tests/shims/Arduino.h](tests/shims/Arduino.h)) and exit non-zero on
-any failure. The `firmware-build` CI job additionally compiles the complete
-sketch with arduino-cli (esp8266 core 3.1.2, `esp8266:esp8266:d1_mini`,
+any failure. The `go-checks` and `python-checks` CI jobs enforce the
+module guards on every PR (issue #19): `gofmt -l` + `go vet ./...` +
+`go build ./...` + `go test ./...` inside `ai-control/tankieControl`
+(the only real Go module - `ai-control/functions/` has no `go.mod`),
+plus `py_compile ai-control/LocalAI/ai_control.py` and a
+`pip install -r requirements.txt` smoke. The `firmware-build` CI job
+additionally compiles the complete sketch with arduino-cli
+(esp8266 core 3.1.2, `esp8266:esp8266:d1_mini`,
 `-DELEGANTOTA_USE_ASYNC_WEBSERVER=1`) so the sketch can never break the
 build/flash path used on the tank Pi.
 
