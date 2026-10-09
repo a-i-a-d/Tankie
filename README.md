@@ -384,6 +384,12 @@ sketch in [.github/workflows/tests.yml](.github/workflows/tests.yml):
   each command hands the exact NDJSON line to the serial port, `set_wifi`
   without a ssid (and without `reset`) is rejected, and unknown commands
   still error
+- `tests/wlan0_watchdog_harness.sh` - the Pi WiFi watchdog
+  (`raspberry_pi/wlan0-watchdog.sh`) with PATH-shimmed ip/lsmod/rmmod/
+  modprobe/systemctl/sleep/reboot: healthy no-op, fresh-load recovery
+  (module not loaded), correct rmmod order (brcmfmac_wcc before brcmfmac),
+  bounded reboot after 3 failed ticks, counter reset on recovery, corrupt
+  counter sanitization, and static rmmod-order check (issue #68)
 - `ai-control/tankieControl/main_test.go` - the LocalAGI wrapper's
   drive/steer/camera handlers against a stub websocket tank: contract
   JSON shapes only, steer combined with the active speed, center =
@@ -398,6 +404,7 @@ python3 tests/ai_control_json_harness.py   # LocalAI client JSON protocol
 python3 tests/bridge_auto_profile_harness.py   # bridge auto-profile + new commands
 python3 tests/bridge_stream_rearm_harness.py   # bridge stream re-arm (issue #57)
 python3 tests/bridge_wifi_harness.py   # bridge set_wifi/get_wifi/reboot (issue #56)
+bash tests/wlan0_watchdog_harness.sh   # Pi WiFi watchdog recovery ladder (issue #68)
 (cd ai-control/tankieControl && go test ./...)   # LocalAGI wrapper JSON protocol
 ```
 

@@ -22,7 +22,7 @@ separate box bolted on top whose only job here is to turn the CSI camera
 | `conf/mediamtx.yml` | The mediamtx configuration: two on-demand streams from the one camera (`cam` 1080p30 for humans, `cam_low` 480p15 for the AI). |
 | `conf/serial_bridge.yaml` | Serial-bridge configuration (serial_port, baud, keepalive_ms, ack_timeout_ms, state_file, socket_path, stream_port, stream_path). Auto-discovered by `bridge.py` / `tankie-serial` as: `--config` wins, then the installed `/etc/tankie/serial_bridge.yaml`, then the checkout-relative `conf/` (dev execution). |
 | `mediamtx.service` | systemd unit that runs `mediamtx` (as root) and keeps it alive (WorkingDirectory `/usr/local/mediamtx`, config `/etc/tankie/mediamtx.yml`).|
-| `wlan0-watchdog.service` | One-shot recovery unit: if `wlan0` is missing, reloads the `brcmfmac` driver (fallback: restarts NetworkManager). Never reboots. |
+| `wlan0-watchdog.service` | One-shot recovery unit: if `wlan0` is missing, reloads the `brcmfmac` driver (unloads `brcmfmac_wcc` first, then `brcmfmac`, then reloads; fallback: restarts NetworkManager; last resort: reboots after 3 consecutive failed ticks). |
 | `wlan0-watchdog.sh` | The actual check/recovery logic (health check, driver reload, NetworkManager fallback), installed to `/usr/local/bin/wlan0-watchdog.sh` and called by the service. |
 | `wlan0-watchdog.timer` | systemd timer that triggers the watchdog 90 s after boot, then every 60 s. |
 
@@ -85,17 +85,25 @@ known firmware bug: the firmware can crash, tear down `wlan0`, and the
 interface is never re-registered — leaving the Pi unreachable (diagnosis
 in [\#1](https://github.com/a-i-a-d/Tankie/issues/1)). Since `wlan0` is
 now the Pi's **only** uplink, `setup.sh` installs a watchdog that
-self-recovers without a reboot:
+self-recovers:
 
 - `wlan0-watchdog.timer` fires 90 s after boot, then every 60 s.
 - Each tick runs `wlan0-watchdog.service`, which calls `wlan0-watchdog.sh`
   (installed to `/usr/local/bin` by `setup.sh`); the script checks
   `ip link show wlan0`.
-  - **healthy** → exits immediately (no-op).
-  - **missing** → `rmmod brcmfmac && modprobe brcmfmac` (primary fix from #1);
-    if `wlan0` is still gone ~10 s later → `systemctl restart NetworkManager`
-    (fallback from #1). If both fail it logs an error and retries on the
-    next tick. `TimeoutStartSec=120` caps a hung recovery.
+  - **healthy** → exits immediately (no-op, resets the failure counter).
+  - **missing, module not loaded** → fresh `modprobe brcmfmac`
+    (a crash can leave the module fully unloaded; a fresh load recovers it
+    — [#68](https://github.com/a-i-a-d/Tankie/issues/68)).
+  - **missing, module loaded** → `rmmod brcmfmac_wcc` → `rmmod brcmfmac` →
+    `modprobe brcmfmac` (the firmware-variant module `brcmfmac_wcc` is
+    auto-loaded on top of `brcmfmac` and **holds** it, so `rmmod brcmfmac`
+    alone always fails with "module busy: brcmfmac_wcc" — the correct
+    unload order was found in [#68](https://github.com/a-i-a-d/Tankie/issues/68)).
+  - **still missing** → `systemctl restart NetworkManager` (fallback).
+  - **still missing after 3 consecutive failed ticks** → `systemctl reboot`
+    (bounded last resort; the counter lives in `/run/tankie/` (tmpfs) so it
+    resets on reboot). `TimeoutStartSec=120` caps a hung recovery.
 
 ```bash
 systemctl status wlan0-watchdog.timer   # timer state
