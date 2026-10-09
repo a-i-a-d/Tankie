@@ -16,6 +16,8 @@
 #include "serialproto.h"
 #include "netstate.h"
 #include "streaminfo.h"
+#include "wificfg.h"        // issue #56: WiFi config codec (EEPROM sector)
+#include <ESP8266WiFi.h>    // issue #56: ESP.restart() (no-op in the host shim)
 
 #include <string.h>
 #include <stdio.h>
@@ -42,6 +44,7 @@ SerialProto::SerialProto(TankDrive* tank, Servo* panServo, Servo* tiltServo,
   lineLen_ = 0;
   seq_ = 0;
   watchdogFired_ = false;
+  rebootPending_ = false;
   lastDriveCmdMs_ = 0;
   lastStateBroadcastMs_ = 0;
   speed_ = 0;
@@ -61,6 +64,7 @@ void SerialProto::begin() {
   lineLen_ = 0;
   seq_ = 0;
   watchdogFired_ = false;
+  rebootPending_ = false;
   lastDriveCmdMs_ = millis();
   lastStateBroadcastMs_ = millis();
   speed_ = 0;
@@ -72,6 +76,15 @@ void SerialProto::begin() {
 }
 
 void SerialProto::loop() {
+  // Issue #56: a set_wifi save/reset (or an explicit reboot) is pending.
+  // Delay so the ack reaches the Pi, then reboot (mirrors WiFiManager::loop()
+  // after a config save). The host shim's ESP.restart() is a no-op, so the
+  // unit tests stay safe.
+  if (rebootPending_) {
+    delay(SERIAL_WIFI_REBOOT_DELAY_MS);
+    ESP.restart();
+    return;   // on the target this never returns
+  }
   readSerial();
   checkWatchdog();
   stepSweep();
@@ -202,6 +215,12 @@ void SerialProto::handleLine(const char* line, size_t len) {
     handleStop();
   } else if (strcmp(cmd, "set_stream") == 0) {
     handleSetStream(line);
+  } else if (strcmp(cmd, "set_wifi") == 0) {
+    handleSetWifi(line);
+  } else if (strcmp(cmd, "get_wifi") == 0) {
+    handleGetWifi();
+  } else if (strcmp(cmd, "reboot") == 0) {
+    handleReboot();
   }
   // Unknown cmd -> silently ignore (non-JSON / foreign lines coexist).
 }
@@ -405,6 +424,94 @@ void SerialProto::handleSetStream(const char* line) {
 }
 
 // ---------------------------------------------------------------------------
+// set_wifi / get_wifi / reboot (issue #56)
+// ---------------------------------------------------------------------------
+
+void SerialProto::handleSetWifi(const char* line) {
+  // Issue #56: store the WiFi config in the EEPROM sector (wificfg.h) and
+  // reboot to apply - the exact same path the config portal uses. A
+  // "reset":true variant wipes the stored config (factory reset).
+
+  // --- reset variant: wipe the stored config ----------------------------
+  bool reset = false;
+  if (jsonGetBool(line, "reset", &reset) && reset) {
+    if (!wifiCfgWipe()) {
+      emitError("range", "reset");   // EEPROM write failed
+      return;
+    }
+    seq_++;
+    rebootPending_ = true;
+    emitAck();
+    return;
+  }
+
+  // --- save variant ------------------------------------------------------
+  char ssid[80] = "";
+  char pass[80] = "";
+  char ip[24] = "";
+  char gateway[24] = "";
+  bool hasSsid = jsonGetString(line, "ssid", ssid, sizeof(ssid));
+  bool hasPass = jsonGetString(line, "pass", pass, sizeof(pass));
+  bool hasIp = jsonGetString(line, "ip", ip, sizeof(ip));
+  bool hasGateway = jsonGetString(line, "gateway", gateway, sizeof(gateway));
+
+  // ssid is required and non-empty (same as the config portal).
+  if (!hasSsid || ssid[0] == '\0') {
+    emitError("missing", "ssid");
+    return;
+  }
+  // Enforce the same caps as the EEPROM blob (wificfg.h).
+  if (strlen(ssid) > WIFICFG_MAX_SSID) { emitError("range", "ssid"); return; }
+  if (strlen(pass) > WIFICFG_MAX_PASS) { emitError("range", "pass"); return; }
+  // ip / gateway: optional. Empty or "dhcp" = DHCP (issue #56 Q3 - identical
+  // to the web config UI). When a static value is given, validate it as IPv4.
+  if (hasIp && ip[0] != '\0' && strcmp(ip, "dhcp") != 0 && !validIpv4(ip)) {
+    emitError("range", "ip");
+    return;
+  }
+  if (hasGateway && gateway[0] != '\0' && !validIpv4(gateway)) {
+    emitError("range", "gateway");
+    return;
+  }
+
+  WifiCfg cfg;
+  cfg.ssid = String(ssid);
+  cfg.pass = String(pass);
+  cfg.ip = String(ip);
+  cfg.gateway = String(gateway);
+
+  if (!wifiCfgSave(cfg)) {
+    emitError("range", "ssid");   // encode / EEPROM commit failed
+    return;
+  }
+
+  seq_++;
+  rebootPending_ = true;
+  emitAck();
+}
+
+void SerialProto::handleGetWifi() {
+  // Issue #56: echo the current WiFi state (ssid / mode / ip). No password
+  // - echoing the stored secret over the serial link is a minor leak (Q2).
+  const char* ssid = "";
+  if (netState.ssid.length() > 0) ssid = netState.ssid.c_str();
+  const char* mode = "sta";
+  if (netState.mode.length() > 0) mode = netState.mode.c_str();
+  const char* ip = "0.0.0.0";
+  if (netState.ip.length() > 0) ip = netState.ip.c_str();
+  emitWifi(ssid, mode, ip);
+}
+
+void SerialProto::handleReboot() {
+  // Issue #56: reboot the ESP on demand (so a Pi-only agent can restart the
+  // tank without power-cycling). The ack is emitted first; loop() performs
+  // the delayed reboot on the next iteration.
+  seq_++;
+  rebootPending_ = true;
+  emitAck();
+}
+
+// ---------------------------------------------------------------------------
 // Sweep stepper (issue #31)
 // ---------------------------------------------------------------------------
 
@@ -530,6 +637,14 @@ void SerialProto::emitState() {
   emit(buf);
 }
 
+void SerialProto::emitWifi(const char* ssid, const char* mode, const char* ip) {
+  char buf[160];
+  snprintf(buf, sizeof(buf),
+           "{\"type\":\"wifi\",\"ssid\":\"%s\",\"mode\":\"%s\",\"ip\":\"%s\"}",
+           ssid ? ssid : "", mode ? mode : "sta", ip ? ip : "0.0.0.0");
+  emit(buf);
+}
+
 // ---------------------------------------------------------------------------
 // Minimal JSON field extractors
 //
@@ -571,6 +686,31 @@ bool SerialProto::jsonGetString(const char* json, const char* key,
   }
   out[i] = '\0';
   return (*p == '"');
+}
+
+// Find "key" and parse the following boolean value into *out.
+bool SerialProto::jsonGetBool(const char* json, const char* key, bool* out) {
+  if (!json || !key || !out) return false;
+
+  char pat[32];
+  size_t klen = strlen(key);
+  if (klen == 0 || klen >= sizeof(pat) - 2) return false;
+  pat[0] = '"';
+  memcpy(pat + 1, key, klen);
+  pat[1 + klen] = '"';
+  pat[2 + klen] = '\0';
+
+  const char* p = strstr(json, pat);
+  if (!p) return false;
+  p += klen + 2;
+  while (*p == ' ' || *p == '\t') p++;
+  if (*p != ':') return false;
+  p++;
+  while (*p == ' ' || *p == '\t') p++;
+
+  if (strncmp(p, "true", 4) == 0)  { *out = true;  return true; }
+  if (strncmp(p, "false", 5) == 0) { *out = false; return true; }
+  return false;   // not a boolean literal
 }
 
 // Find "key" and parse the following integer value into *out.

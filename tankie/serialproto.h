@@ -16,6 +16,12 @@
 //   {"cmd":"set_stream","ip":"192.168.1.42","port":8889,"path":"/cam/"}
 //        (issue #51: the Pi pushes its own stream endpoint; the ESP stores
 //         it and adds stream_url to every state broadcast)
+//   {"cmd":"set_wifi","ssid":"tankie-lan","pass":"hunter2","ip":"192.168.178.126","gateway":"192.168.178.1"}
+//        (issue #56: store the WiFi config in the EEPROM sector and reboot
+//         to apply; "reset":true wipes the stored config)
+//   {"cmd":"get_wifi"}                  (issue #56: echo ssid/mode/ip)
+//   {"cmd":"reboot"}                    (issue #56: reboot the ESP on demand,
+//        e.g. so a Pi-only agent can restart the tank without power-cycling)
 //
 // ESP → Pi (responses), one object per line:
 //   {"type":"hello","proto":1,"fw":"v0.1-serial"}
@@ -67,18 +73,21 @@ public:
   bool          sweepActive() const { return sweepActive_; }
   // The stream URL the Pi pushed via set_stream (issue #51); empty until set.
   String        streamUrl() const { return streamInfo.url; }
+  // True while a set_wifi save/reset is pending a reboot (issue #56).
+  bool          rebootPending() const { return rebootPending_; }
 
   // Test hook: inject a command line directly (bypasses Serial).
   void injectLine(const char* line);
 
 private:
   // Line reader state
-  char   lineBuf_[128];
+  char   lineBuf_[256];   // issue #56: a full-cap set_wifi line (64-char ssid+pass) is ~217 B
   size_t lineLen_;
 
   // Protocol state
   unsigned long seq_;
   bool          watchdogFired_;
+  bool          rebootPending_;   // issue #56: set_wifi save/reset awaiting reboot
   unsigned long lastDriveCmdMs_;
   unsigned long lastStateBroadcastMs_;
 
@@ -116,6 +125,7 @@ private:
   void emitWatchdog();
   void emitSweepDone();
   void emitState();
+  void emitWifi(const char* ssid, const char* mode, const char* ip);   // issue #56
 
   // Command handling (Pi → ESP)
   void handleLine(const char* line, size_t len);
@@ -128,6 +138,9 @@ private:
   void handleSweep(int axis, int from, int to, int steps);
   void handleStop();
   void handleSetStream(const char* line);   // issue #51
+  void handleSetWifi(const char* line);     // issue #56
+  void handleGetWifi();                     // issue #56
+  void handleReboot();                      // issue #56
   void checkWatchdog();
   void stepSweep();
   void readSerial();
@@ -136,6 +149,7 @@ private:
   static bool jsonGetString(const char* json, const char* key,
                             char* out, size_t outSize);
   static bool jsonGetInt(const char* json, const char* key, int* out);
+  static bool jsonGetBool(const char* json, const char* key, bool* out);
 };
 
 #endif

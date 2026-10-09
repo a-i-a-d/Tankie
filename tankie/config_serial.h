@@ -23,3 +23,8 @@
 #define SERIAL_SWEEP_DEFAULT_MS 2000
 #define SERIAL_SWEEP_MIN_STEPS 1
 #define SERIAL_SWEEP_MAX_STEPS 50
+
+// Issue #56: delay before the ESP reboots after a set_wifi save/reset or an
+// explicit reboot command (lets the ack reach the Pi first). Mirrors the
+// REBOOT_DELAY_MS (3000 ms) the config portal uses in WiFiManager::loop().
+#define SERIAL_WIFI_REBOOT_DELAY_MS 3000

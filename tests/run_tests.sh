@@ -53,6 +53,7 @@ TESTS=(
   tests/test_netstate.cpp
   tests/test_streaminfo.cpp
   tests/test_wifimanager.cpp
+  tests/test_set_wifi.cpp
 )
 
 echo "[run_tests] compiling: ${MODULES[*]}"

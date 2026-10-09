@@ -218,6 +218,10 @@ Pi → ESP (commands):
 {"cmd":"sweep","axis":"pan","from":0,"to":180,"steps":20}
 {"cmd":"stop"}
 {"cmd":"set_stream","ip":"192.168.1.42","port":8889,"path":"/cam/"}
+{"cmd":"set_wifi","ssid":"tankie-lan","pass":"hunter2","ip":"192.168.178.126","gateway":"192.168.178.1"}
+{"cmd":"set_wifi","reset":true}
+{"cmd":"get_wifi"}
+{"cmd":"reboot"}
 ```
 
 ESP → Pi (responses):
@@ -229,6 +233,7 @@ ESP → Pi (responses):
 {"type":"watchdog"}
 {"type":"sweep","axis":"pan","done":true}
 {"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,"pan":90,"tilt":90,"net_mode":"sta","net_ip":"192.168.1.42","stream_url":"http://192.168.1.42:8889/cam/"}
+{"type":"wifi","ssid":"tankie-lan","mode":"sta","ip":"192.168.178.126"}
 ```
 
 `set_stream` (issue #51) lets the Pi — the only component that knows its own
@@ -237,6 +242,16 @@ and appends it as `stream_url` to every `state` broadcast; the human web UI
 then points its video iframe at that URL instead of a hard-coded address. The
 field is omitted until the Pi has sent one, so the line shape is unchanged for
 pairs that do not use it.
+
+`set_wifi` / `get_wifi` / `reboot` (issue #56) let the Pi — or a Pi-only agent —
+re-network and restart the tank over the serial link without a browser. `set_wifi`
+stores the WiFi config (ssid / pass / optional static ip + gateway, or `reset:true`
+to wipe it) in the **same reserved EEPROM sector `0x3FB000`** the config portal
+uses (issue #54) and reboots to apply — the exact same path, so the web and serial
+config paths behave identically. `get_wifi` echoes the current `ssid` / `mode` /
+`ip` (no password). `reboot` restarts the ESP on demand (so an agent with only
+serial access can reboot the tank without power-cycling). All three are additive —
+protocol version stays 1.
 
 The ESP keeps that endpoint only in RAM, so an ESP reboot loses it. The bridge
 therefore self-heals (issue #57): it tracks whether the ESP currently holds a
@@ -277,7 +292,9 @@ traffic is not clamped.
   Installed by `setup.sh` to `/usr/local/lib/tankie/bridge.py`.
 - `tankie-serial.py` — CLI: `drive --speed 50 --steer 0`, `pan 90`, `tilt 30`,
   `pan-rel 20`, `tilt-rel -10`, `center`, `sweep --axis pan --from 0 --to 180
-  [--steps 20]`, `stop`, `state`, `watchdog-test` (or `--raw` to talk to the
+  [--steps 20]`, `stop`, `state`, `watchdog-test`, `wifi --ssid tankie-lan
+  --pass hunter2 [--ip 192.168.178.126 --gateway 192.168.178.1]` / `wifi
+  --reset` / `wifi` (query), `reboot` (issue #56) (or `--raw` to talk to the
   port directly). Installed by `setup.sh` as `tankie-serial` in
   `/usr/local/bin`.
 - `conf/serial_bridge.yaml` — single config source (serial_port, baud,
@@ -322,6 +339,14 @@ sketch in [.github/workflows/tests.yml](.github/workflows/tests.yml):
   blank-sector / corrupt-byte / bad-magic / wrong-version / oversized-field
   / truncated-blob rejection paths, plus the EEPROM save→load, wipe, and
   "survives an fs-OTA wipe" round-trips
+
+- `tests/test_set_wifi.cpp` - the `set_wifi` / `get_wifi` / `reboot` serial
+  commands (issue #56) against the REAL codec + EEPROM shim: a save lands
+  the config in the EEPROM sector (read back via `wifiCfgLoad`) and sets
+  the reboot-pending flag, `reset:true` wipes the sector, malformed input
+  (missing/empty ssid, oversized ssid/pass, bad ip/gateway) is rejected
+  with no save, a full-cap (64-char ssid+pass) line is not truncated
+  (`lineBuf_` 128→256), and `get_wifi` returns ssid/mode/ip (no password)
 - `tests/test_ws_fallback.cpp` - the WebSocket fallback handler
   (`handleWebSocketMessage()` in [tankie/tankie.ino](tankie/tankie.ino))
   compiled against the network shims in [tests/shims/](tests/shims/):
@@ -353,6 +378,12 @@ sketch in [.github/workflows/tests.yml](.github/workflows/tests.yml):
   line; `_on_state` tracks the ESP's `stream_url` presence; and the 30 s
   re-arm tick force-pushes `set_stream` exactly once when the Pi has a LAN IP
   but the ESP reports no stream, and stops once the ESP confirms it
+
+- `tests/bridge_wifi_harness.py` - the Pi bridge daemon's `set_wifi` /
+  `get_wifi` / `reboot` dispatch (issue #56) with stubbed serial/yaml:
+  each command hands the exact NDJSON line to the serial port, `set_wifi`
+  without a ssid (and without `reset`) is rejected, and unknown commands
+  still error
 - `ai-control/tankieControl/main_test.go` - the LocalAGI wrapper's
   drive/steer/camera handlers against a stub websocket tank: contract
   JSON shapes only, steer combined with the active speed, center =
@@ -366,6 +397,7 @@ node tests/web_ui_harness.js   # web UI JSON protocol (node)
 python3 tests/ai_control_json_harness.py   # LocalAI client JSON protocol
 python3 tests/bridge_auto_profile_harness.py   # bridge auto-profile + new commands
 python3 tests/bridge_stream_rearm_harness.py   # bridge stream re-arm (issue #57)
+python3 tests/bridge_wifi_harness.py   # bridge set_wifi/get_wifi/reboot (issue #56)
 (cd ai-control/tankieControl && go test ./...)   # LocalAGI wrapper JSON protocol
 ```
 
