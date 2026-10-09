@@ -16,6 +16,10 @@ Usage:
   tankie-serial.py stop
   tankie-serial.py state
   tankie-serial.py watchdog-test
+  tankie-serial.py wifi --ssid tankie-lan --pass hunter2 [--ip 192.168.178.126 --gateway 192.168.178.1]   (issue #56)
+  tankie-serial.py wifi --reset          # wipe stored WiFi config (issue #56)
+  tankie-serial.py wifi                  # query current ssid/mode/ip (issue #56)
+  tankie-serial.py reboot                # reboot the ESP on demand (issue #56)
   tankie-serial.py raw --port /dev/ttyS0          # direct, no daemon
 
   --raw    Talk directly to the serial port (bypass the daemon).
@@ -138,6 +142,15 @@ def main():
     sub.add_parser("state", help="show the bridge state")
     sub.add_parser("watchdog-test", help="disable keep-alive (ESP watchdog will fire)")
 
+    wf = sub.add_parser("wifi", help="configure/query WiFi over the serial link (issue #56)")
+    wf.add_argument("--ssid", default=None, help="WiFi SSID (required unless --reset)")
+    wf.add_argument("--pass", dest="passw", default=None, help="WiFi password")
+    wf.add_argument("--ip", default=None, help="static IP (empty/dhcp = DHCP)")
+    wf.add_argument("--gateway", default=None, help="gateway (optional; derived x.x.x.1 if omitted)")
+    wf.add_argument("--reset", action="store_true", help="wipe the stored WiFi config")
+
+    sub.add_parser("reboot", help="reboot the ESP on demand (issue #56)")
+
     args = ap.parse_args()
 
     # Resolve config
@@ -172,6 +185,21 @@ def main():
         cmd = {"cmd": "state"}
     elif args.cmd == "watchdog-test":
         cmd = {"cmd": "watchdog-test"}
+    elif args.cmd == "wifi":
+        if args.reset:
+            cmd = {"cmd": "set_wifi", "reset": True}
+        elif args.ssid:
+            cmd = {"cmd": "set_wifi", "ssid": args.ssid}
+            if args.passw is not None:
+                cmd["pass"] = args.passw
+            if args.ip is not None:
+                cmd["ip"] = args.ip
+            if args.gateway is not None:
+                cmd["gateway"] = args.gateway
+        else:
+            cmd = {"cmd": "get_wifi"}
+    elif args.cmd == "reboot":
+        cmd = {"cmd": "reboot"}
     else:
         ap.error(f"unknown command {args.cmd}")
 

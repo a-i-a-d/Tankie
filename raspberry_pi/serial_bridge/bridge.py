@@ -24,6 +24,13 @@ Protocol (NDJSON, one object per line, 921600 8N1):
                {"cmd":"set_stream","ip":"192.168.1.42","port":8889,"path":"/cam/"}
                 (issue #51: the Pi pushes its own stream endpoint so the ESP
                  web UI can point the video iframe at the correct IP)
+               {"cmd":"set_wifi","ssid":"tankie-lan","pass":"hunter2"}
+               {"cmd":"set_wifi","ssid":"tankie-lan","pass":"hunter2","ip":"192.168.178.126","gateway":"192.168.178.1"}
+               {"cmd":"set_wifi","reset":true}
+               {"cmd":"get_wifi"}
+               {"cmd":"reboot"}
+                (issue #56: push WiFi config over the serial link, query it,
+                 or reboot the ESP on demand)
   ESP → Pi:   {"type":"hello","proto":1,"fw":"v0.1-serial"}
                {"type":"ack","seq":1}
                {"type":"error","seq":2,"code":"range","field":"speed"}
@@ -631,6 +638,41 @@ class Bridge:
                 self._active_drive = None
             self._send_line({"cmd": "stop"})
             return {"ok": True, "note": "keep-alive disabled — ESP watchdog will fire after SERIAL_WATCHDOG_MS"}
+
+        elif c == "set_wifi":
+            # Issue #56: push the WiFi config over the serial link. The ESP
+            # validates + stores it in the EEPROM sector and reboots to apply.
+            # Tolerate the expected link drop (the ESP reboots); the reader
+            # re-establishes on the next hello handshake.
+            payload = {"cmd": "set_wifi"}
+            if cmd.get("reset") is True:
+                payload["reset"] = True
+            else:
+                if not cmd.get("ssid"):
+                    return {"error": "set_wifi requires a non-empty ssid (or reset:true)"}
+                payload["ssid"] = cmd["ssid"]
+                if cmd.get("pass") is not None:
+                    payload["pass"] = cmd["pass"]
+                if cmd.get("ip") is not None:
+                    payload["ip"] = cmd["ip"]
+                if cmd.get("gateway") is not None:
+                    payload["gateway"] = cmd["gateway"]
+            self._send_line(payload)
+            self.state.update(last_command={"cmd": "set_wifi", "reset": cmd.get("reset", False)})
+            return {"ok": True, "note": "config stored — ESP will reboot to apply (link drops briefly)"}
+
+        elif c == "get_wifi":
+            # Issue #56: query the current WiFi state (ssid/mode/ip, no password).
+            self._send_line({"cmd": "get_wifi"})
+            self.state.update(last_command={"cmd": "get_wifi"})
+            return {"ok": True, "note": "response arrives as a wifi line in the state stream"}
+
+        elif c == "reboot":
+            # Issue #56: reboot the ESP on demand (a Pi-only agent can restart
+            # the tank without power-cycling). Tolerate the expected link drop.
+            self._send_line({"cmd": "reboot"})
+            self.state.update(last_command={"cmd": "reboot"})
+            return {"ok": True, "note": "ESP will reboot (link drops briefly)"}
 
         else:
             return {"error": f"unknown command: {c}"}

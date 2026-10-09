@@ -307,7 +307,7 @@ static void wsApplyTilt(int angle) {
 // Matches the serial line buffer (tankie/serialproto.cpp, lineBuf_[128]).
 // Longer frames are truncated before parsing; a truncated command fails
 // JSON parsing and is rejected (no unbounded stack use, no OOB writes).
-static const size_t WS_MSG_MAX = 128;
+static const size_t WS_MSG_MAX = 256;   // issue #56: matches the serial lineBuf_[256] (a full-cap set_wifi line is ~217 B)
 
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
   AwsFrameInfo *info = (AwsFrameInfo*)arg;
