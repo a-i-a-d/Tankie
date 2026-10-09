@@ -122,6 +122,129 @@ mod.BRIDGE_SOCKET = sock_path
 mod.STATE_FILE = state_path
 
 
+# --- T14: config source precedence (issue #16) --------------------------------
+# The config source (regressed by PR #63, re-landed here) must resolve the
+# three endpoint globals as:  env var  >  ai_control.json  >  built-in
+# defaults.  We exercise every tier by re-executing the REAL module under
+# different env / ai_control.json combinations and asserting the resolved
+# globals.  Re-execution is the faithful way to test the resolution order,
+# because the client reads these globals at call time.
+print("T14: config source precedence (env > ai_control.json > defaults)")
+
+_CFG_ENV = ("LOCALAI_API_URL", "LOCALAI_API_KEY", "TANKIE_VIDEO_URL")
+_CFG_JSON = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..", "ai-control", "LocalAI", "ai_control.json"))
+
+
+def _reload(env):
+    """Re-execute the real ai_control.py with the given env vars and return
+    the resolved (API_BASE_URL, API_KEY, VIDEO_URL)."""
+    for k in _CFG_ENV:
+        os.environ.pop(k, None)
+    os.environ.update(env or {})
+    spec = importlib.util.spec_from_file_location("ai_control", path)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m.API_BASE_URL, m.API_KEY, m.VIDEO_URL
+
+
+def _set_json(content):
+    """content: dict -> write as JSON, str -> write raw, None -> remove file."""
+    if content is None:
+        try:
+            os.unlink(_CFG_JSON)
+        except OSError:
+            pass
+    elif isinstance(content, str):
+        with open(_CFG_JSON, "w") as f:
+            f.write(content)
+    else:
+        with open(_CFG_JSON, "w") as f:
+            json.dump(content, f)
+
+
+def _cleanup_cfg():
+    for k in _CFG_ENV:
+        os.environ.pop(k, None)
+    try:
+        os.unlink(_CFG_JSON)
+    except OSError:
+        pass
+
+
+# C1: no env, no json -> built-in defaults.
+try:
+    _set_json(None)
+    b, k, v = _reload({})
+    check(b == "http://localai.local:8080/v1", "C1 default api_base: " + repr(b))
+    check(k == "sk-0123456789", "C1 default api_key: " + repr(k))
+    check(v == "rtsp://tankie_pi.local:8554/cam_low", "C1 default video_url: " + repr(v))
+finally:
+    _cleanup_cfg()
+
+# C2: ai_control.json only -> json values win over defaults.
+try:
+    _set_json({"api_base": "http://json.local:1111/v1",
+               "api_key": "json-key",
+               "video_url": "rtsp://json.local:1111/cam"})
+    b, k, v = _reload({})
+    check(b == "http://json.local:1111/v1", "C2 json api_base: " + repr(b))
+    check(k == "json-key", "C2 json api_key: " + repr(k))
+    check(v == "rtsp://json.local:1111/cam", "C2 json video_url: " + repr(v))
+finally:
+    _cleanup_cfg()
+
+# C3: env only -> env wins over defaults.
+try:
+    _set_json(None)
+    b, k, v = _reload({"LOCALAI_API_URL": "http://env.local:2222/v1",
+                       "LOCALAI_API_KEY": "env-key",
+                       "TANKIE_VIDEO_URL": "rtsp://env.local:2222/cam"})
+    check(b == "http://env.local:2222/v1", "C3 env api_base: " + repr(b))
+    check(k == "env-key", "C3 env api_key: " + repr(k))
+    check(v == "rtsp://env.local:2222/cam", "C3 env video_url: " + repr(v))
+finally:
+    _cleanup_cfg()
+
+# C4: env + json both set -> env wins over json (top of the precedence chain).
+try:
+    _set_json({"api_base": "http://json.local:3333/v1",
+               "api_key": "json-key",
+               "video_url": "rtsp://json.local:3333/cam"})
+    b, k, v = _reload({"LOCALAI_API_URL": "http://env.local:3333/v1",
+                       "LOCALAI_API_KEY": "env-key",
+                       "TANKIE_VIDEO_URL": "rtsp://env.local:3333/cam"})
+    check(b == "http://env.local:3333/v1", "C4 env-over-json api_base: " + repr(b))
+    check(k == "env-key", "C4 env-over-json api_key: " + repr(k))
+    check(v == "rtsp://env.local:3333/cam", "C4 env-over-json video_url: " + repr(v))
+finally:
+    _cleanup_cfg()
+
+# C5: corrupt ai_control.json -> falls back to defaults, no crash.
+try:
+    _set_json("{ this is not valid json ]")
+    b, k, v = _reload({})
+    check(b == "http://localai.local:8080/v1",
+          "C5 corrupt json -> default api_base (no crash): " + repr(b))
+    check(v == "rtsp://tankie_pi.local:8554/cam_low",
+          "C5 corrupt json -> default video_url: " + repr(v))
+finally:
+    _cleanup_cfg()
+
+# C6: non-dict ai_control.json (a list) -> falls back to defaults, no crash.
+try:
+    _set_json(["not", "a", "dict"])
+    b, k, v = _reload({})
+    check(b == "http://localai.local:8080/v1", "C6 non-dict json -> default api_base: " + repr(b))
+    check(k == "sk-0123456789", "C6 non-dict json -> default api_key: " + repr(k))
+finally:
+    _cleanup_cfg()
+
+# Leave the sandbox clean for any later test / keep the repo tidy.
+_cleanup_cfg()
+
+
 def reset(reply="ok"):
     """Reset bridge + state between test sections."""
     global reply_mode
