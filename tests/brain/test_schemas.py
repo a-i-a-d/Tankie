@@ -282,7 +282,7 @@ def test_brain_yaml_in_repo_loads():
     assert c.deliberate_hz == 1
     assert c.auto_profile.max_speed == 40
     assert c.auto_profile.max_steer == 120
-    assert c.detection_model == "TBD"
+    assert c.detection_model == "rfdetr-base"
     # A4: the code default must be the dnsmasq hostname, not a literal IP
     assert BrainConfig().localai_base_url == "http://localai.local:8080/v1"
 

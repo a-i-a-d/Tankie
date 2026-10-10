@@ -43,6 +43,8 @@ _SCALAR_FIELDS = (
     "localai_api_key",
     "vlm_model",
     "detection_model",
+    "stt_model",
+    "tts_model",
     "reflex_hz",
     "deliberate_hz",
     "cam_url",
@@ -82,7 +84,9 @@ class BrainConfig:
     localai_base_url: str = "http://localai.local:8080/v1"
     localai_api_key: str = "sk-0123456789"  # LocalAI accepts any key
     vlm_model: str = "qwen3.8-4b-q4"        # OPEN Q2 (#73) — confirm vision
-    detection_model: str = "TBD"            # OPEN Q1 (#73) — detection model
+    detection_model: str = "rfdetr-base"    # Q1 (#73) — detector (config-driven)
+    stt_model: str = "whisper-1"        # Q3 (#73) — STT (confirmed deployed)
+    tts_model: str = "qwen3-tts-0.6b-custom-voice"  # Q3 (#73) — TTS default (configurable)
     reflex_hz: int = 10                     # D3
     deliberate_hz: int = 1                  # conservative start (1-5 Hz)
     cam_url: str = "http://tankie.local:8888/cam_low/index.m3u8"  # D5 (LL-HLS)

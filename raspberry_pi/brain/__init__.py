@@ -5,10 +5,14 @@ reflex (System 1) loops that turn camera frames + voice into drive
 commands, speaking through the LocalAI server (A1) and the serial bridge
 (#33).
 
-Phase 1 (this issue, #72) is scaffolding only: the Pydantic contract every
-later task speaks in (`schemas`), the single config source (`config`), and
-the dependency list (`requirements.txt`). No behaviour code yet — the
-loops land in Phase 2.
+Phase 1 builds the brain incrementally:
+  * T1 (#72) — the Pydantic contract (`schemas`), the single config source
+    (`config`), and the dependency list (`requirements.txt`).
+  * T2 (#73) — the LocalAI client (`localai_client`): one typed, config-driven
+    surface for every LocalAI endpoint (chat / detect / depth / transcribe /
+    speak / health) with a uniform `{"ok": ...}` contract that never raises.
+
+The reflex/deliberation loops (Phase 2) are the only callers of the client.
 
 Layout (D10):
     raspberry_pi/brain/     this package (the brain)

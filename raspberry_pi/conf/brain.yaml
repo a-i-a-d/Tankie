@@ -16,9 +16,11 @@
 localai_base_url: http://192.168.178.10:8080/v1   # local override (A4); code default is http://localai.local:8080/v1
 localai_api_key: "sk-0123456789"                   # LocalAI accepts any key (or none)
 
-# --- models (OPEN in #73 — confirm before relying on these) ---
-vlm_model: qwen3.8-4b-q4        # Q2 (#73): confirm this is vision-capable
-detection_model: TBD            # Q1 (#73): LocalAI detection endpoint/model — blocking for #73 detect() tests only
+# --- models (all configurable — switch and re-test easily; none are hardcoded in code) ---
+vlm_model: qwen3.8-4b-q4                 # Q2 (#73): vision VLM (configurable)
+detection_model: rfdetr-base             # Q1 (#73): detector for POST /v1/detection (configurable)
+stt_model: whisper-1                     # Q3 (#73): speech-to-text (confirmed deployed)
+tts_model: qwen3-tts-0.6b-custom-voice   # Q3 (#73): text-to-speech default (configurable)
 
 # --- loop rates (D3: reflex 10 Hz, deliberate 1-5 Hz) ---
 reflex_hz: 10
