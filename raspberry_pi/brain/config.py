@@ -36,6 +36,8 @@ _ENV_OVERRIDES = {
     "TANKIE_CAM_URL": "cam_url",
     "TANKIE_GRAB_INTERVAL_S": "grab_interval_s",
     "TANKIE_GRAB_STALE_S": "grab_stale_after_s",
+    "TANKIE_REFLEX_BLOCK_CLASSES": "reflex_block_classes",
+    "TANKIE_REFLEX_OBSTACLE_ENABLED": "reflex_obstacle_enabled",
 }
 
 # Scalar BrainConfig fields (the nested AutoProfile/Timeouts are handled
@@ -55,6 +57,11 @@ _SCALAR_FIELDS = (
     "grab_http_poll_s",
     "grab_http_timeout_s",
     "bridge_socket",
+    "reflex_block_classes",
+    "reflex_lane_half_width",
+    "reflex_min_bottom_ratio",
+    "reflex_steer_around",
+    "reflex_obstacle_enabled",
     "state_file",
     "data_log_dir",
     "data_log_max_mb",
@@ -101,6 +108,15 @@ class BrainConfig:
     grab_http_poll_s: float = 0.5       # T3: HTTPHLSSource playlist poll interval
     grab_http_timeout_s: float = 2.0    # T3: per-request timeout for the HTTP source
     bridge_socket: str = "/run/tankie/bridge.sock"
+    # --- reflex loop (T4, #80) ---
+    # Safety net geometry (A2: implemented but DISABLED by default until depth
+    # (T15) lands; enable via reflex_obstacle_enabled: true for testing).
+    reflex_block_classes: tuple = ("person", "car", "truck", "bus", "bicycle",
+                                   "motorcycle", "dog", "cat", "horse")  # A1
+    reflex_lane_half_width: float = 0.30   # A2: box center within +/-30% of image center x
+    reflex_min_bottom_ratio: float = 0.70  # A2: box bottom below 70% of image height = "close"
+    reflex_steer_around: int = 60          # A3: steer magnitude when avoiding (configurable)
+    reflex_obstacle_enabled: bool = False  # A2: off until depth (T15); on = detection-only avoidance
     state_file: str = "/var/lib/tankie/state.json"
     data_log_dir: str = "/var/lib/tankie/brain"
     data_log_max_mb: int = 10
@@ -164,6 +180,40 @@ def _coerce_scalar(name: str, value):
     return value
 
 
+def _coerce_bool(name: str, value):
+    """Coerce a string (from env) to bool for a boolean field.
+
+    YAML already yields real booleans; only env-var strings need parsing.
+    Unrecognised strings are returned unchanged (permissive loader).
+    """
+    if not isinstance(value, str):
+        return value
+    if name == "reflex_obstacle_enabled":
+        if value.strip().lower() in ("1", "true", "yes", "on"):
+            return True
+        if value.strip().lower() in ("0", "false", "no", "off"):
+            return False
+    return value
+
+
+def _coerce_block_classes(value) -> tuple:
+    """Normalise the reflex block-class list (YAML list / env string / tuple).
+
+    Order is preserved, non-strings and blank entries dropped. A non-list
+    value falls back to the built-in default tuple (the loader is permissive;
+    strictness lives in the Pydantic schemas).
+    """
+    if isinstance(value, str):
+        value = [v.strip() for v in value.split(",")]
+    if not isinstance(value, (list, tuple)):
+        return BrainConfig().reflex_block_classes
+    out = []
+    for v in value:
+        if isinstance(v, str) and v.strip() and v.strip() not in out:
+            out.append(v.strip())
+    return tuple(out)
+
+
 def load_config(path: Optional[Path] = None, *, env: Optional[Mapping] = None) -> BrainConfig:
     """Resolve the brain config.
 
@@ -190,6 +240,11 @@ def load_config(path: Optional[Path] = None, *, env: Optional[Mapping] = None) -
         val = env.get(env_name)
         if val is not None and val != "":
             values[field_name] = _coerce_scalar(field_name, val)
+
+    values["reflex_block_classes"] = _coerce_block_classes(
+        values.get("reflex_block_classes"))
+    values["reflex_obstacle_enabled"] = _coerce_bool(
+        "reflex_obstacle_enabled", values.get("reflex_obstacle_enabled"))
 
     return BrainConfig(
         **values,

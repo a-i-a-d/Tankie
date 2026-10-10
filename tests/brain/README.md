@@ -1,4 +1,4 @@
-# Brain tests (issue #72 T1 · #73 T2 · #74 T3)
+# Brain tests (issue #72 T1 · #73 T2 · #74 T3 · #80 T4)
 
 Offline unit tests for the Tankie AI brain. No tank, no Pi, no LocalAI, no
 real network — pure data (Pydantic schemas), the config loader, the LocalAI
@@ -40,6 +40,23 @@ regardless of where pytest is invoked from.
   raises** error matrix (timeout / 5xx / malformed JSON / SDK exception all
   become `{"ok": False, "error": ...}`).
 
+- `reflex` (T4, #80) — the System 1 safety net: the pure
+  `ReflexController.decide()` decision matrix (A1 configurable block classes,
+  A2 in-lane/close geometry + the default-OFF `reflex_obstacle_enabled` switch,
+  A3 steer-around, AUTO_PROFILE clamp, pan/tilt passthrough, invalid-pending
+  handling); `ReflexController.to_bridge_cmd()` (a stop stays a stop — it never
+  re-introduces a pending value the reflex overrode); `ReflexLoop` (the 10 Hz
+  thread) with fake grabber/LocalAI/bridge proving the invariants — no frame
+  or `detect()` failure ⇒ `drive 0 0` (invariant 4), a center-lane obstacle
+  pre-empts a pending drive (invariant 2), the A2 switch both ways, the A4
+  quiet-idle option, and `stop()` always sends one final `drive 0 0`;
+  `BridgeClient` against a **real Unix socket** served by a fake in-process
+  bridge (happy path, timeout, missing socket, malformed response — all
+  `{"ok": ...}`, never raises); `frame_to_b64()` JPEG round-trip + `None`.
+  The new `config` reflex keys (`reflex_obstacle_enabled` /
+  `reflex_block_classes` / `reflex_lane_half_width` / `reflex_min_bottom_ratio`
+  / `reflex_steer_around`) load from YAML and env (`TANKIE_REFLEX_*`) and
+  coerce correctly.
 - `frame_grab` (T3, #74) — the non-blocking latest-frame contract:
   `read_latest()` returns the last frame from a fake source, `None` before the
   first frame and after `stale_after_s`; a source that stops producing keeps

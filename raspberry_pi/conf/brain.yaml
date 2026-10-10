@@ -39,6 +39,19 @@ grab_stale_after_s: 3.0
 grab_http_poll_s: 0.5
 grab_http_timeout_s: 2.0
 
+# --- reflex loop (T4, #80) — the safety net ------------------------------
+# A2 (#80): detection-only obstacle avoidance is implemented but DISABLED by
+# default until depth (T15) lands; flip to true to test it now.
+reflex_obstacle_enabled: false
+# A1 (#80): COCO classes that threaten the tank (configurable list).
+reflex_block_classes: [person, car, truck, bus, bicycle, motorcycle, dog, cat, horse]
+# A2 (#80): geometry — box center within +/-30% of image center x is "in the
+# lane"; box bottom below 70% of image height is "close".
+reflex_lane_half_width: 0.30
+reflex_min_bottom_ratio: 0.70
+# A3 (#80): steer magnitude (±) when avoiding a side-lane obstacle.
+reflex_steer_around: 60
+
 # --- serial bridge (#33) ---
 bridge_socket: /run/tankie/bridge.sock
 state_file: /var/lib/tankie/state.json
