@@ -1,0 +1,17 @@
+# Tankie AI brain — Phase 1 (T1) footprint (issue #72).
+#
+# Lower-bound ranges: raise the floor only when a release diverges and
+# breaks the brain; then pin the last known-good major until a fix lands.
+#
+# Phase 1 is scaffolding only (schemas + config + tests). The heavier
+# dependencies land with their tasks:
+#   numpy / opencv-python-headless  -> T3 (frame grabber, #74)
+#   mcp                             -> T8 (MCP server, #69 Phase 3)
+#
+# The Pi has no display, so any cv2 dependency uses the headless wheel
+# (see ai-control/LocalAI/requirements.txt for the same reasoning).
+openai>=1.0,<2
+httpx>=0.27,<1
+pydantic>=2.5,<3
+PyYAML>=6.0,<7
+pytest>=8.0,<9

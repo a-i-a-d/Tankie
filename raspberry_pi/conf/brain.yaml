@@ -1,0 +1,53 @@
+# Tankie AI brain configuration (issue #72, Phase 1 T1).
+#
+# Single config source for the brain (D10/D19). Precedence, highest wins:
+#   env var > this file > built-in defaults (raspberry_pi/brain/config.py)
+#
+# The brain NEVER crashes on config: a missing/corrupt file falls back to
+# the defaults in config.py. Only the keys you want to change need to be
+# here; everything else stays at its default.
+#
+# No IP addresses are required in code (A4): the code default for LocalAI is
+# the dnsmasq hostname `localai.local`. This file MAY carry the static IP as
+# a local override until dnsmasq is set up on the Pi (#69 A4 follow-up) —
+# that is why `localai_base_url` below is a static IP today.
+
+# --- LocalAI server (A1: inference on the LocalAI server, not the Pi) ---
+localai_base_url: http://192.168.178.10:8080/v1   # local override (A4); code default is http://localai.local:8080/v1
+localai_api_key: "sk-0123456789"                   # LocalAI accepts any key (or none)
+
+# --- models (OPEN in #73 — confirm before relying on these) ---
+vlm_model: qwen3.8-4b-q4        # Q2 (#73): confirm this is vision-capable
+detection_model: TBD            # Q1 (#73): LocalAI detection endpoint/model — blocking for #73 detect() tests only
+
+# --- loop rates (D3: reflex 10 Hz, deliberate 1-5 Hz) ---
+reflex_hz: 10
+deliberate_hz: 1                # conservative start; raise once the loop is stable
+
+# --- camera (D5: LL-HLS cam_low is the brain's frame source) ---
+cam_url: http://tankie.local:8888/cam_low/index.m3u8   # LL-HLS; rtsp://tankie.local:8554/cam_low is the fallback
+
+# --- serial bridge (#33) ---
+bridge_socket: /run/tankie/bridge.sock
+state_file: /var/lib/tankie/state.json
+
+# --- data log (Phase 6 training/benchmark artifact) ---
+data_log_dir: /var/lib/tankie/brain
+data_log_max_mb: 10
+data_log_keep: 5
+
+# --- MCP (#69 D: MCP server on the Pi, Phase 3) ---
+mcp_port: 9000
+
+# --- autonomous drive profile (issue #31; the bridge enforces, this is the UX mirror) ---
+auto_profile:
+  enabled: true
+  max_speed: 40
+  max_steer: 120
+
+# --- per-call timeouts (seconds) for the LocalAI client (T2) ---
+timeouts:
+  chat_s: 5.0
+  detect_s: 1.0
+  transcribe_s: 10.0
+  speak_s: 10.0
