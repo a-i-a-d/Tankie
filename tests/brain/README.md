@@ -30,6 +30,13 @@ regardless of where pytest is invoked from.
   env var > `brain.yaml` > built-in defaults; missing/corrupt/non-dict YAML
   falls back to defaults without raising; nested `auto_profile`/`timeouts`;
   the committed `conf/brain.yaml` loads and is sane.
+- `localai_client.LocalAIClient` (issue #73, T2) — every endpoint
+  (`health` / `chat` / `detect` / `depth` / `transcribe` / `speak`) through an
+  injectable `httpx.MockTransport` + a fake `openai` client: exact request
+  shape (path / body / headers), the `width/height → w/h` detection mapping +
+  `min_confidence` filter, the documented `depth()` stub, and the **never-
+  raises** error matrix (timeout / 5xx / malformed JSON / SDK exception all
+  become `{"ok": False, "error": ...}`).
 
 ## CI
 
