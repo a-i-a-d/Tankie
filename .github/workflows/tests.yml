@@ -1,6 +1,6 @@
 # CI for the Tankie ESP8266 firmware (issue #5).
 #
-# 7 jobs, all on push/PR:
+# 8 jobs, all on push/PR:
 #
 #   unit-tests     - host-side unit tests (g++, no ESP toolchain): compiles
 #                    the pure firmware modules against tests/shims/Arduino.h
@@ -18,6 +18,11 @@
 #
 #   python-checks  - the Python guards (issue #19): py_compile the LocalAI
 #                    client + a pip install -r requirements.txt smoke.
+#   brain-tests    - the brain package guard (issue #75, T4): pip install
+#                    the brain requirements + compileall the package +
+#                    pytest tests/brain/ --strict-markers (fully offline —
+#                    no tank/Pi/LocalAI). Separate from python-checks so the
+#                    legacy client guard stays independent (issue #75).
 #
 #   firmware-build - builds the REAL firmware with raspberry_pi/build.sh
 #                    (arduino-cli + esp8266 core 3.1.2, esp8266:esp8266:d1_mini,
@@ -93,6 +98,29 @@ jobs:
         run: |
           python -m venv /tmp/venv
           /tmp/venv/bin/pip install -r ai-control/LocalAI/requirements.txt
+
+  brain-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install brain dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r raspberry_pi/brain/requirements.txt
+      - name: Compile-check the brain package (all modules that exist)
+        # compileall over the package directory — so the job keeps working as
+        # Phase 2+ adds modules (reflex.py / deliberate.py / mcp_server.py)
+        # without editing this job (issue #75).
+        run: python -m compileall -q raspberry_pi/brain
+      - name: Run the brain test suite
+        # tests/run_brain_tests.sh is the single source of truth for the
+        # pytest command — CI and a human on a dev machine run the exact
+        # same line (issue #75).
+        run: bash tests/run_brain_tests.sh
 
   firmware-build:
     runs-on: ubuntu-latest
