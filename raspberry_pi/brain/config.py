@@ -34,6 +34,8 @@ _ENV_OVERRIDES = {
     "TANKIE_LOCALAI_BASE_URL": "localai_base_url",
     "TANKIE_VLM_MODEL": "vlm_model",
     "TANKIE_CAM_URL": "cam_url",
+    "TANKIE_GRAB_INTERVAL_S": "grab_interval_s",
+    "TANKIE_GRAB_STALE_S": "grab_stale_after_s",
 }
 
 # Scalar BrainConfig fields (the nested AutoProfile/Timeouts are handled
@@ -48,6 +50,10 @@ _SCALAR_FIELDS = (
     "reflex_hz",
     "deliberate_hz",
     "cam_url",
+    "grab_interval_s",
+    "grab_stale_after_s",
+    "grab_http_poll_s",
+    "grab_http_timeout_s",
     "bridge_socket",
     "state_file",
     "data_log_dir",
@@ -90,6 +96,10 @@ class BrainConfig:
     reflex_hz: int = 10                     # D3
     deliberate_hz: int = 1                  # conservative start (1-5 Hz)
     cam_url: str = "http://tankie.local:8888/cam_low/index.m3u8"  # D5 (LL-HLS)
+    grab_interval_s: float = 0.2        # T3: how often FrameGrab polls the source
+    grab_stale_after_s: float = 3.0     # T3: read_latest() -> None once a frame is this old
+    grab_http_poll_s: float = 0.5       # T3: HTTPHLSSource playlist poll interval
+    grab_http_timeout_s: float = 2.0    # T3: per-request timeout for the HTTP source
     bridge_socket: str = "/run/tankie/bridge.sock"
     state_file: str = "/var/lib/tankie/state.json"
     data_log_dir: str = "/var/lib/tankie/brain"
@@ -135,6 +145,25 @@ def _coerce_sub(data: dict, key: str, cls):
     return cls(**{k: v for k, v in sub.items() if k in valid})
 
 
+def _coerce_scalar(name: str, value):
+    """Coerce a string value (from env or YAML) to the field's declared type.
+
+    Env vars are always strings; a numeric field (``grab_interval_s`` etc.)
+    must end up as a number so comparisons like ``age > stale_after_s`` work.
+    Non-strings and unparseable values are returned unchanged (the Pydantic
+    schemas are the strict layer, not the config loader).
+    """
+    if not isinstance(value, str):
+        return value
+    target = type(getattr(BrainConfig, name, None))
+    if target in (int, float):
+        try:
+            return target(value)
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
 def load_config(path: Optional[Path] = None, *, env: Optional[Mapping] = None) -> BrainConfig:
     """Resolve the brain config.
 
@@ -156,11 +185,11 @@ def load_config(path: Optional[Path] = None, *, env: Optional[Mapping] = None) -
         if name in data and data[name] is not None:
             values[name] = data[name]
 
-    # 1) env vars override both
+    # 1) env vars override both (coerced to the field's type)
     for env_name, field_name in _ENV_OVERRIDES.items():
         val = env.get(env_name)
         if val is not None and val != "":
-            values[field_name] = val
+            values[field_name] = _coerce_scalar(field_name, val)
 
     return BrainConfig(
         **values,

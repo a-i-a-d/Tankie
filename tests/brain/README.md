@@ -1,7 +1,9 @@
-# Brain tests (issue #72, Phase 1 T1)
+# Brain tests (issue #72 T1 · #73 T2 · #74 T3)
 
-Offline unit tests for the Tankie AI brain scaffolding. No tank, no Pi, no
-LocalAI, no network — pure data (Pydantic schemas) + config loader.
+Offline unit tests for the Tankie AI brain. No tank, no Pi, no LocalAI, no
+real network — pure data (Pydantic schemas), the config loader, the LocalAI
+client (via `httpx.MockTransport` + a fake `openai` client), and the frame
+grabber (via a fake source + `httpx.MockTransport`).
 
 ## Run
 
@@ -37,6 +39,17 @@ regardless of where pytest is invoked from.
   `min_confidence` filter, the documented `depth()` stub, and the **never-
   raises** error matrix (timeout / 5xx / malformed JSON / SDK exception all
   become `{"ok": False, "error": ...}`).
+
+- `frame_grab` (T3, #74) — the non-blocking latest-frame contract:
+  `read_latest()` returns the last frame from a fake source, `None` before the
+  first frame and after `stale_after_s`; a source that stops producing keeps
+  serving the last good frame until stale; `start()`/`stop()` are idempotent
+  (no duplicate threads) and restart cleanly; `LLHLSSource` returns `None`
+  (no exception) on an unreachable URL and when `cv2` is unavailable (proven
+  in a subprocess); `HTTPHLSSource` (the Q2 option-(a) pure-HTTP fallback)
+  decodes the latest LL-HLS segment via `httpx.MockTransport` and returns
+  `None` on an unreachable/undecodable stream; `build_frame_grab()` /
+  `create_source()` wire the config (`cam_url`, `grab_*`) to a source.
 
 ## CI
 

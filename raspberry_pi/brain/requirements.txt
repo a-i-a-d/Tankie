@@ -5,7 +5,7 @@
 #
 # Phase 1 is scaffolding only (schemas + config + tests). The heavier
 # dependencies land with their tasks:
-#   numpy / opencv-python-headless  -> T3 (frame grabber, #74)
+#   numpy / opencv-python-headless  -> T3 (frame grabber, #74) [landed below]
 #   mcp                             -> T8 (MCP server, #69 Phase 3)
 #
 # The Pi has no display, so any cv2 dependency uses the headless wheel
@@ -15,3 +15,8 @@ httpx>=0.27,<1
 pydantic>=2.5,<3
 PyYAML>=6.0,<7
 pytest>=8.0,<9
+
+# T3 (frame grabber, #74): the Pi has no display, so the headless cv2 wheel.
+# numpy is a cv2 dependency (kept explicit for clarity).
+numpy>=1.24
+opencv-python-headless>=4.8
