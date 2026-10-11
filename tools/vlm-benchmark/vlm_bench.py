@@ -87,6 +87,9 @@ DRIVE_EXPECTED = {
     "clear": {"action": ["forward"], "throttle_min": 40},
 }
 
+# The tasks the benchmark knows how to build a scene + prompt for.
+TASKS = ("detect", "sequence", "drive")
+
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 
 
@@ -113,6 +116,26 @@ def _prompt_for(task: str) -> str:
     return {"detect": DETECT_PROMPT, "sequence": SEQUENCE_PROMPT, "drive": DRIVE_PROMPT}[task]
 
 
+def _content_text(value) -> str:
+    """Normalize an OpenAI ``content``/``reasoning`` field to plain text.
+
+    Handles the three shapes a server may return: a plain ``str``, a list
+    of content parts (``[{"type": "text", "text": ...}, ...]``), or
+    ``None``. Anything else is ignored. Returns "" when there is no text.
+    """
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts = []
+        for part in value:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                parts.append(part["text"])
+            elif isinstance(part, str):
+                parts.append(part)
+        return " ".join(s for s in (p.strip() for p in parts) if s)
+    return ""
+
+
 def _extract_answer(message: dict) -> str:
     """The model answer, with a reasoning-model fallback.
 
@@ -120,12 +143,14 @@ def _extract_answer(message: dict) -> str:
     ``qwen3.8-heretic``) put it in ``reasoning`` and leave ``content``
     empty. Prefer a non-empty ``content``; otherwise fall back to
     ``reasoning`` so the benchmark grades the real answer, not a false
-    negative. Returns "" when neither is present.
+    negative. ``content``/``reasoning`` may be a string or a list of
+    content parts (both are normalized via :func:`_content_text`).
+    Returns "" when neither is present.
     """
-    content = (message.get("content") or "").strip()
+    content = _content_text(message.get("content"))
     if content:
         return content
-    return (message.get("reasoning") or "").strip()
+    return _content_text(message.get("reasoning"))
 
 
 def _call(base: str, key: str, model: str, task: str, variant: str,
@@ -238,7 +263,11 @@ def list_models(base: str, key: str) -> list[str]:
                                  headers={"Authorization": f"Bearer {key}"})
     with urllib.request.urlopen(req, timeout=15) as resp:
         data = json.loads(resp.read().decode())
-    return sorted(m["id"] for m in data.get("data", []))
+    # Skip entries without a usable ``id`` (a malformed entry must not
+    # crash --list).
+    models = [m["id"] for m in data.get("data", [])
+              if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]]
+    return sorted(models)
 
 
 _VISION_HINTS = re.compile(
@@ -271,6 +300,16 @@ def main(argv: list[str] | None = None) -> int:
     tasks = [t.strip() for t in args.tasks.split(",") if t.strip()]
     variants = [v.strip() for v in args.drive_variants.split(",") if v.strip()]
 
+    # Fail fast on a typo'd task/variant: a bad value used to crash mid-run
+    # (after partial results were already written). ap.error() exits 2 with
+    # a clean usage message before any scene generation or server call.
+    for t in tasks:
+        if t not in TASKS:
+            ap.error(f"unknown task {t!r} (choose from: {', '.join(TASKS)})")
+    for v in variants:
+        if v not in DRIVE_EXPECTED:
+            ap.error(f"unknown drive variant {v!r} (choose from: {', '.join(DRIVE_EXPECTED)})")
+
     if args.dry_run:
         for task in tasks:
             for variant in (variants if task == "drive" else [""]):
@@ -300,7 +339,9 @@ def main(argv: list[str] | None = None) -> int:
         models = [m.strip() for m in args.models.split(",") if m.strip()]
 
     out_path = args.out or os.path.join(RESULTS_DIR, f"bench-{time.strftime('%Y%m%d-%H%M%S')}.jsonl")
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    out_dir = os.path.dirname(out_path)
+    if out_dir:  # a bare filename ("my-results.jsonl") has no directory part
+        os.makedirs(out_dir, exist_ok=True)
 
     n_calls = sum(len(variants if t == "drive" else [""]) for t in tasks) * len(models) * args.runs
     print(f"# benchmark: {len(models)} model(s) x {len(tasks)} task(s) x {args.runs} run(s) = {n_calls} call(s)")

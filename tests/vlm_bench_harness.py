@@ -303,6 +303,71 @@ def main() -> int:
     except Exception as e:
         check("drive grading import+run", False, f"{type(e).__name__}: {e}")
 
+    # 12. high-severity input-validation fixes (H1-H5)
+    #     A typo'd task/variant used to crash mid-run (after partial results
+    #     were written). A bare --out filename crashed makedirs. A list-type
+    #     `content` crashed _extract_answer. A malformed --list entry crashed.
+    print("12. high-severity input validation (H1-H5)")
+    import tempfile
+    sys.path.insert(0, TOOLS)
+    try:
+        import importlib
+        import vlm_bench
+        importlib.reload(vlm_bench)
+
+        # H4: list-type `content` (valid OpenAI variant) must not crash.
+        check("H4 _content_text list-of-parts",
+              vlm_bench._content_text([{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]) == "a b")
+        check("H4 _content_text list-no-text -> ''",
+              vlm_bench._content_text([{"type": "image_url"}]) == "")
+        check("H4 _content_text non-str/non-list -> ''",
+              vlm_bench._content_text(12345) == "")
+        check("H4 _extract_answer list-content",
+              vlm_bench._extract_answer({"content": [{"type": "text", "text": "hi"}]}) == "hi")
+        check("H4 _extract_answer list-reasoning fallback",
+              vlm_bench._extract_answer({"content": None, "reasoning": [{"type": "text", "text": "R"}]}) == "R")
+
+        # H1: unknown task -> ap.error (SystemExit code 2), NOT a mid-run ValueError.
+        try:
+            vlm_bench.main(["--models", "foo", "--tasks", "detct"])
+            check("H1 unknown task rejected", False, "no SystemExit raised")
+        except SystemExit as e:
+            check("H1 unknown task rejected (exit 2)", e.code == 2, f"exit={e.code}")
+
+        # H2: unknown drive variant -> ap.error (SystemExit code 2), NOT a mid-run KeyError.
+        try:
+            vlm_bench.main(["--models", "foo", "--drive-variants", "lef"])
+            check("H2 unknown variant rejected", False, "no SystemExit raised")
+        except SystemExit as e:
+            check("H2 unknown variant rejected (exit 2)", e.code == 2, f"exit={e.code}")
+
+        # H1/H2: valid tasks + variants still pass validation (dry-run exits 0).
+        r = run([sys.executable, os.path.join(TOOLS, "vlm_bench.py"),
+                 "--dry-run", "--tasks", "detect,sequence,drive",
+                 "--drive-variants", "center,left,clear"])
+        check("H1/H2 valid tasks+variants pass validation (dry-run 0)",
+              r.returncode == 0, r.stderr[:200])
+
+        # H3: bare --out filename (no directory part) must not crash makedirs.
+        #     Run a real (failing) call against an unreachable host; the point is
+        #     the file is created and the run completes (exit 0), not a crash.
+        tmp = tempfile.mkdtemp()
+        bare_out = os.path.join(tmp, "bare-out.jsonl")
+        r = run([sys.executable, os.path.join(TOOLS, "vlm_bench.py"),
+                 "--models", "nonexistent-model", "--tasks", "detect",
+                 "--out", bare_out, "--timeout", "3",
+                 "--base", "http://unreachable.invalid/v1"])
+        check("H3 bare --out: run completes (exit 0)", r.returncode == 0, r.stderr[:300])
+        check("H3 bare --out: results file created", os.path.isfile(bare_out),
+              f"missing: {bare_out}")
+        if os.path.isfile(bare_out):
+            with open(bare_out, encoding="utf-8") as fh:
+                rec = json.loads(fh.readline())
+            check("H3 bare --out: record has an error (not a crash)",
+                  rec.get("error") is not None, str(rec.get("error")))
+    except Exception as e:
+        check("H1-H5 import+run", False, f"{type(e).__name__}: {e}")
+
     # summary
     print()
     print(f"{'=' * 40}")
