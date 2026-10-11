@@ -270,15 +270,93 @@ def list_models(base: str, key: str) -> list[str]:
     return sorted(models)
 
 
+# Models that can never be a vision-language model (ASR / TTS / VAD /
+# embedding / image-gen / voice / speech classes). Excluded *before* any
+# name-hint matching (M1: the old heuristic had false positives on text-only
+# models and missed real vision models).
+_NON_VISION = re.compile(
+    r"asr|tts|vad|embedding|embed|supertonic|ace-step|voxcpm|flux|vibevoice|localvqe|whisper|silero|parakeet",
+    re.I,
+)
+
+# Name hints that *suggest* vision capability. Deliberately conservative:
+# a miss only costs a candidate (include it explicitly via --models).
+# Fixes from the old regex: ``vllm`` now matches (the old ``vlm`` did not),
+# and the blind ``mimo|ornith|ternary|qwen3.8|qwen3.5`` catch-alls are gone
+# (they only produced text-only false positives).
 _VISION_HINTS = re.compile(
-    r"multimodal|vision|vlm|magistral|moondream|fara|winnow|gemma|ornith|mimo|ternary|qwen3\.8|qwen3\.5",
+    r"multimodal|vision|\\bvlm\\b|vllm|magistral|moondream|smolvlm|fara|winnow|gemma|arex|spark|ui-mate|glm",
     re.I,
 )
 
 
 def auto_models(all_models: list[str]) -> list[str]:
-    """Heuristic: models whose id suggests vision/multimodal capability."""
-    return [m for m in all_models if _VISION_HINTS.search(m)]
+    """Tier 0+1 (offline): exclude non-vision classes, keep name-hint candidates.
+
+    This is a heuristic -- the *reliable* selection is ``--probe``, which
+    live-verifies each candidate actually accepts an image.
+    """
+    return [m for m in all_models
+            if not _NON_VISION.search(m) and _VISION_HINTS.search(m)]
+
+
+PROBE_PROMPT = "How many distinct colors do you see? Respond with JSON: \"{\\\"count\\\":int}\""
+
+
+def _probe_one(base: str, key: str, model: str, timeout_s: float = 45.0) -> tuple[bool, str]:
+    """One tiny image call to test vision capability. Never raises.
+
+    Returns ``(vision_capable, reason)``. A model is capable iff it accepts
+    the image (HTTP 200) and returns a non-empty answer.
+    """
+    png = scene_gen.probe_image()
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "Respond ONLY with a JSON object."},
+            {"role": "user", "content": [
+                {"type": "text", "text": PROBE_PROMPT},
+                {"type": "image_url", "image_url": {
+                    "url": f"data:image/png;base64,{base64.b64encode(png).decode()}"}},
+            ]},
+        ],
+        "max_tokens": 20,
+        "temperature": 0,
+    }
+    req = urllib.request.Request(
+        base.rstrip("/") + "/chat/completions",
+        data=json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            data = json.loads(resp.read().decode("utf-8", "replace"))
+            message = data["choices"][0]["message"]
+            answer = _extract_answer(message)
+            if answer.strip():
+                return True, "ok"
+            return False, "empty answer"
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read().decode("utf-8", "replace")[:120]
+        except Exception:
+            detail = ""
+        return False, f"HTTP {e.code}: {detail}"
+    except Exception as e:  # timeout, DNS, connection refused, ...
+        return False, f"{type(e).__name__}: {e}"
+
+
+def probe_filter(base: str, key: str, candidates: list[str],
+                 timeout_s: float = 45.0) -> list[str]:
+    """Live capability probe: keep only models that accept an image and answer."""
+    kept: list[str] = []
+    for m in candidates:
+        ok, reason = _probe_one(base, key, m, timeout_s)
+        print(f"# probe {m}: {'KEEP' if ok else 'DROP'} ({reason})")
+        if ok:
+            kept.append(m)
+    return kept
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -294,6 +372,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", default=None, help="results JSONL path (default: results/<timestamp>.jsonl)")
     ap.add_argument("--list", action="store_true", help="list models on the server and exit")
     ap.add_argument("--dry-run", action="store_true", help="generate scenes + payloads, print summary, no server call")
+    ap.add_argument("--probe", action="store_true",
+                    help="with --models auto: live-probe each candidate with one tiny image; keep only vision-capable models")
     ap.add_argument("--save-scenes", default=None, metavar="DIR", help="write all scene PNGs to DIR and exit")
     args = ap.parse_args(argv)
 
@@ -333,8 +413,19 @@ def main(argv: list[str] | None = None) -> int:
     if not args.models:
         ap.error("--models is required (or use --list / --dry-run)")
     if args.models == "auto":
-        models = auto_models(list_models(args.base, args.key))
-        print(f"# auto-selected {len(models)} vision-ish models: {', '.join(models)}")
+        candidates = auto_models(list_models(args.base, args.key))
+        print(f"# auto candidates (name hints): {', '.join(candidates) or '(none)'}")
+        if args.probe:
+            models = probe_filter(args.base, args.key, candidates)
+            print(f"# probe kept {len(models)} vision-capable model(s): {', '.join(models) or '(none)'}")
+            if not models:
+                ap.error("--models auto --probe: no vision-capable models found "
+                         "(use --models to name one explicitly)")
+        else:
+            models = candidates
+            if not models:
+                ap.error("--models auto: no candidates matched the name hints "
+                         "(use --models to name models explicitly, or add --probe)")
     else:
         models = [m.strip() for m in args.models.split(",") if m.strip()]
 

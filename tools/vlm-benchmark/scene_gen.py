@@ -178,6 +178,25 @@ def drive_scene(variant: str) -> bytes:
     return c.png()
 
 
+def probe_image() -> bytes:
+    """Tiny 64x64 two-color PNG for the ``--probe`` capability check.
+
+    A red square on a blue background -- the probe prompt asks for the
+    number of distinct colors, so a vision-capable model answers 2.
+    """
+    w = h = 64
+    px = [[(200, 30, 30) if (8 <= x < 56 and 8 <= y < 56) else (30, 60, 200)
+          for x in range(w)] for y in range(h)]
+    raw = b"".join(b"\x00" + b"".join(bytes(px[y][x]) for x in range(w)) for y in range(h))
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", ihdr)
+        + _chunk(b"IDAT", zlib.compress(raw, 6))
+        + _chunk(b"IEND", b"")
+    )
+
+
 def save_scenes(outdir: str) -> list[str]:
     """Write every benchmark scene as a PNG to *outdir*. Returns the file paths.
 

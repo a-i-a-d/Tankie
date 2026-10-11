@@ -369,6 +369,77 @@ def main() -> int:
         check("H1-H5 import+run", False, f"{type(e).__name__}: {e}")
 
     # summary
+    # 13. M1: auto_models heuristic + --probe plumbing
+    print("13. auto_models heuristic (M1) + --probe plumbing")
+    sys.path.insert(0, TOOLS)
+    try:
+        import importlib
+        import vlm_bench as vb
+        importlib.reload(vb)
+        import scene_gen as sg
+        importlib.reload(sg)
+
+        good = ["mistralai_magistral-small-2509-multimodal", "qwen3-vl-4b-vllm-cpp",
+                "smolvlm-500m-instruct", "moondream2", "winnow-e4b", "gemma-4-e4b-it",
+                "arex-turbo", "spark-s1-4b-v6", "ui-mate-9b",
+                "GLM-4.7-Flash-Derestricted-GGUF", "fara1.5-4b"]
+        bad = ["qwen3.8-9b-q4", "ternary-bonsai-2-27b", "mimo-v2.6-distill-qwen-9b",
+               "ornith-1.5-9b-q4", "qwen3-asr-0.6b", "qwen3-tts-0.6b-custom-voice",
+               "whisper-1", "silero-vad", "granite-embedding-107m-multilingual",
+               "ace-step-turbo", "voxcpm-1.5", "flux.2-klein-4b", "vibevoice",
+               "localvqe-v1.3-4.8m", "supertonic-3",
+               "parakeet-cpp-moondream-ultra-q8_0", "gpt-4", "test"]
+        auto = set(vb.auto_models(good + bad))
+        check("M1 all expected candidates kept", all(m in auto for m in good),
+              f"missing: {[m for m in good if m not in auto]}")
+        check("M1 no false positives", all(m not in auto for m in bad),
+              f"unexpected: {[m for m in bad if m in auto]}")
+        check("M1 vllm matched (old 'vlm' missed it)", "qwen3-vl-4b-vllm-cpp" in auto)
+        check("M1 text-only qwen3.8 excluded", "qwen3.8-9b-q4" not in auto)
+        check("M1 ASR/TTS/VAD/embedding excluded",
+              all(m not in auto for m in ["qwen3-asr-0.6b", "qwen3-tts-0.6b-custom-voice",
+                                          "whisper-1", "silero-vad",
+                                          "granite-embedding-107m-multilingual"]))
+
+        # probe_image is a valid PNG
+        png = sg.probe_image()
+        check("probe_image PNG magic", png[:8] == b"\x89PNG\r\n\x1a\n")
+        import struct as _st
+        w, h = _st.unpack(">II", png[16:24])
+        check("probe_image 64x64", (w, h) == (64, 64), f"got {w}x{h}")
+
+        # probe_filter keep/drop logic (injected fake _probe_one, no network)
+        calls = []
+        def fake_probe(base, key, model, timeout_s=45.0):
+            calls.append(model)
+            return (model == "vision-ok"), ("ok" if model == "vision-ok" else "HTTP 500")
+        orig = vb._probe_one
+        vb._probe_one = fake_probe
+        try:
+            kept = vb.probe_filter("http://x", "k", ["vision-ok", "text-only", "broken"])
+        finally:
+            vb._probe_one = orig
+        check("probe_filter keeps capable only", kept == ["vision-ok"], f"got {kept}")
+        check("probe_filter probes every candidate",
+              calls == ["vision-ok", "text-only", "broken"], f"got {calls}")
+        # all-drop -> empty list (fake still injected)
+        vb._probe_one = lambda base, key, model, timeout_s=45.0: (False, "HTTP 500")
+        try:
+            check("probe_filter empty on all-drop",
+                  vb.probe_filter("http://x", "k", ["a", "b"]) == [])
+        finally:
+            vb._probe_one = orig
+
+        # --probe flag exists and is wired to auto
+        r = run([sys.executable, os.path.join(TOOLS, "vlm_bench.py"), "--help"])
+        check("--probe flag in --help", r.returncode == 0 and "--probe" in r.stdout,
+              r.stderr[:120])
+        src = open(os.path.join(TOOLS, "vlm_bench.py")).read()
+        check("--probe wired into --models auto branch",
+              'if args.probe:' in src and "probe_filter(" in src)
+    except Exception as e:
+        check("M1 section ran", False, f"{type(e).__name__}: {e}")
+
     print()
     print(f"{'=' * 40}")
     print(f"  {passed} passed, {failed} failed")

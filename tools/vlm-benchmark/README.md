@@ -31,8 +31,12 @@ python3 tools/vlm-benchmark/vlm_bench.py --list
 # run all 3 tasks against specific models
 python3 tools/vlm-benchmark/vlm_bench.py --models mistralai_magistral-small-2509-multimodal,moondream2
 
-# run only detection, auto-select vision models
+# run only detection, auto-select vision models (name-hint heuristic)
 python3 tools/vlm-benchmark/vlm_bench.py --models auto --tasks detect
+
+# auto-select + LIVE-verify: probe each candidate with one tiny image and
+# keep only models that actually accept images (reliable selection; needs the server)
+python3 tools/vlm-benchmark/vlm_bench.py --models auto --probe --tasks detect
 
 # offline dry-run (no server call)
 python3 tools/vlm-benchmark/vlm_bench.py --dry-run
