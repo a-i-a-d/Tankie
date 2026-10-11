@@ -219,6 +219,40 @@ def main() -> int:
     else:
         check("--html (no results)", False, "no result files to test with")
 
+    # 9. prompt in records + HTML report (audit trail)
+    print("9. prompt in records + HTML")
+    src_bench = open(os.path.join(TOOLS, "vlm_bench.py"), encoding="utf-8").read()
+    check("vlm_bench record stores 'prompt'", '"prompt": _prompt_for(task)' in src_bench)
+    check("vlm_bench record keeps 'prompt_sha'", '"prompt_sha":' in src_bench)
+
+    import tempfile
+    rec_new = {
+        "ts": "2026-01-01T00:00:00+00:00", "base": "http://x/v1", "model": "m-new",
+        "task": "detect", "variant": "", "n_images": 1, "max_tokens": 500,
+        "prompt": "Look at the image. PROMPT_MARKER_NEW.", "prompt_sha": "abc123def456",
+        "http": 200, "elapsed_s": 1.0, "content": '{"objects": []}', "reasoning": None,
+        "parsed": {"objects": []}, "error": None,
+        "grade": {"valid_json": True, "required_keys": False, "semantic": False},
+    }
+    rec_legacy = dict(rec_new, model="m-legacy", prompt=None, prompt_sha="76447cbbf065")
+    tmp = tempfile.mkdtemp()
+    jl = os.path.join(tmp, "records.jsonl")
+    with open(jl, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec_new) + "\n")
+        fh.write(json.dumps(rec_legacy) + "\n")
+    html_path = os.path.join(tmp, "report.html")
+    r = run([sys.executable, os.path.join(TOOLS, "report.py"), jl, "--html", html_path])
+    check("--html (synthetic records) exit 0", r.returncode == 0, r.stderr[:200])
+    if os.path.isfile(html_path):
+        h_txt = open(html_path, encoding="utf-8").read()
+        check("html shows full prompt for new records", "PROMPT_MARKER_NEW" in h_txt)
+        check("html has prompt label", 'class="lbl">prompt' in h_txt)
+        check("html prompt block styled", 'class="prompt"' in h_txt)
+        check("html falls back to sha for legacy records",
+              "prompt not stored" in h_txt and "76447cbbf065" in h_txt)
+    else:
+        check("html (synthetic) created", False, f"missing: {html_path}")
+
     # summary
     print()
     print(f"{'=' * 40}")

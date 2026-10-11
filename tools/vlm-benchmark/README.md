@@ -61,6 +61,9 @@ python3 tools/vlm-benchmark/report.py results/*.jsonl --json
 - **Never-raises** — every call is recorded (request metadata, HTTP status,
   timing, full response, parsed JSON, grade) to the JSONL results file.
   Network errors, timeouts, and malformed responses are captured, not fatal.
+- **Audit trail** — each record stores the full prompt (plus its `sha256[:12]`),
+  and the HTML report shows the prompt above every model response. Older records
+  without a `prompt` field fall back to showing the hash.
 - **Grading** is data-driven and re-runnable: `valid_json` → `required_keys`
   → `semantic` (task-specific expected values).
 - **Recommendation** in `report.py`: highest overall pass rate, tie-broken by

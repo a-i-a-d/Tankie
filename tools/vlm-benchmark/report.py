@@ -253,6 +253,8 @@ summary::-webkit-details-marker{display:none;}
 summary::before{content:"\\25B6";display:inline-block;margin-right:8px;font-size:10px;color:var(--muted);transition:transform .15s;}
 details[open] summary::before{transform:rotate(90deg);}
 pre{background:#0c0e14;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;font-size:12px;white-space:pre-wrap;word-break:break-word;margin:10px 0 14px;}
+.prompt{background:#12151d;border-left:3px solid var(--accent);border-radius:6px;padding:8px 12px;font-size:12px;white-space:pre-wrap;word-break:break-word;margin:10px 0 4px;color:#c8cdd9;}
+.prompt .lbl{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px;}
 .err{color:#ff8b8e;font-weight:600;}
 .ok{color:var(--pass);font-weight:600;}
 .kv{color:var(--muted);font-size:12px;}
@@ -355,9 +357,12 @@ def render_html(summary: dict, recommended: str | None, rec_all: bool,
             g = r.get("grade") or {}
             mark = '<span class="ok">PASS</span>' if g.get("semantic") else '<span class="err">FAIL</span>'
             body = r.get("content") or r.get("reasoning") or (r.get("error") or "(no response)")
+            # prompt: full text from the record; older records fall back to the hash
+            prompt = r.get("prompt") or f"(prompt not stored - sha256[:12]={r.get('prompt_sha') or '?'})"
             items.append(
                 f'<div><b>{esc(t)} / {esc(v)}</b> &mdash; {mark} '
                 f'<span class="kv">http {esc(r.get("http"))} &middot; {esc(r.get("elapsed_s"))}s</span></div>'
+                f'<div class="prompt"><span class="lbl">prompt</span>{esc(prompt)}</div>'
                 f'<pre>{esc(body)}</pre>'
             )
         detail.append(f'<details><summary>{esc(m)}</summary>' + "".join(items) + "</details>")
