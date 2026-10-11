@@ -217,10 +217,201 @@ def render_md(summary: dict, recommended: str | None, rec_all: bool, src: list[s
     return "\n".join(md)
 
 
+_HTML_CSS = """
+:root{--bg:#0f1117;--card:#171a23;--fg:#e6e8ee;--muted:#8b90a0;--line:#262b38;
+--pass:#2ea44f;--fail:#e5484d;--partial:#d29922;--err:#6e7681;--accent:#4493f8;}
+*{box-sizing:border-box;}
+body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);padding:32px;max-width:1200px;margin:0 auto;}
+h1{font-size:22px;margin:0 0 4px;}
+h2{font-size:16px;margin:32px 0 12px;color:var(--fg);}
+.sub{color:var(--muted);font-size:13px;margin-bottom:24px;}
+.cards{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:20px;}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 18px;min-width:110px;}
+.card .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;}
+.card .v{font-size:22px;font-weight:600;margin-top:4px;}
+.card.rec .v{color:var(--accent);font-size:14px;word-break:break-word;}
+table{border-collapse:collapse;width:100%;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+th,td{padding:10px 12px;text-align:center;border-bottom:1px solid var(--line);}
+th{background:#12151d;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;}
+td.model,th.model{text-align:left;font-weight:500;}
+tbody tr:last-child td{border-bottom:none;}
+.cell{display:flex;flex-direction:column;align-items:center;gap:2px;}
+.mark{font-size:17px;line-height:1;}
+.lat{font-size:11px;color:var(--muted);}
+td.pass{background:rgba(46,164,79,.10);}
+td.fail{background:rgba(229,72,77,.10);}
+td.partial{background:rgba(210,153,34,.12);}
+td.error{background:rgba(110,118,129,.14);}
+td.empty{background:rgba(110,118,129,.06);}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;margin-left:6px;vertical-align:middle;}
+.badge.rec{background:rgba(68,147,248,.20);color:var(--accent);}
+tr.rec-row td{box-shadow:inset 0 0 0 1px var(--accent);}
+td .rec-dot{color:var(--accent);font-size:11px;}
+details{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:0 16px;margin-bottom:10px;}
+summary{cursor:pointer;padding:12px 0;font-weight:600;list-style:none;}
+summary::-webkit-details-marker{display:none;}
+summary::before{content:"\\25B6";display:inline-block;margin-right:8px;font-size:10px;color:var(--muted);transition:transform .15s;}
+details[open] summary::before{transform:rotate(90deg);}
+pre{background:#0c0e14;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;font-size:12px;white-space:pre-wrap;word-break:break-word;margin:10px 0 14px;}
+.err{color:#ff8b8e;font-weight:600;}
+.ok{color:var(--pass);font-weight:600;}
+.kv{color:var(--muted);font-size:12px;}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 20px;font-size:12px;color:var(--muted);}
+.legend span{display:inline-flex;align-items:center;gap:6px;}
+.dot{width:11px;height:11px;border-radius:3px;display:inline-block;}
+footer{margin-top:28px;color:var(--muted);font-size:12px;}
+"""
+
+
+def render_html(summary: dict, recommended: str | None, rec_all: bool,
+                src: list[str], records: list[dict]) -> str:
+    """Render a self-contained, dark-themed HTML report (inline CSS, no assets).
+
+    Includes summary cards, a color-coded per-task matrix (hover a cell for the
+    model's raw answer / error), an overall ranking, and per-model raw answers.
+    """
+    import html as _html
+
+    def esc(v):
+        return _html.escape(str(v)) if v is not None else ""
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    models = sorted(summary)
+    all_tasks = sorted({k for d in summary.values() for k in d["per_task"]})
+    total_calls = sum(d["overall"]["n"] for d in summary.values())
+    total_pass = sum(d["overall"]["pass"] for d in summary.values())
+    total_err = sum(d["overall"]["errors"] for d in summary.values())
+    pass_rate = (total_pass / total_calls) if total_calls else 0.0
+
+    # raw records grouped by (model, task) for tooltips + detail
+    by_model_task: dict[tuple, list] = {}
+    for r in records:
+        m, t = r.get("model"), r.get("task")
+        if m and t:
+            by_model_task.setdefault((m, t), []).append(r)
+
+    def cell_status(st):
+        if not st or st.get("n", 0) == 0:
+            return "empty", ""
+        if st["pass"] == st["n"]:
+            return "pass", "&#10003;"
+        if st["pass"] > 0:
+            return "partial", "&#9888;"
+        if st.get("errors", 0) >= st["n"]:
+            return "error", "&#10006;"
+        return "fail", "&#10007;"
+
+    def cell_tip(model, task, st):
+        recs = by_model_task.get((model, task), [])
+        for r in recs:
+            if r.get("error"):
+                return esc(r["error"])[:400]
+        for r in recs:
+            if r.get("content"):
+                return esc(r["content"])[:400]
+        return ""
+
+    # ---- matrix rows
+    matrix_rows = []
+    for m in models:
+        badge = '<span class="badge rec">recommended</span>' if m == recommended else ""
+        tds = [f'<td class="model">{esc(m)}{badge}</td>']
+        for t in all_tasks:
+            st = summary[m]["per_task"].get(t)
+            status, mark = cell_status(st)
+            tip = cell_tip(m, t, st) if status in ("fail", "error", "partial") else ""
+            lat = f'{st["lat_med"]}s' if st and st.get("lat_med") is not None else "-"
+            title = f' title="{tip}"' if tip else ""
+            tds.append(
+                f'<td class="{status}"{title}>'
+                f'<div class="cell"><span class="mark">{mark}</span>'
+                f'<span class="lat">{esc(lat)}</span></div></td>'
+            )
+        matrix_rows.append("<tr>" + "".join(tds) + "</tr>")
+
+    # ---- ranking rows
+    ranked = sorted(models, key=lambda m: (-summary[m]["overall"]["pass_rate"],
+                                           summary[m]["overall"]["lat_med"] or 1e9))
+    rank_rows = []
+    for i, m in enumerate(ranked, 1):
+        ov = summary[m]["overall"]
+        row_cls = ' class="rec-row"' if m == recommended else ""
+        rec_dot = ' <span class="rec-dot">&#9733;</span>' if m == recommended else ""
+        pr = f'{ov["pass"]}/{ov["n"]} ({ov["pass_rate"]:.0%})'
+        lat = f'{ov["lat_med"]}s' if ov.get("lat_med") is not None else "-"
+        rank_rows.append(
+            f'<tr{row_cls}><td>{i}</td><td class="model">{esc(m)}{rec_dot}</td>'
+            f'<td>{pr}</td><td>{esc(lat)}</td><td>{ov["errors"]}</td></tr>'
+        )
+
+    # ---- per-model detail (raw answers)
+    detail = []
+    for m in models:
+        model_recs = [r for r in records if r.get("model") == m]
+        model_recs.sort(key=lambda r: (r.get("task", ""), r.get("variant", "")))
+        items = []
+        for r in model_recs:
+            t, v = r.get("task"), r.get("variant") or "-"
+            g = r.get("grade") or {}
+            mark = '<span class="ok">PASS</span>' if g.get("semantic") else '<span class="err">FAIL</span>'
+            body = r.get("content") or r.get("reasoning") or (r.get("error") or "(no response)")
+            items.append(
+                f'<div><b>{esc(t)} / {esc(v)}</b> &mdash; {mark} '
+                f'<span class="kv">http {esc(r.get("http"))} &middot; {esc(r.get("elapsed_s"))}s</span></div>'
+                f'<pre>{esc(body)}</pre>'
+            )
+        detail.append(f'<details><summary>{esc(m)}</summary>' + "".join(items) + "</details>")
+
+    cards = f'''
+    <div class="cards">
+      <div class="card"><div class="k">Models</div><div class="v">{len(models)}</div></div>
+      <div class="card"><div class="k">Calls</div><div class="v">{total_calls}</div></div>
+      <div class="card"><div class="k">Pass rate</div><div class="v">{pass_rate:.0%}</div></div>
+      <div class="card"><div class="k">Errors</div><div class="v">{total_err}</div></div>
+      <div class="card rec"><div class="k">Recommended</div><div class="v">{esc(recommended or "&mdash;")}</div></div>
+    </div>'''
+
+    legend = '''
+    <div class="legend">
+      <span><span class="dot" style="background:var(--pass)"></span> pass</span>
+      <span><span class="dot" style="background:var(--partial)"></span> partial</span>
+      <span><span class="dot" style="background:var(--fail)"></span> fail (semantic)</span>
+      <span><span class="dot" style="background:var(--err)"></span> error (no valid response)</span>
+      <span>&middot; hover any cell for the model&rsquo;s raw answer / error</span>
+    </div>'''
+
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VLM Benchmark Report</title>
+<style>{_HTML_CSS}</style></head>
+<body>
+<h1>VLM Benchmark Report</h1>
+<div class="sub">Generated {esc(now)} &middot; {esc(", ".join(src))} &middot; {total_calls} calls across {len(models)} models</div>
+{cards}
+{legend}
+<h2>Per-task results</h2>
+<table>
+<thead><tr><th class="model">model</th>{"".join(f"<th>{esc(t)}</th>" for t in all_tasks)}</tr></thead>
+<tbody>{"".join(matrix_rows)}</tbody>
+</table>
+<h2>Overall ranking</h2>
+<table>
+<thead><tr><th>#</th><th class="model">model</th><th>pass rate</th><th>median latency</th><th>errors</th></tr></thead>
+<tbody>{"".join(rank_rows)}</tbody>
+</table>
+<h2>Per-model detail (raw answers)</h2>
+{"".join(detail)}
+<footer>Tankie VLM benchmark &middot; generated by <code>report.py --html</code></footer>
+</body></html>
+"""
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("results", nargs="+", help="results JSONL file(s), glob patterns allowed")
     ap.add_argument("--md", default=None, help="also write a Markdown report to this path")
+    ap.add_argument("--html", default=None, help="also write a self-contained HTML report to this path (no external assets)")
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON summary instead of tables")
     ap.add_argument("--models", default=None, help="comma-separated model ids to include")
     ap.add_argument("--tasks", default=None, help="comma list of tasks to include (detect,sequence,drive)")
@@ -253,6 +444,10 @@ def main(argv: list[str] | None = None) -> int:
         with open(args.md, "w", encoding="utf-8") as fh:
             fh.write(render_md(summary, recommended, rec_all, args.results))
         print(f"\nmarkdown report -> {args.md}", file=sys.stderr)
+    if args.html:
+        with open(args.html, "w", encoding="utf-8") as fh:
+            fh.write(render_html(summary, recommended, rec_all, args.results, records))
+        print(f"\nhtml report -> {args.html}", file=sys.stderr)
     return 0
 
 

@@ -191,6 +191,34 @@ def main() -> int:
     except Exception as e:
         check("detect scene shape check", False, f"{type(e).__name__}: {e}")
 
+    # 8. report.py --html (self-contained HTML report)
+    print("8. report.py --html")
+    if result_files:
+        import tempfile, os as _os
+        html_path = _os.path.join(tempfile.gettempdir(), "vlm_bench_test.html")
+        r = run([sys.executable, _os.path.join(TOOLS, "report.py"), result_files[0], "--html", html_path])
+        check("--html exit 0", r.returncode == 0, r.stderr[:200])
+        if _os.path.isfile(html_path):
+            h_txt = open(html_path, encoding="utf-8").read()
+            check("html starts with doctype", h_txt.startswith("<!doctype html>"), h_txt[:60])
+            check("html has inline <style>", "<style>" in h_txt and "</style>" in h_txt)
+            check("html has no external CSS", '<link rel="stylesheet"' not in h_txt)
+            check("html has no <script>", "<script" not in h_txt)
+            check("html has per-task table", "Per-task results" in h_txt)
+            check("html has ranking table", "Overall ranking" in h_txt)
+            check("html has per-model detail", "Per-model detail" in h_txt)
+            check("html has <details> elements", "<details>" in h_txt)
+            check("html has summary cards", 'class="cards"' in h_txt)
+            check("html has legend", "hover any cell" in h_txt)
+            check("html has pass cells", 'class="pass"' in h_txt)
+            check("html has fail cells", 'class="fail"' in h_txt)
+            check("html file size > 10KB", len(h_txt) > 10_000, f"{len(h_txt)} bytes")
+            _os.unlink(html_path)
+        else:
+            check("html file created", False, f"missing: {html_path}")
+    else:
+        check("--html (no results)", False, "no result files to test with")
+
     # summary
     print()
     print(f"{'=' * 40}")
