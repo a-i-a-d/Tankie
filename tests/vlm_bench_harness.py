@@ -264,6 +264,45 @@ def main() -> int:
     else:
         check("html (synthetic) created", False, f"missing: {html_path}")
 
+    # 11. drive grading — direction-aware steer (C1/C2 fix)
+    #     wheels.h: steer > 0 = LEFT, steer < 0 = RIGHT.
+    #     "left" scene = obstacle on the LEFT -> correct = steer RIGHT (negative).
+    print("11. drive grading (direction-aware)")
+    try:
+        def _d(variant, parsed):
+            rec = {"error": None, "parsed": parsed, "content": json.dumps(parsed)}
+            return vlm_bench._grade("drive", variant, rec)
+
+        # C1: steer INTO the obstacle (left, +) must FAIL; AWAY (right, -) must PASS.
+        check("drive/left steer=-50 forward -> PASS (away)",
+              _d("left", {"action": "forward", "steer": -50})["semantic"] is True)
+        check("drive/left steer=+50 forward -> FAIL (into)",
+              _d("left", {"action": "forward", "steer": 50})["semantic"] is False)
+        # C2: action "right" is a valid "steer right" answer and must be accepted.
+        check("drive/left steer=-50 action=right -> PASS",
+              _d("left", {"action": "right", "steer": -50})["semantic"] is True)
+        check("drive/left steer=+50 action=right -> FAIL (into)",
+              _d("left", {"action": "right", "steer": 50})["semantic"] is False)
+        # magnitude floor: |steer| < 20 is too weak to be a real avoidance.
+        check("drive/left steer=0 forward -> FAIL (no steer)",
+              _d("left", {"action": "forward", "steer": 0})["semantic"] is False)
+        check("drive/left steer=-10 forward -> FAIL (too weak)",
+              _d("left", {"action": "forward", "steer": -10})["semantic"] is False)
+        check("drive/left steer=-20 forward -> PASS (at threshold)",
+              _d("left", {"action": "forward", "steer": -20})["semantic"] is True)
+        # center: a center-lane obstacle must yield stop.
+        check("drive/center action=stop -> PASS",
+              _d("center", {"action": "stop"})["semantic"] is True)
+        check("drive/center action=forward -> FAIL",
+              _d("center", {"action": "forward", "throttle": 50})["semantic"] is False)
+        # clear: forward with enough throttle.
+        check("drive/clear forward throttle=50 -> PASS",
+              _d("clear", {"action": "forward", "throttle": 50})["semantic"] is True)
+        check("drive/clear forward throttle=10 -> FAIL (too slow)",
+              _d("clear", {"action": "forward", "throttle": 10})["semantic"] is False)
+    except Exception as e:
+        check("drive grading import+run", False, f"{type(e).__name__}: {e}")
+
     # summary
     print()
     print(f"{'=' * 40}")

@@ -79,8 +79,12 @@ SEQUENCE_MOVING = "square"
 SEQUENCE_DIRECTION = "right"
 DRIVE_EXPECTED = {
     "center": {"action": "stop"},
-    "left": {"action": "forward", "steer_min": 20},
-    "clear": {"action": "forward", "throttle_min": 40},
+    # "left" = obstacle on the LEFT of the lane (drive_scene: x=90..210).
+    # Correct avoidance is to steer RIGHT (wheels.h: steer > 0 = LEFT,
+    # steer < 0 = RIGHT), so the model must steer AWAY (negative). A model
+    # steering INTO the obstacle (positive steer) is a FAIL.
+    "left": {"action": ["forward", "right"], "steer_max": -20},
+    "clear": {"action": ["forward"], "throttle_min": 40},
 }
 
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
@@ -208,8 +212,14 @@ def _grade(task: str, variant: str, rec: dict) -> dict:
         if g["required_keys"]:
             exp = DRIVE_EXPECTED[variant]
             action = str(parsed.get("action", "")).lower()
-            ok = action == exp["action"]
-            if "steer_min" in exp:
+            allowed = exp["action"] if isinstance(exp["action"], list) else [exp["action"]]
+            ok = action in allowed
+            if "steer_max" in exp:  # signed: steer must be <= this (e.g. -20 = steer right)
+                try:
+                    ok = ok and float(parsed.get("steer", 0)) <= exp["steer_max"]
+                except (TypeError, ValueError):
+                    ok = False
+            if "steer_min" in exp:  # magnitude: |steer| >= this
                 try:
                     ok = ok and abs(float(parsed.get("steer", 0))) >= exp["steer_min"]
                 except (TypeError, ValueError):
