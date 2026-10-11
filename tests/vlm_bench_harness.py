@@ -440,6 +440,158 @@ def main() -> int:
     except Exception as e:
         check("M1 section ran", False, f"{type(e).__name__}: {e}")
 
+
+    # 14. L1 + L2: latency over successful calls only; ranking tie-break by error count
+    print("14. L1 latency split + L2 error-aware ranking")
+    import report as rp
+    importlib.reload(rp)
+    try:
+        def _rec(model, ok, lat, pass_=True):
+            return {
+                "model": model, "task": "detect", "variant": "",
+                "elapsed_s": lat, "error": None if ok else "HTTP 500: boom",
+                "grade": {"valid_json": pass_, "required_keys": pass_, "semantic": pass_},
+            }
+        # M1: 1 success (10s) + 1 fast error (0.1s). M2: 2 successes (12s, 14s), 0 errors.
+        recs = [
+            _rec("M1", True, 10.0), _rec("M1", False, 0.1),
+            _rec("M2", True, 12.0), _rec("M2", True, 14.0),
+        ]
+        summary = rp.aggregate(recs, None, None)
+        st1 = summary["M1"]["overall"]
+        st2 = summary["M2"]["overall"]
+        check("L1 M1 lat_med = 10.0 (success only, not 5.05)", st1["lat_med"] == 10.0, f"got {st1['lat_med']}")
+        check("L1 M1 lat_err_med = 0.1 (error latency kept separately)", st1["lat_err_med"] == 0.1, f"got {st1['lat_err_med']}")
+        check("L1 M1 errors = 1", st1["errors"] == 1, f"got {st1['errors']}")
+        check("L1 M2 lat_med = 13.0 (median of 12,14)", st2["lat_med"] == 13.0, f"got {st2['lat_med']}")
+        check("L1 M2 lat_err_med = None (no errors)", st2["lat_err_med"] is None, f"got {st2['lat_err_med']}")
+        check("L1 all-error group -> lat_med None", rp._stats([_rec("M3", False, 0.1)])["lat_med"] is None)
+
+        # L2: M1 and M2 have the SAME pass rate (1/2 = 50%). M2 has 0 errors, M1 has 1.
+        check("L2 setup: equal pass rates", st1["pass_rate"] == st2["pass_rate"], f"{st1['pass_rate']} vs {st2['pass_rate']}")
+        check("L2 setup: M1 errors(1) > M2 errors(0)", st1["errors"] > st2["errors"])
+        best, _ = rp.recommend(summary)
+        check("L2 recommend picks M2 (fewer errors) despite M1's lower median", best == "M2", f"got {best}")
+
+        # L2: with equal pass rate AND equal errors, latency is the tie-break.
+        recs2 = [
+            _rec("A", True, 5.0), _rec("A", False, 0.1),
+            _rec("B", True, 3.0), _rec("B", False, 0.1),
+        ]
+        summary2 = rp.aggregate(recs2, None, None)
+        check("L2 setup2: equal pass rate and error count",
+              summary2["A"]["overall"]["pass_rate"] == summary2["B"]["overall"]["pass_rate"]
+              and summary2["A"]["overall"]["errors"] == summary2["B"]["overall"]["errors"])
+        best2, _ = rp.recommend(summary2)
+        check("L2 equal errors -> lowest median latency wins (B)", best2 == "B", f"got {best2}")
+
+        # L2: no-success model (all errors) sorts after a model with successes.
+        recs3 = [
+            _rec("S", True, 50.0),   # 100% pass, slow
+            _rec("E", False, 0.1), _rec("E", False, 0.1),  # 0% pass, fast errors
+        ]
+        summary3 = rp.aggregate(recs3, None, None)
+        best3, _ = rp.recommend(summary3)
+        check("L2 pass rate dominates (S over E)", best3 == "S", f"got {best3}")
+    except Exception as e:
+        check("L1/L2 section ran", False, f"{type(e).__name__}: {e}")
+
+    # 15. L3 retry + L4 json-mode + L6 dead branch + \bvlm\b fix
+    print("15. L3 retry / L4 json-mode / L6 dead branch / \\bvlm\\b fix")
+    try:
+        import vlm_bench as vb15
+        importlib.reload(vb15)
+
+        # L3: _call retries a transient 503, then succeeds (injected _attempt).
+        seq = [
+            {"http": 503, "error": "HTTP 503: load cooldown"},
+            {"http": 200, "error": None, "content": "{}"},
+        ]
+        calls = {"n": 0}
+        def fake_attempt_503(*a, **k):
+            r = dict(seq[min(calls["n"], len(seq) - 1)])
+            calls["n"] += 1
+            return r
+        orig_attempt = vb15._attempt
+        vb15._attempt = fake_attempt_503
+        orig_sleep = vb15.time.sleep
+        vb15.time.sleep = lambda s: None
+        try:
+            rec = vb15._call("http://x", "k", "m", "detect", "", 1.0, 100, max_retries=1)
+        finally:
+            vb15._attempt = orig_attempt
+            vb15.time.sleep = orig_sleep
+        check("L3 503 then 200 -> final record is the success", rec["http"] == 200 and rec["error"] is None, f"got {rec['http']} {rec['error']}")
+        check("L3 _attempt called twice", calls["n"] == 2, f"got {calls['n']}")
+        check("L3 retries recorded (1)", rec["retries"] == 1, f"got {rec['retries']}")
+
+        # L3: deterministic 500 is NOT retried.
+        calls2 = {"n": 0}
+        def fake_attempt_500(*a, **k):
+            calls2["n"] += 1
+            return {"http": 500, "error": "HTTP 500: could not load model"}
+        vb15._attempt = fake_attempt_500
+        try:
+            rec = vb15._call("http://x", "k", "m", "detect", "", 1.0, 100, max_retries=2)
+        finally:
+            vb15._attempt = orig_attempt
+        check("L3 500 not retried (1 attempt)", calls2["n"] == 1, f"got {calls2['n']}")
+        check("L3 500 recorded as error", rec["error"] is not None and rec["http"] == 500)
+        check("L3 retries recorded (0)", rec["retries"] == 0, f"got {rec['retries']}")
+
+        # L3: two 503s with max_retries=1 -> gives up after the retry.
+        calls3 = {"n": 0}
+        def fake_attempt_503x(*a, **k):
+            calls3["n"] += 1
+            return {"http": 503, "error": "HTTP 503: cooldown"}
+        vb15._attempt = fake_attempt_503x
+        try:
+            rec = vb15._call("http://x", "k", "m", "detect", "", 1.0, 100, max_retries=1)
+        finally:
+            vb15._attempt = orig_attempt
+        check("L3 503x2 with 1 retry -> 2 attempts total", calls3["n"] == 2, f"got {calls3['n']}")
+        check("L3 final record is the 503", rec["http"] == 503 and rec["retries"] == 1)
+
+        # L3: _TRANSIENT_HTTP is only 503.
+        check("L3 _TRANSIENT_HTTP == (503,)", tuple(vb15._TRANSIENT_HTTP) == (503,), f"got {vb15._TRANSIENT_HTTP}")
+
+        # L4: _attempt only adds response_format when use_json_mode is True.
+        captured = {}
+        def fake_urlopen(req, timeout=None):
+            import urllib.request as _ur
+            captured["body"] = json.loads(req.data.decode())
+            raise _ur.HTTPError(req.full_url, 400, "response_format not supported", {}, None)
+        import urllib.request as _ur2
+        orig_urlopen = _ur2.urlopen
+        _ur2.urlopen = fake_urlopen
+        try:
+            vb15._attempt("http://x", "k", "m", "detect", "", 1.0, 100, use_json_mode=True)
+            with_rf = "response_format" in captured["body"]
+            vb15._attempt("http://x", "k", "m", "detect", "", 1.0, 100, use_json_mode=False)
+            without_rf = "response_format" not in captured["body"]
+        finally:
+            _ur2.urlopen = orig_urlopen
+        check("L4 use_json_mode=True sends response_format", with_rf)
+        check("L4 use_json_mode=False omits response_format", without_rf)
+
+        # L4: --no-json-mode flag exists.
+        r = run([sys.executable, os.path.join(TOOLS, "vlm_bench.py"), "--help"])
+        check("L4 --no-json-mode in --help", r.returncode == 0 and "--no-json-mode" in r.stdout, r.stderr[:120])
+
+        # L6: dead `if False` branch removed from scene_gen.
+        sg_src = open(os.path.join(TOOLS, "scene_gen.py"), encoding="utf-8").read()
+        check("L6 no 'if False' in scene_gen", "if False" not in sg_src)
+
+        # L-fix: \bvlm\b is a real word boundary now (a bare 'vlm' model matches).
+        check("L-fix \\bvlm\\b matches a bare 'vlm' model name",
+              vb15._VISION_HINTS.search("my-vlm-model") is not None)
+        check("L-fix \\bvlm\\b still matches vllm",
+              vb15._VISION_HINTS.search("qwen3-vl-4b-vllm-cpp") is not None)
+        check("L-fix \\bvlm\\b still matches smolvlm",
+              vb15._VISION_HINTS.search("smolvlm-500m-instruct") is not None)
+    except Exception as e:
+        check("L3/L4/L6 section ran", False, f"{type(e).__name__}: {e}")
+
     print()
     print(f"{'=' * 40}")
     print(f"  {passed} passed, {failed} failed")

@@ -153,9 +153,44 @@ def _extract_answer(message: dict) -> str:
     return _content_text(message.get("reasoning"))
 
 
+# HTTP status codes worth retrying: 503 = LocalAI "load-cooldown" (the model
+# is not loaded yet and the server tells the client to back off). Other 5xx
+# codes (e.g. 500 "could not load model") are deterministic -- retrying them
+# only wastes time, so they fail fast.
+_TRANSIENT_HTTP = (503,)
+RETRY_DELAY_S = 1.0
+
+
 def _call(base: str, key: str, model: str, task: str, variant: str,
-          timeout_s: float, max_tokens: int) -> dict:
-    """One chat/completions call. Returns a result record (never raises)."""
+          timeout_s: float, max_tokens: int, max_retries: int = 1,
+          use_json_mode: bool = True) -> dict:
+    """A benchmark call with a bounded retry on transient failures (L3).
+
+    Retries ONLY transient HTTP 503 (LocalAI load-cooldown) -- a deterministic
+    500 (model won't load), a 4xx, or a timeout is recorded as-is. ``retries``
+    in the record shows how many retries were used (0 = first attempt was
+    final). Never raises.
+    """
+    rec = _attempt(base, key, model, task, variant, timeout_s, max_tokens, use_json_mode)
+    retries = 0
+    for _ in range(max(0, max_retries)):
+        http = rec.get("http")
+        if not (isinstance(http, int) and http in _TRANSIENT_HTTP):
+            break
+        time.sleep(RETRY_DELAY_S)
+        rec = _attempt(base, key, model, task, variant, timeout_s, max_tokens, use_json_mode)
+        retries += 1
+    rec["retries"] = retries
+    return rec
+
+
+def _attempt(base: str, key: str, model: str, task: str, variant: str,
+             timeout_s: float, max_tokens: int, use_json_mode: bool = True) -> dict:
+    """One chat/completions attempt. Returns a result record (never raises).
+
+    Kept at module level (instead of inlined in ``_call``) so tests can inject
+    a fake attempt -- the retry logic in ``_call`` is then testable offline.
+    """
     payloads, n_images = _scene_payloads(task, variant)
     body = {
         "model": model,
@@ -165,8 +200,11 @@ def _call(base: str, key: str, model: str, task: str, variant: str,
         ],
         "max_tokens": max_tokens,
         "temperature": 0,
-        "response_format": {"type": "json_object"},
     }
+    if use_json_mode:
+        # L4: response_format is only sent when enabled -- models that reject
+        # it (400) can be run with --no-json-mode and still be graded.
+        body["response_format"] = {"type": "json_object"}
     req = urllib.request.Request(
         base.rstrip("/") + "/chat/completions",
         data=json.dumps(body).encode(),
@@ -285,7 +323,7 @@ _NON_VISION = re.compile(
 # and the blind ``mimo|ornith|ternary|qwen3.8|qwen3.5`` catch-alls are gone
 # (they only produced text-only false positives).
 _VISION_HINTS = re.compile(
-    r"multimodal|vision|\\bvlm\\b|vllm|magistral|moondream|smolvlm|fara|winnow|gemma|arex|spark|ui-mate|glm",
+    r"multimodal|vision|\bvlm\b|vllm|magistral|moondream|smolvlm|fara|winnow|gemma|arex|spark|ui-mate|glm",
     re.I,
 )
 
@@ -375,6 +413,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--probe", action="store_true",
                     help="with --models auto: live-probe each candidate with one tiny image; keep only vision-capable models")
     ap.add_argument("--save-scenes", default=None, metavar="DIR", help="write all scene PNGs to DIR and exit")
+    ap.add_argument("--no-json-mode", action="store_true",
+                    help="L4: do not send response_format=json_object (for models that reject it); the grader is unchanged")
     args = ap.parse_args(argv)
 
     tasks = [t.strip() for t in args.tasks.split(",") if t.strip()]
@@ -445,7 +485,8 @@ def main(argv: list[str] | None = None) -> int:
                 for variant in (variants if task == "drive" else [""]):
                     for run in range(1, args.runs + 1):
                         rec = _call(args.base, args.key, model, task, variant,
-                                   args.timeout, args.max_tokens)
+                                   args.timeout, args.max_tokens,
+                                   use_json_mode=not args.no_json_mode)
                         rec["run"] = run
                         fh.write(json.dumps(rec) + "\n")
                         fh.flush()

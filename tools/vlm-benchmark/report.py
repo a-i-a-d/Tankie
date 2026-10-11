@@ -3,8 +3,9 @@
 
 Reads the JSONL records written by ``vlm_bench.py`` and aggregates them into
 per-model / per-task pass-rate + latency tables, a ranked summary, and a
-single "recommended" model (best pass rate, tie-broken by lowest median
-latency). Emits human-readable tables to stdout and/or a Markdown report.
+single "recommended" model (best pass rate, then fewest errors, then lowest
+median latency of successful calls). Emits human-readable tables to stdout
+and/or a Markdown report.
 
 Pure stdlib -- no third-party dependencies, runs on any machine.
 
@@ -60,6 +61,14 @@ def _stats(records: list[dict]) -> dict:
     valid_json = sum(1 for r in records if _valid_json(r))
     errors = sum(1 for r in records if r.get("error"))
     lats = [r["elapsed_s"] for r in records if isinstance(r.get("elapsed_s"), (int, float))]
+    # L1: latency stats are computed over SUCCESSFUL calls only (no error).
+    # A fast HTTP 500 must not lower the median -- that would let the
+    # ranking tie-break favor a model that errors quickly over one that
+    # works slowly. Error-call latencies are kept separately (lat_err_med).
+    ok_lats = [r["elapsed_s"] for r in records
+               if not r.get("error") and isinstance(r.get("elapsed_s"), (int, float))]
+    err_lats = [r["elapsed_s"] for r in records
+                if r.get("error") and isinstance(r.get("elapsed_s"), (int, float))]
     return {
         "n": n,
         "pass": passed,
@@ -67,8 +76,9 @@ def _stats(records: list[dict]) -> dict:
         "valid_json": valid_json,
         "errors": errors,
         "lat_min": min(lats) if lats else None,
-        "lat_med": round(statistics.median(lats), 2) if lats else None,
+        "lat_med": round(statistics.median(ok_lats), 2) if ok_lats else None,
         "lat_max": max(lats) if lats else None,
+        "lat_err_med": round(statistics.median(err_lats), 2) if err_lats else None,
     }
 
 
@@ -113,8 +123,17 @@ def aggregate(records: list[dict], models: set[str] | None, tasks: set[str] | No
     return out
 
 
+def _rank_key(ov: dict):
+    """L2: ranking order = pass rate (desc) -> error count (asc) -> median
+    latency (asc). A model that errors more is ranked below one that doesn't,
+    even if it errors faster; latency is only the last tie-break. Models with
+    no successful call (lat_med None) sort last within their tier."""
+    return (-ov["pass_rate"], ov["errors"], ov["lat_med"] if ov["lat_med"] is not None else 1e9)
+
+
 def recommend(summary: dict) -> tuple[str | None, bool]:
-    """Pick the best model: highest overall pass rate, tie-break lowest median latency.
+    """Pick the best model: highest overall pass rate, then fewest errors,
+    then lowest median (successful-call) latency.
     Returns (model, passed_all_tasks)."""
     if not summary:
         return None, False
@@ -129,12 +148,7 @@ def recommend(summary: dict) -> tuple[str | None, bool]:
                     return False
         return True
 
-    def sort_key(item):
-        m, d = item
-        ov = d["overall"]
-        return (-ov["pass_rate"], ov["lat_med"] if ov["lat_med"] is not None else 1e9)
-
-    best = min(summary.items(), key=sort_key)
+    best = min(summary.items(), key=lambda item: _rank_key(item[1]["overall"]))
     return best[0], all_pass(best[1])
 
 
@@ -165,8 +179,7 @@ def render_text(summary: dict, recommended: str | None, rec_all: bool) -> str:
     lines.append("")
     # overall ranking
     lines.append("Overall ranking (pass rate, then median latency):")
-    ranked = sorted(models, key=lambda m: (-summary[m]["overall"]["pass_rate"],
-                                           summary[m]["overall"]["lat_med"] or 1e9))
+    ranked = sorted(models, key=lambda m: _rank_key(summary[m]["overall"]))
     for m in ranked:
         ov = summary[m]["overall"]
         mark = "  <-- recommended" if m == recommended else ""
@@ -204,8 +217,7 @@ def render_md(summary: dict, recommended: str | None, rec_all: bool, src: list[s
     md.append("")
     md.append("| rank | model | pass rate | median latency |")
     md.append("|---|---|---|---|")
-    ranked = sorted(models, key=lambda m: (-summary[m]["overall"]["pass_rate"],
-                                           summary[m]["overall"]["lat_med"] or 1e9))
+    ranked = sorted(models, key=lambda m: _rank_key(summary[m]["overall"]))
     for i, m in enumerate(ranked, 1):
         ov = summary[m]["overall"]
         md.append(f"| {i} | {m} | {_fmt_rate(ov)} | {_fmt_lat(ov)} |")
@@ -335,8 +347,7 @@ def render_html(summary: dict, recommended: str | None, rec_all: bool,
         matrix_rows.append("<tr>" + "".join(tds) + "</tr>")
 
     # ---- ranking rows
-    ranked = sorted(models, key=lambda m: (-summary[m]["overall"]["pass_rate"],
-                                           summary[m]["overall"]["lat_med"] or 1e9))
+    ranked = sorted(models, key=lambda m: _rank_key(summary[m]["overall"]))
     rank_rows = []
     for i, m in enumerate(ranked, 1):
         ov = summary[m]["overall"]

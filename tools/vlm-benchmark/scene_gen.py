@@ -107,7 +107,8 @@ def _put_text(px, x, y, text, color):
 
 
 def _encode_png(px) -> bytes:
-    raw = b"".join(b"\x00" + b"".join(bytes(px[y]) for x in range(W) for _ in (0,)) for y in range(H)) if False else b"".join(
+    # L6: dead branch removed (earlier row-building experiment).
+    raw = b"".join(
         b"\x00" + b"".join(bytes(px[y][x]) for x in range(W)) for y in range(H)
     )
     ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
