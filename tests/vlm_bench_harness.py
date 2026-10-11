@@ -132,6 +132,65 @@ def main() -> int:
     except Exception as e:
         check("_extract_answer import+run", False, f"{type(e).__name__}: {e}")
 
+
+    # 7. detect scene shape correctness (regression: the "triangle" was a square)
+    print("7. detect scene shape correctness")
+    sys.path.insert(0, TOOLS)
+    try:
+        import scene_gen
+        import vlm_bench
+        # DETECT_EXPECTED must not include a shape that isn't drawn
+        check("DETECT_EXPECTED has no 'triangle'",
+              "triangle" not in vlm_bench.DETECT_EXPECTED,
+              str(vlm_bench.DETECT_EXPECTED))
+        check("DETECT_EXPECTED has 'circle'", "circle" in vlm_bench.DETECT_EXPECTED, str(vlm_bench.DETECT_EXPECTED))
+        check("DETECT_EXPECTED has 'square'", "square" in vlm_bench.DETECT_EXPECTED, str(vlm_bench.DETECT_EXPECTED))
+
+        # The blue region must be a SOLID rectangle (a square), not a triangle.
+        # Decode the PNG (pure stdlib) and check the blue region's fill ratio.
+        import zlib, struct
+        png = scene_gen.detect_scene()
+        d = png
+        i = 8; idat = b""; W = H = None
+        while i < len(d):
+            ln = struct.unpack(">I", d[i:i+4])[0]; typ = d[i+4:i+8]; data = d[i+8:i+8+ln]; i += 12 + ln
+            if typ == b"IHDR":
+                W, H = struct.unpack(">II", data[:8])
+            elif typ == b"IDAT":
+                idat += data
+        raw = zlib.decompress(idat); bpp = 3; stride = W * bpp
+        out = bytearray(); prev = bytearray(stride); pos = 0
+        for y in range(H):
+            f = raw[pos]; pos += 1
+            line = bytearray(raw[pos:pos+stride]); pos += stride
+            for x in range(stride):
+                a = line[x-bpp] if x >= bpp else 0
+                b = prev[x]
+                c = prev[x-bpp] if x >= bpp else 0
+                if f == 1: line[x] = (line[x]+a) & 255
+                elif f == 2: line[x] = (line[x]+b) & 255
+                elif f == 3: line[x] = (line[x]+((a+b)>>1)) & 255
+                elif f == 4:
+                    p = a+b-c; pa = abs(p-a); pb = abs(p-b); pc = abs(p-c)
+                    pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                    line[x] = (line[x]+pr) & 255
+            out += line; prev = line
+        px = bytes(out)
+        def pixel(x, y):
+            o = (y*W+x)*3
+            return (px[o], px[o+1], px[o+2])
+        blue = (40, 80, 220)
+        xs = [x for y in range(H) for x in range(W) if pixel(x, y) == blue]
+        ys = [y for y in range(H) for x in range(W) if pixel(x, y) == blue]
+        minx, maxx, miny, maxy = min(xs), max(xs), min(ys), max(ys)
+        total = (maxx-minx+1) * (maxy-miny+1)
+        filled = sum(1 for y in range(miny, maxy+1) for x in range(minx, maxx+1) if pixel(x, y) == blue)
+        ratio = filled / total
+        check("blue region is a solid square (fill ratio >= 0.95)",
+              ratio >= 0.95, f"fill ratio {ratio:.2f} (1.0=square, ~0.5=triangle)")
+    except Exception as e:
+        check("detect scene shape check", False, f"{type(e).__name__}: {e}")
+
     # summary
     print()
     print(f"{'=' * 40}")

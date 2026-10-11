@@ -74,7 +74,7 @@ DRIVE_PROMPT = (
 )
 
 # expected semantics used for grading
-DETECT_EXPECTED = ("circle", "square", "triangle")
+DETECT_EXPECTED = ("circle", "square")  # red circle, green square, blue square (no triangle in scene)
 SEQUENCE_MOVING = "square"
 SEQUENCE_DIRECTION = "right"
 DRIVE_EXPECTED = {
@@ -254,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", default=None, help="results JSONL path (default: results/<timestamp>.jsonl)")
     ap.add_argument("--list", action="store_true", help="list models on the server and exit")
     ap.add_argument("--dry-run", action="store_true", help="generate scenes + payloads, print summary, no server call")
+    ap.add_argument("--save-scenes", default=None, metavar="DIR", help="write all scene PNGs to DIR and exit")
     args = ap.parse_args(argv)
 
     tasks = [t.strip() for t in args.tasks.split(",") if t.strip()]
@@ -270,6 +271,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.list:
         for m in list_models(args.base, args.key):
             print(m)
+        return 0
+
+    if args.save_scenes:
+        paths = scene_gen.save_scenes(args.save_scenes)
+        for p in paths:
+            print(f"  {p} ({os.path.getsize(p)} bytes)")
+        print(f"\n# saved {len(paths)} scene images to {args.save_scenes}")
         return 0
 
     if not args.models:

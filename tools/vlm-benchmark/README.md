@@ -20,6 +20,7 @@ Scenes are **generated on the fly** (pure-stdlib PNG encoder in `scene_gen.py`)
 | `scene_gen.py`  | synthetic scene generator (pure-stdlib PNG encoder)  |
 | `report.py`     | JSONL → text/Markdown/JSON report + recommendation   |
 | `results/`      | committed benchmark run (JSONL records)              |
+| `scenes/`       | committed scene PNGs (for inspection / debugging)    |
 
 ## Usage
 
@@ -53,6 +54,9 @@ python3 tools/vlm-benchmark/report.py results/*.jsonl --json
 
 - **Pure stdlib** — no third-party dependencies. Runs on any machine that can
   reach the LocalAI server.
+- **Scenes are committed** to `scenes/` so the exact input images can be inspected
+  (the detect scene contains a red circle, green square, and blue square — **no
+  triangle**; the `DETECT_EXPECTED` tuple was corrected to match).
 - **Never-raises** — every call is recorded (request metadata, HTTP status,
   timing, full response, parsed JSON, grade) to the JSONL results file.
   Network errors, timeouts, and malformed responses are captured, not fatal.

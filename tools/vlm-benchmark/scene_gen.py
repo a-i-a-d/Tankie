@@ -7,7 +7,7 @@ Scenes are generated fresh on every run (no binary assets in the repo).
 Scenes
 ------
 ``detect``    one frame: red circle (upper-left), green square (center),
-              blue triangle (lower-right).
+              blue square (lower-right).
 ``sequence``  4 frames, ~0.5 s apart: the green square shifts +40 px to the
               right between frames (the only moving object).
 ``drive``     a red obstacle on the road: ``center`` (blocks the middle),
@@ -17,6 +17,7 @@ Scenes
 from __future__ import annotations
 
 import math
+import os
 import struct
 import zlib
 
@@ -145,7 +146,7 @@ def detect_scene() -> bytes:
     c = _base()
     c.circle(120, 120, 60, (220, 40, 40))     # red circle
     c.rect(300, 100, 420, 220, (40, 160, 40))  # green square
-    c.rect(480, 300, 580, 400, (40, 80, 220))  # blue square (triangle-ish block)
+    c.rect(480, 300, 580, 400, (40, 80, 220))  # blue square
     c.text(20, 440, "tankie vlm benchmark scene")
     return c.png()
 
@@ -175,3 +176,25 @@ def drive_scene(variant: str) -> bytes:
         c.rect(90, 150, 210, 270, (200, 30, 30))
     c.text(20, 440, f"drive scenario: {variant}")
     return c.png()
+
+
+def save_scenes(outdir: str) -> list[str]:
+    """Write every benchmark scene as a PNG to *outdir*. Returns the file paths.
+
+    Creates the directory if it doesn't exist. Overwrites existing files.
+    """
+    os.makedirs(outdir, exist_ok=True)
+    written: list[str] = []
+
+    def _save(name: str, png: bytes) -> None:
+        p = os.path.join(outdir, name)
+        with open(p, "wb") as f:
+            f.write(png)
+        written.append(p)
+
+    _save("detect.png", detect_scene())
+    for i, frame in enumerate(sequence_frames(4)):
+        _save(f"sequence_frame{i}.png", frame)
+    for v in ("center", "left", "clear"):
+        _save(f"drive_{v}.png", drive_scene(v))
+    return written
