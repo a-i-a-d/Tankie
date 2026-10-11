@@ -109,6 +109,21 @@ def _prompt_for(task: str) -> str:
     return {"detect": DETECT_PROMPT, "sequence": SEQUENCE_PROMPT, "drive": DRIVE_PROMPT}[task]
 
 
+def _extract_answer(message: dict) -> str:
+    """The model answer, with a reasoning-model fallback.
+
+    Standard models put the answer in ``content``. Reasoning models (e.g.
+    ``qwen3.8-heretic``) put it in ``reasoning`` and leave ``content``
+    empty. Prefer a non-empty ``content``; otherwise fall back to
+    ``reasoning`` so the benchmark grades the real answer, not a false
+    negative. Returns "" when neither is present.
+    """
+    content = (message.get("content") or "").strip()
+    if content:
+        return content
+    return (message.get("reasoning") or "").strip()
+
+
 def _call(base: str, key: str, model: str, task: str, variant: str,
           timeout_s: float, max_tokens: int) -> dict:
     """One chat/completions call. Returns a result record (never raises)."""
@@ -135,7 +150,8 @@ def _call(base: str, key: str, model: str, task: str, variant: str,
         "base": base, "model": model, "task": task, "variant": variant,
         "n_images": n_images, "max_tokens": max_tokens,
         "prompt_sha": hashlib.sha256(_prompt_for(task).encode()).hexdigest()[:12],
-        "http": None, "elapsed_s": None, "content": None, "parsed": None,
+        "http": None, "elapsed_s": None, "content": None, "reasoning": None,
+        "parsed": None,
         "error": None,
     }
     try:
@@ -144,7 +160,9 @@ def _call(base: str, key: str, model: str, task: str, variant: str,
             rec["http"] = resp.status
             rec["elapsed_s"] = round(time.time() - t0, 2)
             data = json.loads(raw)
-            rec["content"] = data["choices"][0]["message"]["content"]
+            message = data["choices"][0]["message"]
+            rec["reasoning"] = message.get("reasoning")
+            rec["content"] = _extract_answer(message)
             try:
                 rec["parsed"] = json.loads(rec["content"])
             except (json.JSONDecodeError, TypeError):

@@ -7,6 +7,7 @@ Fully offline — no LocalAI server, no network. Verifies:
   3. report.py produces a valid recommendation from the committed results.
   4. report.py --json emits valid JSON with the expected top-level keys.
   5. scene_gen.py produces valid PNGs (magic bytes + non-trivial size).
+  6. _extract_answer falls back to `reasoning` when `content` is empty.
 
 Usage:  python3 tests/vlm_bench_harness.py
 Exit 0 = all pass, 1 = failure.
@@ -111,6 +112,25 @@ def main() -> int:
             check(f"drive_scene({v}) is PNG", p[:8] == b"\x89PNG\r\n\x1a\n", repr(p[:8]))
     except Exception as e:
         check("scene_gen import+run", False, f"{type(e).__name__}: {e}")
+
+    # 6. _extract_answer: reasoning-model fallback (content empty -> reasoning)
+    print("6. _extract_answer (reasoning fallback)")
+    sys.path.insert(0, TOOLS)
+    try:
+        import vlm_bench
+        # standard model: content wins
+        check("content preferred", vlm_bench._extract_answer({"content": "{\"a\":1}", "reasoning": "{\"b\":2}"}) == "{\"a\":1}")
+        # reasoning model: content empty -> reasoning
+        check("empty content -> reasoning", vlm_bench._extract_answer({"content": "", "reasoning": "{\"a\":1}"}) == "{\"a\":1}")
+        # reasoning model: content None -> reasoning
+        check("None content -> reasoning", vlm_bench._extract_answer({"content": None, "reasoning": "{\"a\":1}"}) == "{\"a\":1}")
+        # whitespace-only content -> reasoning
+        check("whitespace content -> reasoning", vlm_bench._extract_answer({"content": "   ", "reasoning": "{\"a\":1}"}) == "{\"a\":1}")
+        # neither present -> empty string
+        check("no answer -> empty", vlm_bench._extract_answer({"content": None, "reasoning": None}) == "")
+        check("empty dict -> empty", vlm_bench._extract_answer({}) == "")
+    except Exception as e:
+        check("_extract_answer import+run", False, f"{type(e).__name__}: {e}")
 
     # summary
     print()
