@@ -258,6 +258,9 @@ pre{background:#0c0e14;border:1px solid var(--line);border-radius:8px;padding:12
 .err{color:#ff8b8e;font-weight:600;}
 .ok{color:var(--pass);font-weight:600;}
 .kv{color:var(--muted);font-size:12px;}
+.temp{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:10px;margin-left:6px;vertical-align:middle;}
+.temp.cold{background:rgba(94,158,255,.18);color:#7fb0ff;}
+.temp.warm{background:rgba(255,171,64,.18);color:#ffb066;}
 .legend{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 20px;font-size:12px;color:var(--muted);}
 .legend span{display:inline-flex;align-items:center;gap:6px;}
 .dot{width:11px;height:11px;border-radius:3px;display:inline-block;}
@@ -359,8 +362,13 @@ def render_html(summary: dict, recommended: str | None, rec_all: bool,
             body = r.get("content") or r.get("reasoning") or (r.get("error") or "(no response)")
             # prompt: full text from the record; older records fall back to the hash
             prompt = r.get("prompt") or f"(prompt not stored - sha256[:12]={r.get('prompt_sha') or '?'})"
+            # temperature: run 1 = cold (model not yet resident), run 2+ = warm;
+            # records without a run number (pre --runs) are shown as cold
+            run_no = r.get("run")
+            temp = "warm" if isinstance(run_no, int) and run_no >= 2 else "cold"
+            temp_badge = f'<span class="temp {temp}">{temp}</span>'
             items.append(
-                f'<div><b>{esc(t)} / {esc(v)}</b> &mdash; {mark} '
+                f'<div><b>{esc(t)} / {esc(v)}</b> &mdash; {mark} {temp_badge} '
                 f'<span class="kv">http {esc(r.get("http"))} &middot; {esc(r.get("elapsed_s"))}s</span></div>'
                 f'<div class="prompt"><span class="lbl">prompt</span>{esc(prompt)}</div>'
                 f'<pre>{esc(body)}</pre>'

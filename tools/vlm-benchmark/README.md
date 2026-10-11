@@ -64,6 +64,10 @@ python3 tools/vlm-benchmark/report.py results/*.jsonl --json
 - **Audit trail** — each record stores the full prompt (plus its `sha256[:12]`),
   and the HTML report shows the prompt above every model response. Older records
   without a `prompt` field fall back to showing the hash.
+- **Cold/warm latency** — in the per-model detail section every record is labeled
+  `cold` (run 1, model not yet resident) or `warm` (run 2+, already loaded) based
+  on its `run` number, so you can read the first-call penalty next to the time.
+  Records without a `run` number (pre `--runs`) are labeled `cold`.
 - **Grading** is data-driven and re-runnable: `valid_json` → `required_keys`
   → `semantic` (task-specific expected values).
 - **Recommendation** in `report.py`: highest overall pass rate, tie-broken by

@@ -235,11 +235,15 @@ def main() -> int:
         "grade": {"valid_json": True, "required_keys": False, "semantic": False},
     }
     rec_legacy = dict(rec_new, model="m-legacy", prompt=None, prompt_sha="76447cbbf065")
+    rec_run1 = dict(rec_new, model="m-runs", run=1)
+    rec_run2 = dict(rec_new, model="m-runs", run=2)
     tmp = tempfile.mkdtemp()
     jl = os.path.join(tmp, "records.jsonl")
     with open(jl, "w", encoding="utf-8") as fh:
         fh.write(json.dumps(rec_new) + "\n")
         fh.write(json.dumps(rec_legacy) + "\n")
+        fh.write(json.dumps(rec_run1) + "\n")
+        fh.write(json.dumps(rec_run2) + "\n")
     html_path = os.path.join(tmp, "report.html")
     r = run([sys.executable, os.path.join(TOOLS, "report.py"), jl, "--html", html_path])
     check("--html (synthetic records) exit 0", r.returncode == 0, r.stderr[:200])
@@ -250,6 +254,13 @@ def main() -> int:
         check("html prompt block styled", 'class="prompt"' in h_txt)
         check("html falls back to sha for legacy records",
               "prompt not stored" in h_txt and "76447cbbf065" in h_txt)
+        # 10. cold/warm labels in the per-model detail section
+        check("html has cold badge css", '.temp.cold' in h_txt)
+        check("html has warm badge css", '.temp.warm' in h_txt)
+        check("html run 1 labeled cold", '<span class="temp cold">cold</span>' in h_txt)
+        check("html run 2 labeled warm", '<span class="temp warm">warm</span>' in h_txt)
+        check("html records without run number labeled cold (m-new)",
+              h_txt.count('<span class="temp cold">cold</span>') >= 2)
     else:
         check("html (synthetic) created", False, f"missing: {html_path}")
 
