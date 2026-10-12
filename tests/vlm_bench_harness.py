@@ -592,6 +592,77 @@ def main() -> int:
     except Exception as e:
         check("L3/L4/L6 section ran", False, f"{type(e).__name__}: {e}")
 
+    # 16. --settle: configurable pause between models (server recovery window)
+    print("16. --settle (pause between models)")
+    try:
+        import vlm_bench as vb16
+        importlib.reload(vb16)
+
+        # 16a: DEFAULT_SETTLE_S is 30.0 (the requested default).
+        check("settle DEFAULT_SETTLE_S == 30.0",
+              getattr(vb16, "DEFAULT_SETTLE_S", None) == 30.0,
+              f"got {getattr(vb16, 'DEFAULT_SETTLE_S', None)!r}")
+
+        # 16b: --settle flag exists and defaults to 30.
+        r = run([sys.executable, os.path.join(TOOLS, "vlm_bench.py"), "--help"])
+        help_out = r.stdout
+        check("settle --settle in --help", r.returncode == 0 and "--settle" in help_out, help_out[:120])
+        check("settle --settle default 30 shown in help",
+              "default: 30" in help_out, help_out[:200])
+
+        # 16c: settle actually sleeps BETWEEN models (not before the first,
+        # not between tasks of the same model). Fake _attempt records the model
+        # order; fake time.sleep records the pause durations.
+        order = []
+        sleeps = []
+        def fake_attempt_settle(base, key, model, task, variant,
+                                timeout_s, max_tokens, use_json_mode=True):
+            order.append(model)
+            return {"http": 200, "elapsed_s": 0.01, "error": None,
+                    "content": "{}", "parsed": {},
+                    "grade": {"valid_json": True, "required_keys": True, "semantic": True},
+                    "model": model, "task": task, "variant": variant}
+        def fake_sleep_settle(dur):
+            sleeps.append(dur)
+        import tempfile
+        tmp = os.path.join(tempfile.mkdtemp(), "settle-test.jsonl")
+        orig_attempt = vb16._attempt
+        orig_sleep = vb16.time.sleep
+        vb16._attempt = fake_attempt_settle
+        vb16.time.sleep = fake_sleep_settle
+        try:
+            rc = vb16.main(["--models", "m1,m2", "--tasks", "detect",
+                            "--settle", "0.05", "--out", tmp])
+        finally:
+            vb16._attempt = orig_attempt
+            vb16.time.sleep = orig_sleep
+        check("settle main() exit 0 (2 models)", rc == 0, f"rc={rc}")
+        check("settle both models ran in order", order == ["m1", "m2"], f"got {order}")
+        # Exactly one pause, between m1 and m2 (not before m1).
+        check("settle paused exactly once (between models)",
+              sleeps.count(0.05) == 1, f"sleeps={sleeps}")
+        check("settle pause used the configured value (0.05)",
+              0.05 in sleeps, f"sleeps={sleeps}")
+
+        # 16d: --settle 0 disables the pause entirely.
+        sleeps0 = []
+        def fake_sleep0(dur):
+            sleeps0.append(dur)
+        tmp0 = os.path.join(tempfile.mkdtemp(), "settle-zero.jsonl")
+        vb16._attempt = fake_attempt_settle
+        vb16.time.sleep = fake_sleep0
+        try:
+            rc0 = vb16.main(["--models", "m1,m2", "--tasks", "detect",
+                             "--settle", "0", "--out", tmp0])
+        finally:
+            vb16._attempt = orig_attempt
+            vb16.time.sleep = orig_sleep
+        check("settle 0 -> main() exit 0", rc0 == 0, f"rc={rc0}")
+        check("settle 0 -> no pause between models",
+              not any(d > 0 for d in sleeps0), f"sleeps={sleeps0}")
+    except Exception as e:
+        check("settle section ran", False, f"{type(e).__name__}: {e}")
+
     print()
     print(f"{'=' * 40}")
     print(f"  {passed} passed, {failed} failed")

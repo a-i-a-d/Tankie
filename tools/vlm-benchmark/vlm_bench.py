@@ -160,6 +160,13 @@ def _extract_answer(message: dict) -> str:
 _TRANSIENT_HTTP = (503,)
 RETRY_DELAY_S = 1.0
 
+# Default settle delay (seconds) between models. LocalAI keeps a model loaded
+# after a call; if the previous model errored / failed to load, its backend
+# worker may still be settling. A short pause before the next model's first
+# call gives the server time to recover so one bad model does not poison the
+# next one. 0 disables the pause.
+DEFAULT_SETTLE_S = 30.0
+
 
 def _call(base: str, key: str, model: str, task: str, variant: str,
           timeout_s: float, max_tokens: int, max_retries: int = 1,
@@ -415,6 +422,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--save-scenes", default=None, metavar="DIR", help="write all scene PNGs to DIR and exit")
     ap.add_argument("--no-json-mode", action="store_true",
                     help="L4: do not send response_format=json_object (for models that reject it); the grader is unchanged")
+    ap.add_argument("--settle", type=float, default=DEFAULT_SETTLE_S, metavar="SECONDS",
+                    help="pause this long between models so the LocalAI server can settle "
+                         "after a previous model errored / unloaded (default: 30; 0 disables)")
     args = ap.parse_args(argv)
 
     tasks = [t.strip() for t in args.tasks.split(",") if t.strip()]
@@ -480,7 +490,10 @@ def main(argv: list[str] | None = None) -> int:
 
     ok = 0
     with open(out_path, "a", encoding="utf-8") as fh:
-        for model in models:
+        for i, model in enumerate(models):
+            if i > 0 and args.settle > 0:
+                print(f"# settling {args.settle:g}s before {model} (server recovery window)", flush=True)
+                time.sleep(args.settle)
             for task in tasks:
                 for variant in (variants if task == "drive" else [""]):
                     for run in range(1, args.runs + 1):
