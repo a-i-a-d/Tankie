@@ -210,7 +210,13 @@ class LocalAIClient:
             return _err(f"chat failed: {type(exc).__name__}: {exc}")
 
         try:
-            raw = resp.choices[0].message.content or ""
+            message = resp.choices[0].message
+            raw = message.content or ""
+            # Reasoning models (e.g. qwen3.8-heretic) return the answer in
+            # the `reasoning` field and leave `content` empty -- fall back
+            # to it so the brain gets a real answer, not an empty string.
+            if not raw.strip():
+                raw = (getattr(message, "reasoning", None) or "").strip()
         except (AttributeError, IndexError, TypeError):
             return _err("chat response missing choices[0].message.content")
         return {"ok": True, "raw": raw, "model": self._cfg.vlm_model, "task": task}

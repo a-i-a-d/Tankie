@@ -231,18 +231,20 @@ def test_speak_timeout_is_data():
 # ---------------------------------------------------------------------------
 
 class _FakeMessage:
-    def __init__(self, content):
+    def __init__(self, content, reasoning=None):
         self.content = content
+        self.reasoning = reasoning
 
 
 class _FakeChoice:
-    def __init__(self, content):
-        self.message = _FakeMessage(content)
+    def __init__(self, content, reasoning=None):
+        self.message = _FakeMessage(content, reasoning)
 
 
 class _FakeCompletions:
-    def __init__(self, content=None, exc=None, record=None):
+    def __init__(self, content=None, reasoning=None, exc=None, record=None):
         self._content = content
+        self._reasoning = reasoning
         self._exc = exc
         self._record = record
 
@@ -251,7 +253,7 @@ class _FakeCompletions:
             self._record.update(kwargs)
         if self._exc is not None:
             raise self._exc
-        return type("R", (), {"choices": [_FakeChoice(self._content)]})()
+        return type("R", (), {"choices": [_FakeChoice(self._content, self._reasoning)]})()
 
 
 class _FakeChat:
@@ -319,6 +321,36 @@ def test_chat_missing_content_is_data():
     c = make_client(lambda req: None, openai_client=_OA())
     r = c.chat([{"role": "user", "content": "hi"}])
     assert r["ok"] is False and "content" in r["error"]
+
+
+
+def test_chat_reasoning_fallback_when_content_empty():
+    """Reasoning models (e.g. qwen3.8-heretic) put the answer in `reasoning`
+    and leave `content` empty -- chat() must fall back to it so the brain
+    gets a real answer instead of an empty string."""
+    fake = _FakeOpenAI(content="", reasoning='{"intent":"go_to"}')
+    c = make_client(lambda req: None, openai_client=fake)
+    r = c.chat([{"role": "user", "content": "go to the door"}], task="nav")
+    assert r["ok"] is True
+    assert r["raw"] == '{"intent":"go_to"}'
+    assert r["task"] == "nav"
+
+
+def test_chat_reasoning_fallback_when_content_none():
+    fake = _FakeOpenAI(content=None, reasoning='{"a":1}')
+    c = make_client(lambda req: None, openai_client=fake)
+    r = c.chat([{"role": "user", "content": "hi"}])
+    assert r["ok"] is True
+    assert r["raw"] == '{"a":1}'
+
+
+def test_chat_prefers_content_over_reasoning():
+    """When `content` is non-empty it wins; `reasoning` is only a fallback."""
+    fake = _FakeOpenAI(content='{"ok":"yes"}', reasoning='{"ok":"no"}')
+    c = make_client(lambda req: None, openai_client=fake)
+    r = c.chat([{"role": "user", "content": "hi"}])
+    assert r["ok"] is True
+    assert r["raw"] == '{"ok":"yes"}'
 
 
 # ---------------------------------------------------------------------------
