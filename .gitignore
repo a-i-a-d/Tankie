@@ -20,7 +20,7 @@ build-webflasher/
 .DS_Store
 Thumbs.db
 
-# VLM benchmark: local runs are not committed (the committed baseline
-# bench-20261010-235859.jsonl is tracked explicitly; new runs + logs stay local)
+# VLM benchmark: new local runs are not committed (they land in results/).
+# Superseded / historical runs live in results/old/ (tracked); logs stay local.
 tools/vlm-benchmark/results/*.jsonl
 tools/vlm-benchmark/*.log

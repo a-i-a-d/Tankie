@@ -24,7 +24,7 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOLS = os.path.join(REPO, "tools", "vlm-benchmark")
 SCRIPTS = ["vlm_bench.py", "scene_gen.py", "report.py"]
-RESULTS = os.path.join(TOOLS, "results")
+RESULTS = os.path.join(TOOLS, "results", "old")
 
 passed = 0
 failed = 0

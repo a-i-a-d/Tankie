@@ -19,7 +19,8 @@ Scenes are **generated on the fly** (pure-stdlib PNG encoder in `scene_gen.py`)
 | `vlm_bench.py`  | the benchmark runner (stdlib-only, `urllib`)         |
 | `scene_gen.py`  | synthetic scene generator (pure-stdlib PNG encoder)  |
 | `report.py`     | JSONL → text/Markdown/HTML/JSON report + recommendation |
-| `results/`      | committed benchmark run (JSONL records)              |
+| `results/`      | new benchmark runs (JSONL records)                   |
+| `results/old/`  | superseded / historical runs (kept for reference)    |
 | `scenes/`       | committed scene PNGs (for inspection / debugging)    |
 
 ## Usage
@@ -42,7 +43,7 @@ python3 tools/vlm-benchmark/vlm_bench.py --models auto --probe --tasks detect
 python3 tools/vlm-benchmark/vlm_bench.py --dry-run
 
 # generate a report from results (text to stdout, or write to file)
-python3 tools/vlm-benchmark/report.py results/bench-20261010-235859.jsonl
+python3 tools/vlm-benchmark/report.py results/old/bench-20261010-235859.jsonl
 python3 tools/vlm-benchmark/report.py results/*.jsonl --md report.md
 python3 tools/vlm-benchmark/report.py results/*.jsonl --html report.html
 python3 tools/vlm-benchmark/report.py results/*.jsonl --json

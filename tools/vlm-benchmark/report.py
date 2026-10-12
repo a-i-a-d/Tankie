@@ -10,7 +10,7 @@ and/or a Markdown report.
 Pure stdlib -- no third-party dependencies, runs on any machine.
 
 Usage:
-  python3 tools/vlm-benchmark/report.py results/bench-20261010-235859.jsonl
+  python3 tools/vlm-benchmark/report.py results/old/bench-20261010-235859.jsonl
   python3 tools/vlm-benchmark/report.py results/bench-*.jsonl --md report.md
   python3 tools/vlm-benchmark/report.py results/bench-*.jsonl --json
   python3 tools/vlm-benchmark/report.py results/bench-*.jsonl --models a,b --tasks detect,drive
