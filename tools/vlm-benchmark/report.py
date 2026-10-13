@@ -4,8 +4,10 @@
 Reads the JSONL records written by ``vlm_bench.py`` and aggregates them into
 per-model / per-task pass-rate + latency tables, a ranked summary, and a
 single "recommended" model (best pass rate, then fewest errors, then lowest
-median latency of successful calls). Emits human-readable tables to stdout
-and/or a Markdown report.
+WARM median latency of successful test-phase calls -- issue #89). The
+one-time cold model-load time (warmup call) is reported separately in the
+"Load (cold)" column. Emits human-readable tables to stdout and/or a
+Markdown report.
 
 Pure stdlib -- no third-party dependencies, runs on any machine.
 
@@ -54,31 +56,57 @@ def _load(paths: list[str]) -> list[dict]:
     return recs
 
 
+def _is_warmup(r: dict) -> bool:
+    """True for the one-shot model-load (cold) call.
+
+    Records written by vlm_bench.py carry an explicit ``phase``
+    (``"warmup"`` / ``"test"``). Older results files (pre issue #89) have no
+    ``phase`` field at all; those are all treated as graded/test calls so the
+    committed historical baselines keep rendering exactly as before.
+    """
+    return r.get("phase") == "warmup"
+
+
 def _stats(records: list[dict]) -> dict:
-    """Aggregate a group of records into pass-rate + latency stats."""
-    n = len(records)
-    passed = sum(1 for r in records if _semantic(r))
-    valid_json = sum(1 for r in records if _valid_json(r))
-    errors = sum(1 for r in records if r.get("error"))
-    lats = [r["elapsed_s"] for r in records if isinstance(r.get("elapsed_s"), (int, float))]
+    """Aggregate a group of records into pass-rate + latency stats.
+
+    issue #89: the graded statistics (n / pass / pass_rate / errors /
+    ``lat_med``) are computed over the **test-phase** calls only -- the
+    warmup (cold load) call is excluded so ``lat_med`` is the warm,
+    steady-state median. The warmup's own latency is reported separately as
+    ``lat_cold_med`` (informational; the one-time cost of loading the model
+    into GPU memory). ``lat_err_med`` keeps the error-call latencies (L1).
+    """
+    tests = [r for r in records if not _is_warmup(r)]
+    warmups = [r for r in records if _is_warmup(r)]
+    n = len(tests)
+    passed = sum(1 for r in tests if _semantic(r))
+    valid_json = sum(1 for r in tests if _valid_json(r))
+    errors = sum(1 for r in tests if r.get("error"))
+    warmup_errors = sum(1 for r in warmups if r.get("error"))
+    lats = [r["elapsed_s"] for r in tests if isinstance(r.get("elapsed_s"), (int, float))]
     # L1: latency stats are computed over SUCCESSFUL calls only (no error).
     # A fast HTTP 500 must not lower the median -- that would let the
     # ranking tie-break favor a model that errors quickly over one that
     # works slowly. Error-call latencies are kept separately (lat_err_med).
-    ok_lats = [r["elapsed_s"] for r in records
+    ok_lats = [r["elapsed_s"] for r in tests
                if not r.get("error") and isinstance(r.get("elapsed_s"), (int, float))]
-    err_lats = [r["elapsed_s"] for r in records
+    err_lats = [r["elapsed_s"] for r in tests
                 if r.get("error") and isinstance(r.get("elapsed_s"), (int, float))]
+    cold_lats = [r["elapsed_s"] for r in warmups
+                 if not r.get("error") and isinstance(r.get("elapsed_s"), (int, float))]
     return {
         "n": n,
         "pass": passed,
         "pass_rate": round(passed / n, 3) if n else 0.0,
         "valid_json": valid_json,
         "errors": errors,
+        "warmup_errors": warmup_errors,
         "lat_min": min(lats) if lats else None,
         "lat_med": round(statistics.median(ok_lats), 2) if ok_lats else None,
         "lat_max": max(lats) if lats else None,
         "lat_err_med": round(statistics.median(err_lats), 2) if err_lats else None,
+        "lat_cold_med": round(statistics.median(cold_lats), 2) if cold_lats else None,
     }
 
 
@@ -112,13 +140,21 @@ def aggregate(records: list[dict], models: set[str] | None, tasks: set[str] | No
 
     out: dict[str, dict] = {}
     for m, recs in by_model.items():
+        # issue #89: warmup (cold-load) records are excluded from the graded
+        # per-task stats; the model's cold load time is surfaced separately.
+        tests = [r for r in recs if not _is_warmup(r)]
+        warmups = [r for r in recs if _is_warmup(r)]
         per_task: dict[str, dict] = {}
-        for r in recs:
+        for r in tests:
             key = _key(m, r.get("task", ""), r.get("variant", ""))
             per_task.setdefault(key, []).append(r)
+        cold_lats = [r["elapsed_s"] for r in warmups
+                     if not r.get("error") and isinstance(r.get("elapsed_s"), (int, float))]
         out[m] = {
-            "overall": _stats(recs),
+            "overall": _stats(tests),
             "per_task": {k: _stats(v) for k, v in sorted(per_task.items())},
+            "load_cold_s": round(statistics.median(cold_lats), 2) if cold_lats else None,
+            "warmup_errors": sum(1 for r in warmups if r.get("error")),
         }
     return out
 
@@ -127,13 +163,18 @@ def _rank_key(ov: dict):
     """L2: ranking order = pass rate (desc) -> error count (asc) -> median
     latency (asc). A model that errors more is ranked below one that doesn't,
     even if it errors faster; latency is only the last tie-break. Models with
-    no successful call (lat_med None) sort last within their tier."""
+    no successful call (lat_med None) sort last within their tier.
+
+    issue #89 (Q3): the latency tie-break is the **warm** median (test-phase
+    calls only) -- the steady-state number the brain actually experiences.
+    The one-time cold load cost is informational only (in tank use the model
+    stays resident in GPU memory)."""
     return (-ov["pass_rate"], ov["errors"], ov["lat_med"] if ov["lat_med"] is not None else 1e9)
 
 
 def recommend(summary: dict) -> tuple[str | None, bool]:
     """Pick the best model: highest overall pass rate, then fewest errors,
-    then lowest median (successful-call) latency.
+    then lowest **warm** median (successful test-phase call) latency.
     Returns (model, passed_all_tasks)."""
     if not summary:
         return None, False
@@ -163,14 +204,16 @@ def _fmt_lat(st: dict) -> str:
 def render_text(summary: dict, recommended: str | None, rec_all: bool) -> str:
     lines: list[str] = []
     models = sorted(summary)
-    # per-task table
+    # per-task table (issue #89: "Load (cold)" column BEFORE the task columns)
     all_tasks = sorted({k for d in summary.values() for k in d["per_task"]})
-    header = f"{'model':46s}" + "".join(f"{t:>22s}" for t in all_tasks)
-    lines.append("Per-task pass rate (pass/n) and median latency:")
+    header = f"{'model':46s}{'Load (cold)':>14s}" + "".join(f"{t:>22s}" for t in all_tasks)
+    lines.append("Per-task pass rate (pass/n) and WARM median latency (cold load shown separately):")
     lines.append(header)
     lines.append("-" * len(header))
     for m in models:
         row = f"{m:46s}"
+        cold = summary[m].get("load_cold_s")
+        row += f"{(str(cold) + 's') if cold is not None else '-':>14s}"
         for t in all_tasks:
             st = summary[m]["per_task"].get(t)
             cell = f"{_fmt_rate(st)} {_fmt_lat(st)}" if st else "-"
@@ -178,7 +221,7 @@ def render_text(summary: dict, recommended: str | None, rec_all: bool) -> str:
         lines.append(row)
     lines.append("")
     # overall ranking
-    lines.append("Overall ranking (pass rate, then median latency):")
+    lines.append("Overall ranking (pass rate, then warm median latency):")
     ranked = sorted(models, key=lambda m: _rank_key(summary[m]["overall"]))
     for m in ranked:
         ov = summary[m]["overall"]
@@ -204,18 +247,20 @@ def render_md(summary: dict, recommended: str | None, rec_all: bool, src: list[s
     md.append("")
     md.append("## Per-task results")
     md.append("")
-    md.append("| model | " + " | ".join(all_tasks) + " |")
-    md.append("|---|" + "---|" * len(all_tasks))
+    md.append("| model | Load (cold) | " + " | ".join(all_tasks) + " |")
+    md.append("|---|---|" + "---|" * len(all_tasks))
     for m in models:
+        cold = summary[m].get("load_cold_s")
+        cold_cell = f"{cold}s" if cold is not None else "-"
         cells = []
         for t in all_tasks:
             st = summary[m]["per_task"].get(t)
             cells.append(f"`{_fmt_rate(st)}` · {_fmt_lat(st)}" if st else "-")
-        md.append(f"| {m} | " + " | ".join(cells) + " |")
+        md.append(f"| {m} | {cold_cell} | " + " | ".join(cells) + " |")
     md.append("")
     md.append("## Overall ranking")
     md.append("")
-    md.append("| rank | model | pass rate | median latency |")
+    md.append("| rank | model | pass rate | warm median latency |")
     md.append("|---|---|---|---|")
     ranked = sorted(models, key=lambda m: _rank_key(summary[m]["overall"]))
     for i, m in enumerate(ranked, 1):
@@ -259,6 +304,8 @@ td.empty{background:rgba(110,118,129,.06);}
 .badge.rec{background:rgba(68,147,248,.20);color:var(--accent);}
 tr.rec-row td{box-shadow:inset 0 0 0 1px var(--accent);}
 td .rec-dot{color:var(--accent);font-size:11px;}
+td.coldload{background:rgba(94,158,255,.06);}
+td.coldload .lat{color:#7fb0ff;font-size:12px;}
 details{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:0 16px;margin-bottom:10px;}
 summary{cursor:pointer;padding:12px 0;font-weight:600;list-style:none;}
 summary::-webkit-details-marker{display:none;}
@@ -328,11 +375,17 @@ def render_html(summary: dict, recommended: str | None, rec_all: bool,
                 return esc(r["content"])[:400]
         return ""
 
-    # ---- matrix rows
+    # ---- matrix rows (issue #89: "Load (cold)" column before the task columns)
     matrix_rows = []
     for m in models:
         badge = '<span class="badge rec">recommended</span>' if m == recommended else ""
         tds = [f'<td class="model">{esc(m)}{badge}</td>']
+        cold = summary[m].get("load_cold_s")
+        cold_txt = f"{cold}s" if cold is not None else "-"
+        tds.append(
+            '<td class="coldload" title="one-time model load (warmup call, issue #89)">'
+            f'<div class="cell"><span class="lat">{esc(cold_txt)}</span></div></td>'
+        )
         for t in all_tasks:
             st = summary[m]["per_task"].get(t)
             status, mark = cell_status(st)
@@ -373,10 +426,19 @@ def render_html(summary: dict, recommended: str | None, rec_all: bool,
             body = r.get("content") or r.get("reasoning") or (r.get("error") or "(no response)")
             # prompt: full text from the record; older records fall back to the hash
             prompt = r.get("prompt") or f"(prompt not stored - sha256[:12]={r.get('prompt_sha') or '?'})"
-            # temperature: run 1 = cold (model not yet resident), run 2+ = warm;
-            # records without a run number (pre --runs) are shown as cold
-            run_no = r.get("run")
-            temp = "warm" if isinstance(run_no, int) and run_no >= 2 else "cold"
+            # issue #89: the cold/warm badge is driven by the record's ``phase``
+            # (warmup = the one-shot cold model-load call; test = warm, steady
+            # state). Older results files have no ``phase`` field; for those we
+            # fall back to the run number (run 1 = cold, run 2+ = warm) so the
+            # committed historical baselines still label sensibly.
+            phase = r.get("phase")
+            if phase == "warmup":
+                temp = "cold"
+            elif phase == "test":
+                temp = "warm"
+            else:
+                run_no = r.get("run")
+                temp = "warm" if isinstance(run_no, int) and run_no >= 2 else "cold"
             temp_badge = f'<span class="temp {temp}">{temp}</span>'
             items.append(
                 f'<div><b>{esc(t)} / {esc(v)}</b> &mdash; {mark} {temp_badge} '
@@ -416,12 +478,12 @@ def render_html(summary: dict, recommended: str | None, rec_all: bool,
 {legend}
 <h2>Per-task results</h2>
 <table>
-<thead><tr><th class="model">model</th>{"".join(f"<th>{esc(t)}</th>" for t in all_tasks)}</tr></thead>
+<thead><tr><th class="model">model</th><th title="one-time model load (warmup call, issue #89)">Load (cold)</th>{"".join(f"<th>{esc(t)}</th>" for t in all_tasks)}</tr></thead>
 <tbody>{"".join(matrix_rows)}</tbody>
 </table>
 <h2>Overall ranking</h2>
 <table>
-<thead><tr><th>#</th><th class="model">model</th><th>pass rate</th><th>median latency</th><th>errors</th></tr></thead>
+<thead><tr><th>#</th><th class="model">model</th><th>pass rate</th><th>warm median</th><th>errors</th></tr></thead>
 <tbody>{"".join(rank_rows)}</tbody>
 </table>
 <h2>Per-model detail (raw answers)</h2>

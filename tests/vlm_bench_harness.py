@@ -222,8 +222,9 @@ def main() -> int:
     # 9. prompt in records + HTML report (audit trail)
     print("9. prompt in records + HTML")
     src_bench = open(os.path.join(TOOLS, "vlm_bench.py"), encoding="utf-8").read()
-    check("vlm_bench record stores 'prompt'", '"prompt": _prompt_for(task)' in src_bench)
+    check("vlm_bench record stores 'prompt'", '"prompt": prompt' in src_bench)
     check("vlm_bench record keeps 'prompt_sha'", '"prompt_sha":' in src_bench)
+    check("vlm_bench record stores 'phase'", '"phase": phase' in src_bench)
 
     import tempfile
     rec_new = {
@@ -616,12 +617,15 @@ def main() -> int:
         order = []
         sleeps = []
         def fake_attempt_settle(base, key, model, task, variant,
-                                timeout_s, max_tokens, use_json_mode=True):
-            order.append(model)
+                                timeout_s, max_tokens, use_json_mode=True,
+                                phase="test"):
+            if phase == "test":  # ignore the warmup call for the order check
+                order.append(model)
             return {"http": 200, "elapsed_s": 0.01, "error": None,
                     "content": "{}", "parsed": {},
                     "grade": {"valid_json": True, "required_keys": True, "semantic": True},
-                    "model": model, "task": task, "variant": variant}
+                    "model": model, "task": task, "variant": variant,
+                    "phase": phase}
         def fake_sleep_settle(dur):
             sleeps.append(dur)
         import tempfile
@@ -662,6 +666,223 @@ def main() -> int:
               not any(d > 0 for d in sleeps0), f"sleeps={sleeps0}")
     except Exception as e:
         check("settle section ran", False, f"{type(e).__name__}: {e}")
+
+    # 17. warmup pass (issue #89): one model-load call per model before the
+    #     graded test calls; phase tagging; warm-only stats + ranking;
+    #     phase-driven cold/warm badges; "Load (cold)" column.
+    print("17. warmup pass (issue #89)")
+    try:
+        import importlib
+        import vlm_bench as vb17
+        importlib.reload(vb17)
+        import report as rp17
+        importlib.reload(rp17)
+        import tempfile
+
+        # 17a: --no-warmup flag exists in --help.
+        r = run([sys.executable, os.path.join(TOOLS, "vlm_bench.py"), "--help"])
+        help17 = r.stdout
+        check("warmup --no-warmup in --help",
+              r.returncode == 0 and "--no-warmup" in help17, help17[:120])
+
+        # 17b: exactly ONE warmup call per model, BEFORE its test calls;
+        # warmup record tagged phase="warmup", test records phase="test".
+        order17 = []
+        def fake_attempt17(base, key, model, task, variant,
+                           timeout_s, max_tokens, use_json_mode=True,
+                           phase="test"):
+            order17.append((model, task, variant, phase))
+            return {"http": 200, "elapsed_s": 0.01, "error": None,
+                    "content": "{}", "parsed": {},
+                    "grade": {"valid_json": True, "required_keys": True, "semantic": True},
+                    "model": model, "task": task, "variant": variant,
+                    "phase": phase,
+                    "n_images": 1, "max_tokens": max_tokens,
+                    "prompt": vb17.WARMUP_PROMPT if phase == "warmup" else "TASK PROMPT"}
+        tmp17 = os.path.join(tempfile.mkdtemp(), "warmup-test.jsonl")
+        orig_attempt17 = vb17._attempt
+        orig_sleep17 = vb17.time.sleep
+        vb17._attempt = fake_attempt17
+        vb17.time.sleep = lambda s: None
+        try:
+            rc17 = vb17.main(["--models", "m1,m2", "--tasks", "detect",
+                              "--settle", "0", "--out", tmp17])
+        finally:
+            vb17._attempt = orig_attempt17
+            vb17.time.sleep = orig_sleep17
+        check("warmup main() exit 0 (2 models)", rc17 == 0, f"rc={rc17}")
+        check("warmup exactly one extra call per model (4 calls total)",
+              len(order17) == 4, f"got {order17}")
+        check("warmup call precedes the test call per model",
+              order17 == [("m1", "detect", "", "warmup"),
+                          ("m1", "detect", "", "test"),
+                          ("m2", "detect", "", "warmup"),
+                          ("m2", "detect", "", "test")], f"got {order17}")
+        with open(tmp17, encoding="utf-8") as fh:
+            recs17 = [json.loads(l) for l in fh if l.strip()]
+        check("warmup JSONL: 2 records phase=warmup",
+              sum(1 for r in recs17 if r.get("phase") == "warmup") == 2,
+              f"phases={[r.get('phase') for r in recs17]}")
+        check("warmup JSONL: 2 records phase=test",
+              sum(1 for r in recs17 if r.get("phase") == "test") == 2,
+              f"phases={[r.get('phase') for r in recs17]}")
+        wrec = [r for r in recs17 if r.get("phase") == "warmup"][0]
+        check("warmup record uses the warmup prompt",
+              wrec.get("prompt") == vb17.WARMUP_PROMPT, str(wrec.get("prompt"))[:80])
+        check("warmup record max_tokens capped (64)",
+              wrec.get("max_tokens") == 64, f"got {wrec.get('max_tokens')}")
+        check("warmup record sends an image (mmproj loads)",
+              wrec.get("n_images") == 1, f"got {wrec.get('n_images')}")
+
+        # 17c: --no-warmup disables the warmup call entirely.
+        order17n = []
+        def fake_attempt17n(base, key, model, task, variant,
+                            timeout_s, max_tokens, use_json_mode=True,
+                            phase="test"):
+            order17n.append((model, phase))
+            return {"http": 200, "elapsed_s": 0.01, "error": None,
+                    "content": "{}", "parsed": {},
+                    "grade": {"valid_json": True, "required_keys": True, "semantic": True},
+                    "model": model, "task": task, "variant": variant, "phase": phase}
+        tmp17n = os.path.join(tempfile.mkdtemp(), "warmup-noff.jsonl")
+        vb17._attempt = fake_attempt17n
+        try:
+            rc17n = vb17.main(["--models", "m1,m2", "--tasks", "detect",
+                               "--no-warmup", "--settle", "0", "--out", tmp17n])
+        finally:
+            vb17._attempt = orig_attempt17
+        check("warmup --no-warmup exit 0", rc17n == 0, f"rc={rc17n}")
+        check("warmup --no-warmup: no warmup calls",
+              order17n == [("m1", "test"), ("m2", "test")], f"got {order17n}")
+
+        # 17d: warmup error is NOT fatal -- test calls still run.
+        def fake_attempt17e(base, key, model, task, variant,
+                            timeout_s, max_tokens, use_json_mode=True,
+                            phase="test"):
+            if phase == "warmup":
+                return {"http": 500, "elapsed_s": 2.0,
+                        "error": "HTTP 500: could not load model", "content": None,
+                        "parsed": None,
+                        "grade": {"valid_json": False, "required_keys": False,
+                                  "semantic": False},
+                        "model": model, "task": task, "variant": variant,
+                        "phase": "warmup"}
+            return {"http": 200, "elapsed_s": 0.01, "error": None,
+                    "content": "{}", "parsed": {},
+                    "grade": {"valid_json": True, "required_keys": True, "semantic": True},
+                    "model": model, "task": task, "variant": variant, "phase": "test"}
+        tmp17e = os.path.join(tempfile.mkdtemp(), "warmup-err.jsonl")
+        vb17._attempt = fake_attempt17e
+        try:
+            rc17e = vb17.main(["--models", "m1", "--tasks", "detect",
+                               "--settle", "0", "--out", tmp17e])
+        finally:
+            vb17._attempt = orig_attempt17
+        check("warmup error not fatal (exit 0)", rc17e == 0, f"rc={rc17e}")
+        with open(tmp17e, encoding="utf-8") as fh:
+            recs17e = [json.loads(l) for l in fh if l.strip()]
+        check("warmup error: warmup + test records both written",
+              [r.get("phase") for r in recs17e] == ["warmup", "test"],
+              f"got {[r.get('phase') for r in recs17e]}")
+
+        # 17e: report.py stats are warm-only; cold load surfaced separately.
+        def _wrec(model, phase, lat, ok=True, semantic=True, run=None):
+            rec = {"model": model, "task": "detect", "variant": "",
+                   "phase": phase, "elapsed_s": lat,
+                   "error": None if ok else "HTTP 500: boom",
+                   "grade": {"valid_json": semantic, "required_keys": semantic,
+                             "semantic": semantic}}
+            if run is not None:
+                rec["run"] = run
+            return rec
+        # M-cold: huge cold load (100s) + fast warm calls (2s, 4s).
+        # M-fast: small cold load (5s) + slow warm calls (50s, 60s).
+        recs17 = [
+            _wrec("M-cold", "warmup", 100.0),
+            _wrec("M-cold", "test", 2.0), _wrec("M-cold", "test", 4.0),
+            _wrec("M-fast", "warmup", 5.0),
+            _wrec("M-fast", "test", 50.0), _wrec("M-fast", "test", 60.0),
+        ]
+        summary17 = rp17.aggregate(recs17, None, None)
+        sc = summary17["M-cold"]["overall"]
+        sf = summary17["M-fast"]["overall"]
+        check("warm stats: n counts test calls only (M-cold n=2)", sc["n"] == 2, f"got {sc['n']}")
+        check("warm stats: lat_med is warm median (M-cold 3.0)", sc["lat_med"] == 3.0, f"got {sc['lat_med']}")
+        check("warm stats: load_cold_s = warmup latency (M-cold 100.0)",
+              summary17["M-cold"]["load_cold_s"] == 100.0,
+              f"got {summary17['M-cold']['load_cold_s']}")
+        check("warm stats: load_cold_s surfaced (M-fast 5.0)",
+              summary17["M-fast"]["load_cold_s"] == 5.0,
+              f"got {summary17['M-fast']['load_cold_s']}")
+        check("warm stats: warmup not in pass-rate denominator",
+              sc["pass_rate"] == 1.0, f"got {sc['pass_rate']}")
+        # Ranking: equal pass rate + errors -> the WARM median decides.
+        best17, _ = rp17.recommend(summary17)
+        check("warm ranking: huge-cold/fast-warm beats small-cold/slow-warm",
+              best17 == "M-cold", f"got {best17}")
+        # Warmup error is tracked, not mixed into test errors.
+        recs17w = [_wrec("W", "warmup", 3.0, ok=False, semantic=False),
+                   _wrec("W", "test", 2.0)]
+        wsum = rp17.aggregate(recs17w, None, None)["W"]
+        check("warm stats: warmup error tracked separately (errors=0, warmup_errors=1)",
+              wsum["overall"]["errors"] == 0 and wsum["warmup_errors"] == 1,
+              f"got errors={wsum['overall']['errors']} warmup_errors={wsum['warmup_errors']}")
+
+        # 17f: legacy records (no phase) still aggregate as before.
+        legacy = [{"model": "L", "task": "detect", "variant": "",
+                   "elapsed_s": 7.0, "error": None,
+                   "grade": {"valid_json": True, "required_keys": True, "semantic": True}}]
+        st17l = rp17._stats(legacy)
+        check("legacy (no phase): n=1, lat_med=7.0",
+              st17l["n"] == 1 and st17l["lat_med"] == 7.0, f"got {st17l}")
+        check("legacy (no phase): no cold stats", st17l["lat_cold_med"] is None)
+
+        # 17g: HTML -- Load (cold) column + phase-driven badges.
+        tmp17h = tempfile.mkdtemp()
+        jl17 = os.path.join(tmp17h, "phase.jsonl")
+        with open(jl17, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(_wrec("P1", "warmup", 12.0)) + "\n")
+            fh.write(json.dumps(_wrec("P1", "test", 1.0)) + "\n")
+            legacy1 = _wrec("P2", "test", 2.0, run=1); del legacy1["phase"]
+            legacy2 = _wrec("P2", "test", 3.0, run=2); del legacy2["phase"]
+            fh.write(json.dumps(legacy1) + "\n")
+            fh.write(json.dumps(legacy2) + "\n")
+        html17 = os.path.join(tmp17h, "report.html")
+        r = run([sys.executable, os.path.join(TOOLS, "report.py"), jl17, "--html", html17])
+        check("warmup --html exit 0", r.returncode == 0, r.stderr[:200])
+        if os.path.isfile(html17):
+            h17 = open(html17, encoding="utf-8").read()
+            check("html has 'Load (cold)' column header", ">Load (cold)</th>" in h17)
+            check("html cold cell shows load time (12.0s)",
+              '<td class="coldload"' in h17 and ">12.0s<" in h17, h17[:200])
+            check("html phase=warmup record labeled cold",
+              h17.count('<span class="temp cold">cold</span>') >= 1)
+            check("html phase=test record labeled warm",
+              h17.count('<span class="temp warm">warm</span>') >= 1)
+            # P1: warmup(12s) + test(1s) -> cold badge 1, warm badge 1
+            # P2: legacy run1 -> cold, run2 -> warm (fallback intact)
+            check("html legacy run-number fallback still works (2 cold, 2 warm)",
+                  h17.count('<span class="temp cold">cold</span>') == 2
+                  and h17.count('<span class="temp warm">warm</span>') == 2,
+                  f"cold={h17.count('<span class="temp cold">cold</span>')} warm={h17.count('<span class="temp warm">warm</span>')}")
+            check("html ranking header says 'warm median'", ">warm median<" in h17)
+        else:
+            check("warmup html created", False, f"missing: {html17}")
+
+        # 17h: text + markdown renderers carry the Load (cold) column.
+        r_txt = run([sys.executable, os.path.join(TOOLS, "report.py"), jl17])
+        check("text report has 'Load (cold)' column",
+              r_txt.returncode == 0 and "Load (cold)" in r_txt.stdout, r_txt.stdout[:200])
+        md17 = os.path.join(tmp17h, "report.md")
+        r_md = run([sys.executable, os.path.join(TOOLS, "report.py"), jl17, "--md", md17])
+        if r_md.returncode == 0 and os.path.isfile(md17):
+            m17 = open(md17, encoding="utf-8").read()
+            check("markdown has 'Load (cold)' column", "| Load (cold) |" in m17, m17[:200])
+        else:
+            check("markdown report generated", False, r_md.stderr[:200])
+    except Exception as e:
+        import traceback
+        check("warmup section ran", False, f"{type(e).__name__}: {e}\n{traceback.format_exc()[-800:]}")
 
     print()
     print(f"{'=' * 40}")

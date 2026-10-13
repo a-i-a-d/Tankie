@@ -192,18 +192,29 @@ def _call(base: str, key: str, model: str, task: str, variant: str,
 
 
 def _attempt(base: str, key: str, model: str, task: str, variant: str,
-             timeout_s: float, max_tokens: int, use_json_mode: bool = True) -> dict:
+             timeout_s: float, max_tokens: int, use_json_mode: bool = True,
+             phase: str = "test") -> dict:
     """One chat/completions attempt. Returns a result record (never raises).
 
     Kept at module level (instead of inlined in ``_call``) so tests can inject
     a fake attempt -- the retry logic in ``_call`` is then testable offline.
+
+    ``phase`` marks the record in the results file: ``"test"`` for the graded
+    benchmark calls, ``"warmup"`` for the one-shot model-load call (issue #89).
     """
-    payloads, n_images = _scene_payloads(task, variant)
+    if phase == "warmup":
+        # Q1 (issue #89): reuse the real detect scene (image included so the
+        # mmproj projector is loaded too) with a short prompt + capped output.
+        prompt = WARMUP_PROMPT
+        payloads, n_images = _scene_payloads("detect", "")
+    else:
+        prompt = _prompt_for(task)
+        payloads, n_images = _scene_payloads(task, variant)
     body = {
         "model": model,
         "messages": [
             {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": [{"type": "text", "text": _prompt_for(task)}] + payloads},
+            {"role": "user", "content": [{"type": "text", "text": prompt}] + payloads},
         ],
         "max_tokens": max_tokens,
         "temperature": 0,
@@ -223,8 +234,9 @@ def _attempt(base: str, key: str, model: str, task: str, variant: str,
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "base": base, "model": model, "task": task, "variant": variant,
         "n_images": n_images, "max_tokens": max_tokens,
-        "prompt": _prompt_for(task),
-        "prompt_sha": hashlib.sha256(_prompt_for(task).encode()).hexdigest()[:12],
+        "phase": phase,
+        "prompt": prompt,
+        "prompt_sha": hashlib.sha256(prompt.encode()).hexdigest()[:12],
         "http": None, "elapsed_s": None, "content": None, "reasoning": None,
         "parsed": None,
         "error": None,
@@ -342,6 +354,15 @@ def auto_models(all_models: list[str]) -> list[str]:
 
 PROBE_PROMPT = "How many distinct colors do you see? Respond with JSON: \"{\\\"count\\\":int}\""
 
+# The warmup call (issue #89): one cheap detect-scene call per model BEFORE the
+# graded test calls, purely to load the model (weights + mmproj projector) into
+# GPU memory. Its elapsed time is the cold/load time; it is recorded with
+# phase="warmup" and excluded from all pass-rate / latency statistics.
+WARMUP_PROMPT = (
+    "Warm-up call. Look at the image and reply with JSON: {\"ok\":true}."
+)
+WARMUP_MAX_TOKENS = 64
+
 
 def _probe_one(base: str, key: str, model: str, timeout_s: float = 45.0) -> tuple[bool, str]:
     """One tiny image call to test vision capability. Never raises.
@@ -420,6 +441,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--settle", type=float, default=DEFAULT_SETTLE_S, metavar="SECONDS",
                     help="pause this long between models so the LocalAI server can settle "
                          "after a previous model errored / unloaded (default: 30; 0 disables)")
+    ap.add_argument("--no-warmup", action="store_true",
+                    help="skip the one-shot warmup call per model (issue #89); the first "
+                         "test call then absorbs the cold model-load time")
     args = ap.parse_args(argv)
 
     tasks = [t.strip() for t in args.tasks.split(",") if t.strip()]
@@ -480,7 +504,9 @@ def main(argv: list[str] | None = None) -> int:
         os.makedirs(out_dir, exist_ok=True)
 
     n_calls = sum(len(variants if t == "drive" else [""]) for t in tasks) * len(models) * args.runs
-    print(f"# benchmark: {len(models)} model(s) x {len(tasks)} task(s) x {args.runs} run(s) = {n_calls} call(s)")
+    n_warmup = 0 if args.no_warmup else len(models)
+    print(f"# benchmark: {len(models)} model(s) x {len(tasks)} task(s) x {args.runs} run(s) = {n_calls} test call(s)")
+    print(f"# warmup: {'disabled (--no-warmup)' if args.no_warmup else f'{n_warmup} model-load call(s), one per model (issue #89)'}")
     print(f"# results -> {out_path}")
 
     ok = 0
@@ -489,6 +515,22 @@ def main(argv: list[str] | None = None) -> int:
             if i > 0 and args.settle > 0:
                 print(f"# settling {args.settle:g}s before {model} (server recovery window)", flush=True)
                 time.sleep(args.settle)
+            # Warmup (issue #89): one cheap detect-scene call to load the model
+            # (weights + mmproj) into GPU memory so every MEASURED call runs
+            # warm. Recorded with phase="warmup" and excluded from the graded
+            # stats; its elapsed_s is the cold/load time. Never fatal: if the
+            # warmup errors, the test calls still run and record their own
+            # errors.
+            if not args.no_warmup:
+                rec = _attempt(args.base, args.key, model, "detect", "",
+                               args.timeout, WARMUP_MAX_TOKENS,
+                               use_json_mode=not args.no_json_mode,
+                               phase="warmup")
+                fh.write(json.dumps(rec) + "\n")
+                fh.flush()
+                w_status = "ok" if not rec["error"] else "err"
+                print(f"[warmup] {model:45s} t={rec['elapsed_s']}s http={rec['http']} "
+                      f"{'| ' + rec['error'][:80] if rec['error'] else w_status}", flush=True)
             for task in tasks:
                 for variant in (variants if task == "drive" else [""]):
                     for run in range(1, args.runs + 1):
@@ -496,6 +538,7 @@ def main(argv: list[str] | None = None) -> int:
                                    args.timeout, args.max_tokens,
                                    use_json_mode=not args.no_json_mode)
                         rec["run"] = run
+                        rec["phase"] = "test"
                         fh.write(json.dumps(rec) + "\n")
                         fh.flush()
                         g = rec["grade"]
