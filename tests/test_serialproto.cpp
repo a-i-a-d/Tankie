@@ -108,13 +108,13 @@ TEST(drive_backward) {
   CHECK_EQ_INT(host_pwm[PWMA], 80);
 }
 
-TEST(drive_left_steer) {
+TEST(drive_right_steer) {
   resetProto();
-  // speed 100, steer +127 -> r_steer = 127*(100/127)=100 -> L=0, R=100
+  // speed 100, steer +127 (issue #85: positive = right) -> r = 127*(100/127)=100 -> L=100, R=0
   proto.injectLine("{\"cmd\":\"drive\",\"speed\":100,\"steer\":127}");
   CHECK(proto.steer() == 127);
-  CHECK_EQ_INT(host_pwm[PWMA], 0);    // left motor stopped (full left)
-  CHECK_EQ_INT(host_pwm[PWMB], 100);  // right motor at full
+  CHECK_EQ_INT(host_pwm[PWMA], 100);  // left motor at full
+  CHECK_EQ_INT(host_pwm[PWMB], 0);    // right motor stopped (full right)
 }
 
 TEST(drive_acks_increment_seq) {

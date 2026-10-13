@@ -269,6 +269,13 @@ link goes quiet (`SERIAL_WATCHDOG_MS`, compile-time in `tankie/config_serial.h`)
 seq-based acks so a dead link is detectable; a hello/proto handshake
 catches firmware/Pi mismatches. Non-JSON lines (debug output) are ignored.
 
+**Steer sign convention** (issue #85): `steer > 0` = turn **RIGHT**,
+`steer < 0` = turn **LEFT** (the inner wheel is the one on the turn's
+center side). This is the single convention used across the whole stack —
+the firmware (`tankie/wheels.cpp`), the reflex brain (`raspberry_pi/brain/reflex.py`),
+the Go proxy, `ai_control.py` and the web-UI joystick — and matches the
+intuitive / VLM-output convention.
+
 The pan/tilt improvements (issue #31) are additive — protocol version stays 1:
 - `pan-rel` / `tilt-rel` move the servo by a delta from the current angle
   (clamped to 0–180).

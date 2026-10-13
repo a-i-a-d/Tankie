@@ -5,10 +5,10 @@
 // and is the single source of truth for how a (speed, steer) pair maps to
 // per-motor outputs. TankDrive (tankie/tankdrive.cpp) delegates to it.
 //
-// Sign convention (unchanged from the legacy 5-branch updateMotors()):
+// Sign convention (issue #85: flipped to the intuitive positive=right):
 //   speed > 0 = forward, speed < 0 = backward
-//   steer > 0 = turn LEFT  (left wheel is the inner wheel)
-//   steer < 0 = turn RIGHT (right wheel is the inner wheel)
+//   steer > 0 = turn RIGHT (right wheel is the inner wheel)
+//   steer < 0 = turn LEFT  (left wheel is the inner wheel)
 //
 // Both outputs are always clamped to [-255, 255] (the PWM range of the
 // TB6612FNG), for every speed/steer combination.
@@ -31,8 +31,8 @@ struct WheelOutputs {
 //                it by the legacy relative-steer amount |st| * |s| / 127
 //                  inner = s - |st| * s / 127
 //                (integer division, no floats). Both outputs are clamped:
-//                  steer > 0 (left)  : left  = clamp(inner), right = s
-//                  steer < 0 (right) : left  = s, right = clamp(inner)
+//                  steer > 0 (right) : left  = s, right = clamp(inner)
+//                  steer < 0 (left)  : left  = clamp(inner), right = s
 //                  steer == 0       : left  = s, right = s
 //
 // The clamp is what fixes the legacy bug (issue #14): r_steer was

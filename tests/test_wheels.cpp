@@ -9,7 +9,7 @@
 //   - the full (speed, steer) matrix stays within [-255, 255]
 //     (the legacy r_steer was unclamped: at +/-255, +/-255 the inner
 //     wheel computed +/-257, only saved by analogWrite() saturation)
-//   - spin-in-place at speed == 0 (NEW): steer > 0 = left, steer < 0 = right
+//   - spin-in-place at speed == 0 (NEW): steer > 0 = right, steer < 0 = left
 //   - out-of-range inputs are clamped, never crash
 #include "test_main.h"
 #include "wheels.h"
@@ -38,67 +38,67 @@ TEST(wheels_straight_backward) {
   CHECK_EQ_INT(o.right, -127);
 }
 
-TEST(wheels_forward_turn_left) {
-  // steer > 0 = left: inner (left) wheel slows down, outer (right) at speed
-  WheelOutputs o = computeWheels(127, 127);
-  CHECK_EQ_INT(o.left, 0);
-  CHECK_EQ_INT(o.right, 127);
-}
-
 TEST(wheels_forward_turn_right) {
-  WheelOutputs o = computeWheels(127, -127);
+  // steer > 0 = right: inner (right) wheel slows down, outer (left) at speed
+  WheelOutputs o = computeWheels(127, 127);
   CHECK_EQ_INT(o.left, 127);
   CHECK_EQ_INT(o.right, 0);
+}
+
+TEST(wheels_forward_turn_left) {
+  WheelOutputs o = computeWheels(127, -127);
+  CHECK_EQ_INT(o.left, 0);
+  CHECK_EQ_INT(o.right, 127);
 }
 
 TEST(wheels_forward_partial_steer) {
-  // inner = 127 - 64*127/127 = 63
+  // steer > 0 = right: inner (right) = 127 - 64*127/127 = 63, outer (left) = 127
   WheelOutputs o = computeWheels(127, 64);
-  CHECK_EQ_INT(o.left, 63);
-  CHECK_EQ_INT(o.right, 127);
-}
-
-TEST(wheels_backward_turn_left) {
-  // steer > 0 = left: inner (left) wheel slows down, outer (right) at speed
-  WheelOutputs o = computeWheels(-127, 127);
-  CHECK_EQ_INT(o.left, 0);
-  CHECK_EQ_INT(o.right, -127);
+  CHECK_EQ_INT(o.left, 127);
+  CHECK_EQ_INT(o.right, 63);
 }
 
 TEST(wheels_backward_turn_right) {
-  WheelOutputs o = computeWheels(-127, -127);
+  // steer > 0 = right: inner (right) wheel slows down, outer (left) at speed
+  WheelOutputs o = computeWheels(-127, 127);
   CHECK_EQ_INT(o.left, -127);
   CHECK_EQ_INT(o.right, 0);
 }
 
-TEST(wheels_backward_partial_steer) {
-  // inner = -127 - 64*(-127)/127 = -127 + 64 = -63
-  WheelOutputs o = computeWheels(-127, -64);
-  CHECK_EQ_INT(o.left, -127);
-  CHECK_EQ_INT(o.right, -63);
+TEST(wheels_backward_turn_left) {
+  WheelOutputs o = computeWheels(-127, -127);
+  CHECK_EQ_INT(o.left, 0);
+  CHECK_EQ_INT(o.right, -127);
 }
 
-TEST(wheels_spin_in_place_left) {
-  // NEW (issue #14): at speed == 0 steer > 0 turns left - left wheel
-  // reverses, right wheel drives forward.
-  WheelOutputs o = computeWheels(0, 127);
-  CHECK_EQ_INT(o.left, -127);
-  CHECK_EQ_INT(o.right, 127);
+TEST(wheels_backward_partial_steer) {
+  // steer < 0 = left: inner (left) = -127 + 64 = -63, outer (right) = -127
+  WheelOutputs o = computeWheels(-127, -64);
+  CHECK_EQ_INT(o.left, -63);
+  CHECK_EQ_INT(o.right, -127);
 }
 
 TEST(wheels_spin_in_place_right) {
-  WheelOutputs o = computeWheels(0, -127);
+  // NEW (issue #14): at speed == 0 steer > 0 turns right - right wheel
+  // reverses, left wheel drives forward.
+  WheelOutputs o = computeWheels(0, 127);
   CHECK_EQ_INT(o.left, 127);
   CHECK_EQ_INT(o.right, -127);
+}
+
+TEST(wheels_spin_in_place_left) {
+  WheelOutputs o = computeWheels(0, -127);
+  CHECK_EQ_INT(o.left, -127);
+  CHECK_EQ_INT(o.right, 127);
 }
 
 TEST(wheels_spin_in_place_full) {
   WheelOutputs o = computeWheels(0, 255);
-  CHECK_EQ_INT(o.left, -255);
-  CHECK_EQ_INT(o.right, 255);
+  CHECK_EQ_INT(o.left, 255);
+  CHECK_EQ_INT(o.right, -255);
   WheelOutputs p = computeWheels(0, -255);
-  CHECK_EQ_INT(p.left, 255);
-  CHECK_EQ_INT(p.right, -255);
+  CHECK_EQ_INT(p.left, -255);
+  CHECK_EQ_INT(p.right, 255);
 }
 
 TEST(wheels_zero_speed_zero_steer) {
@@ -107,32 +107,32 @@ TEST(wheels_zero_speed_zero_steer) {
   CHECK_EQ_INT(o.right, 0);
 }
 
-TEST(wheels_extreme_forward_left_clamped) {
+TEST(wheels_extreme_forward_right_clamped) {
   // The legacy bug (issue #14): r_steer = 255*255/127 = 511, so the inner
   // wheel computed 255 - 511 = -256 (even -257 with the float rounding) and
   // flipped 2 PWM into reverse, only saved by analogWrite() saturation.
   // Now the inner wheel clamps at -255, no direction flip.
   WheelOutputs o = computeWheels(255, 255);
+  CHECK_EQ_INT(o.left, 255);
+  CHECK_EQ_INT(o.right, -255);
+}
+
+TEST(wheels_extreme_forward_left_clamped) {
+  WheelOutputs o = computeWheels(255, -255);
   CHECK_EQ_INT(o.left, -255);
   CHECK_EQ_INT(o.right, 255);
-}
-
-TEST(wheels_extreme_forward_right_clamped) {
-  WheelOutputs o = computeWheels(255, -255);
-  CHECK_EQ_INT(o.left, 255);
-  CHECK_EQ_INT(o.right, -255);
-}
-
-TEST(wheels_extreme_backward_left_clamped) {
-  WheelOutputs o = computeWheels(-255, 255);
-  CHECK_EQ_INT(o.left, 255);
-  CHECK_EQ_INT(o.right, -255);
 }
 
 TEST(wheels_extreme_backward_right_clamped) {
-  WheelOutputs o = computeWheels(-255, -255);
+  WheelOutputs o = computeWheels(-255, 255);
   CHECK_EQ_INT(o.left, -255);
   CHECK_EQ_INT(o.right, 255);
+}
+
+TEST(wheels_extreme_backward_left_clamped) {
+  WheelOutputs o = computeWheels(-255, -255);
+  CHECK_EQ_INT(o.left, 255);
+  CHECK_EQ_INT(o.right, -255);
 }
 
 TEST(wheels_out_of_range_inputs_clamped) {
@@ -144,8 +144,8 @@ TEST(wheels_out_of_range_inputs_clamped) {
   CHECK(p.left >= -255 && p.left <= 255);
   CHECK(p.right >= -255 && p.right <= 255);
   WheelOutputs q = computeWheels(0, 1000);   // spin-in-place also clamps
-  CHECK_EQ_INT(q.left, -255);
-  CHECK_EQ_INT(q.right, 255);
+  CHECK_EQ_INT(q.left, 255);
+  CHECK_EQ_INT(q.right, -255);
 }
 
 TEST(wheels_full_matrix_within_range) {

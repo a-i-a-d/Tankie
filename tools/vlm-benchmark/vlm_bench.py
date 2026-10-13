@@ -70,7 +70,7 @@ DRIVE_PROMPT = (
     "steer toward the clearer side. If fully blocked, stop. "
     "Tank state: battery_v=7.4, mode=autonomous. "
     'Respond with JSON: {"action":"forward|backward|left|right|stop","throttle":int(0-100),'
-    '"steer":int(-100..100),"reason":str,"say":str}'
+    '"steer":int(-100..100, positive=right, negative=left),"reason":str,"say":str}'
 )
 
 # expected semantics used for grading
@@ -80,10 +80,10 @@ SEQUENCE_DIRECTION = "right"
 DRIVE_EXPECTED = {
     "center": {"action": "stop"},
     # "left" = obstacle on the LEFT of the lane (drive_scene: x=90..210).
-    # Correct avoidance is to steer RIGHT (wheels.h: steer > 0 = LEFT,
-    # steer < 0 = RIGHT), so the model must steer AWAY (negative). A model
-    # steering INTO the obstacle (positive steer) is a FAIL.
-    "left": {"action": ["forward", "right"], "steer_max": -20},
+    # Correct avoidance is to steer RIGHT (wheels.h, issue #85: steer > 0 =
+    # RIGHT, steer < 0 = LEFT), so the model must steer AWAY (positive). A
+    # model steering INTO the obstacle (negative steer) is a FAIL.
+    "left": {"action": ["forward", "right"], "steer_min": 20},
     "clear": {"action": ["forward"], "throttle_min": 40},
 }
 
@@ -284,14 +284,9 @@ def _grade(task: str, variant: str, rec: dict) -> dict:
             action = str(parsed.get("action", "")).lower()
             allowed = exp["action"] if isinstance(exp["action"], list) else [exp["action"]]
             ok = action in allowed
-            if "steer_max" in exp:  # signed: steer must be <= this (e.g. -20 = steer right)
+            if "steer_min" in exp:  # signed: steer must be >= this (e.g. +20 = steer right)
                 try:
-                    ok = ok and float(parsed.get("steer", 0)) <= exp["steer_max"]
-                except (TypeError, ValueError):
-                    ok = False
-            if "steer_min" in exp:  # magnitude: |steer| >= this
-                try:
-                    ok = ok and abs(float(parsed.get("steer", 0))) >= exp["steer_min"]
+                    ok = ok and float(parsed.get("steer", 0)) >= exp["steer_min"]
                 except (TypeError, ValueError):
                     ok = False
             if "throttle_min" in exp:
