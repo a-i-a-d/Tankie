@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dynamic VLM Benchmark UI</title>
+  <style>
+    :root {
+      --bg: #0f0f12;
+      --bg-alt: #18181b;
+      --bg-hover: #27272a;
+      --text: #f4f4f5;
+      --text-dim: #a1a1aa;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --error: #ef4444;
+      --border: #27272a;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+    }
+
+    header {
+      background: var(--bg-alt);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+
+    .pill {
+      display: inline-flex;
+      padding: 0.25rem 0.75rem;
+      background: var(--accent);
+      color: white;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    main { padding: 2rem; }
+
+    .section {
+      background: var(--bg-alt);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .section h2 {
+      margin: 0 0 1rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: background 0.15s;
+    }
+
+    .btn:hover { background: var(--accent-hover); }
+
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--border);
+    }
+
+    .btn-outline:hover { background: var(--bg-hover); }
+
+    input[type="file"] {
+      display: block;
+      margin-bottom: 1rem;
+    }
+
+    input[type="text"], input[type="url"], select, textarea {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.5rem 0.75rem;
+      color: var(--text);
+      font-size: 0.875rem;
+      width: 100%;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .row { display: flex; gap: 1rem; align-items: flex-start; }
+
+    .col { flex: 1; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 0.5rem 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      background: var(--bg-alt);
+      font-weight: 500;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    th:hover { background: var(--bg-hover); }
+
+    th small {
+      color: var(--text-dim);
+      font-weight: 400;
+    }
+
+    tr:hover { background: var(--bg-hover); }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.125rem 0.5rem;
+      font-size: 0.7rem;
+      font-weight: 500;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    .badge-pass { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+    .badge-partial { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
+    .badge-fail { background: rgba(239, 68, 68, 0.2); color: var(--error); }
+    .badge-error { background: rgba(161, 161, 170, 0.3); color: var(--text-dim); }
+
+    .latency { color: var(--text-dim); font-feature-settings: "tnum"; }
+
+    .drawer {
+      position: fixed;
+      top: 0;
+      right: -400px;
+      width: 400px;
+      max-width: 100vw;
+      height: 100vh;
+      background: var(--bg-alt);
+      border-left: 1px solid var(--border);
+      transition: right 0.3s ease;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      box-shadow: -4px 0 20px rgba(0,0,0,0.5);
+    }
+
+    .drawer.open { right: 0; }
+
+    .drawer-header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .drawer-title { font-weight: 600; margin: 0; }
+
+    .close { background: transparent; border: none; color: var(--text-dim); cursor: pointer; font-size: 1.25rem; padding: 0 0.5rem; }
+
+    .drawer-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem;
+    }
+
+    .drawer-body h3 {
+      margin: 0 0 0.5rem 0;
+      font-size: 0.875rem;
+      color: var(--text-dim);
+    }
+
+    .drawer-body code {
+      background: var(--bg);
+      padding: 0.125rem 0.375rem;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.8rem;
+    }
+
+    .drawer-section { margin-bottom: 1.5rem; }
+
+    .drawer-section h4 {
+      margin: 0 0 0.5rem 0;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+
+    .drawer-row {
+      margin-bottom: 0.75rem;
+      font-size: 0.875rem;
+    }
+
+    .drawer-label { color: var(--text-dim); display: block; margin-bottom: 0.125rem; }
+    .drawer-value { word-break: break-word; }
+
+    .overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 999;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+    }
+
+    .overlay.active { opacity: 1; pointer-events: auto; }
+
+    .file-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .file-item {
+      display: inline-flex;
+      align-items: center;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.25rem 0.75rem;
+      font-size: 0.8rem;
+    }
+
+    .file-item input { width: auto; border: none; padding: 0; margin: 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Dynamic VLM Benchmark UI</h1>
+      <span class="pill">v1.0</span>
+    </div>
+    <div>
+      <button class="btn btn-outline" id="showCompare">Compare Runs</button>
+      <button class="btn" id="runCustomTests">Run Custom Test</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="section" id="runsSection">
+      <h2>Load Runs</h2>
+      <input type="file" id="fileInput" multiple accept=".jsonl">
+      <div class="file-list" id="fileList"></div>
+    </div>
+
+    <div class="section" id="compareSection" style="display: none;">
+      <h2>Compare Runs</h2>
+      <div class="row">
+        <div class="col">
+          <label>Run 1</label>
+          <select id="compareRun1"></select>
+        </div>
+        <div class="col">
+          <label>Run 2</label>
+          <select id="compareRun2"></select>
+        </div>
+        <div style="display: flex; align-items: flex-end; padding-bottom: 0.5rem;">
+          <button class="btn" id="doCompare">Compare</button>
+        </div>
+      </div>
+      <div id="compareResult"></div>
+    </div>
+
+    <div class="section" id="customTestsSection" style="display: none;">
+      <h2>Custom Test</h2>
+      <div class="row">
+        <div class="col">
+          <label>Task</label>
+          <select id="customTask">
+            <option value="detect">detect</option>
+            <option value="sequence">sequence</option>
+            <option value="drive">drive</option>
+          </select>
+        </div>
+        <div class="col">
+          <label>Variant</label>
+          <select id="customVariant">
+            <option value="">Auto (select task-specific)</option>
+          </select>
+        </div>
+      </div>
+      <label style="display: block; margin-top: 1rem;">Model</label>
+      <select id="customModel"></select>
+      <label style="display: block; margin-top: 1rem;">Prompt</label>
+      <textarea id="customPrompt" rows="4"></textarea>
+      <label style="display: block; margin-top: 1rem;">Expected Answer (JSON)</label>
+      <input type="text" id="customExpected" placeholder='{"ok": true}' value='{"ok": true}'>
+      <label style="display: block; margin-top: 1rem;">Images (comma-separated paths)</label>
+      <input type="text" id="customImages" placeholder="/path/to/image1.jpg,/path/to/image2.jpg">
+      <label style="display: block; margin-top: 1rem;">LocalAI URL (optional)</label>
+      <input type="url" id="customLocalAiUrl" value="http://localai.local:8080/v1">
+      <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+        <button class="btn" id="saveCustomTest">Save</button>
+        <button class="btn btn-outline" id="exportCustomTest">Export</button>
+        <button class="btn btn-outline" id="clearCustomTests">Clear All</button>
+      </div>
+      <div style="margin-top: 1rem; font-size: 0.75rem; color: var(--text-dim);">
+        Saved tests are stored in localStorage and can be exported/imported as JSON.
+      </div>
+    </div>
+
+    <div class="section" id="resultsSection" style="display: none;">
+      <h2>Results</h2>
+      <table id="resultsTable">
+        <thead>
+          <tr>
+            <th data-sort="model">Model <small>name</small></th>
+            <th data-sort="task">Task <small>variant</small></th>
+            <th data-sort="pass">Grade <small>(pass/n)</small></th>
+            <th data-sort="latency">Latency <small>(median s)</small></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div style="margin-top: 1rem; font-size: 0.875rem; color: var(--text-dim);">
+        Click any row or cell to view details
+      </div>
+    </div>
+  </main>
+
+  <div class="overlay" id="overlay" onclick="toggleDrawer()"></div>
+  <div class="drawer" id="detailDrawer">
+    <div class="drawer-header">
+      <span class="drawer-title" id="drawerTitle">Detail</span>
+      <button class="close" onclick="toggleDrawer()">&times;</button>
+    </div>
+    <div class="drawer-body" id="drawerBody"></div>
+  </div>
+
+  <script>
+(function() {
+  'use strict';
+
+  const DB_KEY = 'vlm_benchmark_custom_tests';
+  const FILE_KEY = 'vlm_benchmark_selected_files';
+  let state = {
+    runs: [],
+    selectedFiles: [],
+    comparingRun1: null,
+    comparingRun2: null,
+    tableData: [],
+    sortKey: 'model',
+    sortDesc: false
+  };
+
+  function init() {
+    loadCustomTests();
+    setupFilePicker();
+    setupCompare();
+    setupCustomTests();
+    setupResultsTable();
+    setupDrawer();
+    loadSelectedFiles();
+  }
+
+  function setupFilePicker() {
+    const fileInput = document.getElementById('fileInput');
+    const fileList = document.getElementById('fileList');
+
+    fileInput.addEventListener('change', () => {
+      const files = Array.from(fileInput.files).filter(f => f.name.endsWith('.jsonl'));
+      state.selectedFiles = files;
+      localStorage.setItem(FILE_KEY, JSON.stringify(files.map(f => f.name)));
+
+      renderFileList();
+      loadRuns();
+    });
+  }
+
+  function loadSelectedFiles() {
+    const saved = localStorage.getItem(FILE_KEY);
+    if (saved) {
+      try {
+        const fileNames = JSON.parse(saved);
+        state.selectedFiles = fileNames.map(name => ({ name, file: null, checked: true }));
+        document.getElementById('fileInput').value = '';
+        renderFileList();
+        loadRuns();
+      } catch (e) {
+        console.warn('Failed to load saved files', e);
+      }
+    }
+  }
+
+  function renderFileList() {
+    const fileList = document.getElementById('fileList');
+
+    fileList.innerHTML = state.selectedFiles.map((f, i) => `
+      <div class="file-item">
+        <input type="checkbox" ${f.checked ? 'checked' : ''} onchange="toggleFile(${i})">
+        <span>${f.name}</span>
+        <button class="btn-outline" onclick="removeFile(${i})" style="padding: 2px 6px; font-size: 0.7rem; margin-left: 4px;">&times;</button>
+      </div>
+    `).join('');
+  }
+
+  function toggleFile(i) {
+    state.selectedFiles[i].checked = !state.selectedFiles[i].checked;
+    renderFileList();
+  }
+
+  function removeFile(i) {
+    state.selectedFiles.splice(i, 1);
+    renderFileList();
+  }
+
+  function loadRuns() {
+    const checkedFiles = state.selectedFiles.filter(f => f.checked);
+    state.runs = [];
+
+    checkedFiles.forEach(f => {
+      if (f.file) {
+        loadRun(f.file, f.name);
+      } else {
+        const input = document.getElementById('fileInput');
+        if (input.files.length > 0) {
+          const file = Array.from(input.files).find(g => g.name === f.name);
+          if (file) loadRun(file, f.name);
+        }
+      }
+    });
+
+    setupCustomModelSelect();
+    setupCustomVariantSelect();
+    populateCompareSelects();
+    updateRunCount();
+    renderResults();
+  }
+
+  function loadRun(file, name) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const lines = e.target.result.trim().split('\n');
+      const records = [];
+      lines.forEach((line, i) => {
+        try {
+          const record = JSON.parse(line);
+          if (record.task && record.model) {
+            records.push(record);
+          }
+        } catch (err) {
+          console.warn(`Failed to parse line ${i} in ${name}`, err);
+        }
+      });
+
+      state.runs.push({
+        name,
+        records,
+        stats: aggregateStats(records)
+      });
+    };
+    reader.readAsText(file);
+  }
+
+  function aggregateStats(records) {
+    const stats = {
+      taskVariants: {},
+      byGrade: { valid_json: 0, required_keys: 0, semantic: 0 },
+      total: records.length
+    };
+
+    records.forEach(r => {
+      if (r.grade) {
+        if (r.grade.valid_json) stats.byGrade.valid_json++;
+        if (r.grade.required_keys) stats.byGrade.required_keys++;
+        if (r.grade.semantic) stats.byGrade.semantic++;
+      }
+
+      const taskVar = r.task + (r.variant ? '/' + r.variant : '');
+      stats.taskVariants[taskVar] = (stats.taskVariants[taskVar] || 0) + 1;
+    });
+
+    return stats;
+  }
+
+  function updateRunCount() {
+    document.getElementById('runCount').textContent = state.runs.length;
+  }
+
+  function renderResults() {
+    const tbody = document.querySelector('#resultsTable tbody');
+    let data = [];
+
+    state.runs.forEach(run => {
+      run.records.forEach(r => {
+        data.push({ runName: run.name, ...r });
+      });
+    });
+
+    state.tableData = data;
+    sortData();
+
+    tbody.innerHTML = data.map(r => {
+      const grade = r.grade || {};
+      const pass = grade.valid_json && grade.required_keys && grade.semantic;
+      const partial = grade.valid_json && grade.required_keys;
+      const badgeClass = pass ? 'badge-pass' : partial ? 'badge-partial' : 'badge-fail';
+
+      const latency = r.elapsed_s !== undefined ? r.elapsed_s.toFixed(2) : '-';
+      const taskVar = r.variant ? `${r.task}/${r.variant}` : r.task;
+
+      return `
+        <tr onclick="openDetail('${r.runName}', '${r.task}', '${r.variant}')">
+          <td>${r.model}</td>
+          <td>${taskVar}</td>
+          <td><span class="badge ${badgeClass}">${pass ? 'PASS' : partial ? 'PARTIAL' : 'FAIL'}</span></td>
+          <td class="latency">${latency}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function sortData() {
+    const key = state.sortKey;
+    const desc = state.sortDesc;
+    state.tableData.sort((a, b) => {
+      let va = a[key], vb = b[key];
+      if (typeof va === 'string') {
+        return desc ? vb.localeCompare(va) : va.localeCompare(vb);
+      } else {
+        return desc ? vb - va : va - vb;
+      }
+    });
+    renderResults();
+  }
+
+  function setupResultsTable() {
+    document.querySelectorAll('th[data-sort]').forEach(th => {
+      th.addEventListener('click', () => {
+        if (th.dataset.sort === state.sortKey) {
+          state.sortDesc = !state.sortDesc;
+        } else {
+          state.sortKey = th.dataset.sort;
+          state.sortDesc = false;
+        }
+        sortData();
+      });
+    });
+  }
+
+  function openDetail(runName, task, variant) {
+    const record = state.tableData.find(r => r.runName === runName && r.task === task && r.variant === variant);
+    if (!record) return;
+
+    const title = `${record.model} / ${task}${variant ? '/' + variant : ''}`;
+    document.getElementById('drawerTitle').textContent = title;
+
+    const grade = record.grade || {};
+    const pass = grade.valid_json && grade.required_keys && grade.semantic;
+    const partial = grade.valid_json && grade.required_keys;
+    const badgeClass = pass ? 'badge-pass' : partial ? 'badge-partial' : 'badge-fail';
+
+    const body = document.getElementById('drawerBody');
+    body.innerHTML = `
+      <div class="drawer-section">
+        <h4>Grade</h4>
+        <div class="drawer-row">
+          <span class="drawer-label">Valid JSON</span>
+          <span class="badge ${grade.valid_json ? 'badge-pass' : 'badge-fail'}">${grade.valid_json ? 'Yes' : 'No'}</span>
+        </div>
+        <div class="drawer-row">
+          <span class="drawer-label">Required Keys</span>
+          <span class="badge ${grade.required_keys ? 'badge-pass' : 'badge-fail'}">${grade.required_keys ? 'Yes' : 'No'}</span>
+        </div>
+        <div class="drawer-row">
+          <span class="drawer-label">Semantic</span>
+          <span class="badge ${grade.semantic ? 'badge-pass' : 'badge-fail'}">${grade.semantic ? 'Yes' : 'No'}</span>
+        </div>
+      </div>
+
+      <div class="drawer-section">
+        <h4>Metrics</h4>
+        <div class="drawer-row">
+          <span class="drawer-label">Latency</span>
+          <span class="drawer-value">${record.elapsed_s !== undefined ? record.elapsed_s.toFixed(2) + ' s' : 'N/A'}</span>
+        </div>
+        <div class="drawer-row">
+          <span class="drawer-label">Max Tokens</span>
+          <span class="drawer-value">${record.max_tokens || 'N/A'}</span>
+        </div>
+        <div class="drawer-row">
+          <span class="drawer-label">Retries</span>
+          <span class="drawer-value">${record.retries || 'N/A'}</span>
+        </div>
+        <div class="drawer-row">
+          <span class="drawer-label">HTTP Status</span>
+          <span class="drawer-value">${record.http || 'N/A'}</span>
+        </div>
+        <div class="drawer-row">
+          <span class="drawer-label">Phase</span>
+          <span class="drawer-value">${record.phase || 'N/A'}</span>
+        </div>
+        <div class="drawer-row">
+          <span class="drawer-label">Timestamp</span>
+          <span class="drawer-value">${record.ts || 'N/A'}</span>
+        </div>
+        <div class="drawer-row">
+          <span class="drawer-label">Variant</span>
+          <span class="drawer-value">${record.variant || 'N/A'}</span>
+        </div>
+      </div>
+
+      <div class="drawer-section">
+        <h4>Prompt</h4>
+        <div class="drawer-value">${escapeHtml(record.prompt || '')}</div>
+      </div>
+
+      <div class="drawer-section">
+        <h4>Model Response</h4>
+        <div class="drawer-value" style="white-space: pre-wrap; font-family: monospace; font-size: 0.8rem;">
+          ${escapeHtml(record.content || '')}
+        </div>
+        ${record.reasoning ? `
+          <div style="margin-top: 1rem;">
+            <h4>Reasoning</h4>
+            <div class="drawer-value" style="white-space: pre-wrap; font-family: monospace; font-size: 0.8rem;">
+              ${escapeHtml(record.reasoning)}
+            </div>
+          </div>
+        ` : ''}
+      </div>
+
+      <div class="drawer-section">
+        <h4>Raw JSONL Data</h4>
+        <pre style="font-size: 0.75rem; color: var(--text-dim); margin: 0; white-space: pre-wrap;">
+${JSON.stringify(record, null, 2)}
+        </pre>
+      </div>
+    `;
+
+    document.getElementById('detailDrawer').classList.add('open');
+    document.getElementById('overlay').classList.add('active');
+  }
+
+  function toggleDrawer() {
+    document.getElementById('detailDrawer').classList.remove('open');
+    document.getElementById('overlay').classList.remove('active');
+  }
+
+  function setupCompare() {
+    document.getElementById('showCompare').addEventListener('click', () => {
+      const section = document.getElementById('compareSection');
+      section.style.display = section.style.display === 'none' ? 'block' : 'none';
+      populateCompareSelects();
+    });
+
+    document.getElementById('doCompare').addEventListener('click', () => {
+      const run1Name = document.getElementById('compareRun1').value;
+      const run2Name = document.getElementById('compareRun2').value;
+
+      if (!run1Name || !run2Name) {
+        alert('Please select two runs to compare');
+        return;
+      }
+
+      const run1 = state.runs.find(r => r.name === run1Name);
+      const run2 = state.runs.find(r => r.name === run2Name);
+
+      if (!run1 || !run2) {
+        alert('Could not find runs');
+        return;
+      }
+
+      const result = compareRuns(run1, run2);
+      const resultDiv = document.getElementById('compareResult');
+      resultDiv.innerHTML = result.html;
+    });
+  }
+
+  function populateCompareSelects() {
+    const selects = ['compareRun1', 'compareRun2'];
+    selects.forEach(id => {
+      const select = document.getElementById(id);
+      select.innerHTML = state.runs.map(r => `<option value="${r.name}">${r.name}</option>`).join('');
+    });
+  }
+
+  function compareRuns(run1, run2) {
+    const allRecords = [...run1.records, ...run2.records];
+    const uniqueRecords = Array.from(new Map(allRecords.map(r => [r.model + '/' + r.task + (r.variant || ''), r])).values());
+
+    let html = '<div class="compare-summary"><h3>Comparison Results</h3>';
+
+    html += '<div class="compare-row"><span>Run 1</span><span>' + run1.name + '</span><span></span></div>';
+    html += '<div class="compare-row"><span>Run 2</span><span>' + run2.name + '</span><span></span></div>';
+
+    const deltaRecords = uniqueRecords.filter(r => {
+      const r1 = run1.records.find(rec => rec.model === r.model && rec.task === r.task && rec.variant === r.variant);
+      const r2 = run2.records.find(rec => rec.model === r.model && rec.task === r.task && rec.variant === r.variant);
+      return r1 && r2 && (r1.grade.valid_json !== r2.grade.valid_json || r1.elapsed_s !== r2.elapsed_s);
+    });
+
+    html += `<h4>Models with changes (${deltaRecords.length})</h4>`;
+
+    deltaRecords.forEach(r => {
+      const r1 = run1.records.find(rec => rec.model === r.model && rec.task === r.task && rec.variant === r.variant);
+      const r2 = run2.records.find(rec => rec.model === r.model && rec.task === r.task && rec.variant === r.variant);
+
+      const g1 = r1.grade || {};
+      const g2 = r2.grade || {};
+      const gradeDelta = (g2.valid_json ? 1 : 0) - (g1.valid_json ? 1 : 0);
+
+      const latDelta = (r2.elapsed_s || 0) - (r1.elapsed_s || 0);
+      const latDeltaClass = latDelta < 0 ? 'compare-delta neg' : latDelta > 0 ? 'compare-delta pos' : '';
+      const latBadgeClass = latDelta < 0 ? 'compare-badge-neg' : latDelta > 0 ? 'compare-badge-pos' : '';
+
+      html += `
+        <div class="compare-row">
+          <span>${r.model}/${r.task}</span>
+          <span>${latDelta < 0 ? '↓' : latDelta > 0 ? '↑' : '-'} ${Math.abs(latDelta).toFixed(2)}s</span>
+          <span class="${latDeltaClass}">
+            ${latDelta < 0 ? '<span class="compare-badge-neg">Faster</span>' : latDelta > 0 ? '<span class="compare-badge-pos">Slower</span>' : ''}
+          </span>
+        </div>
+      `;
+    });
+
+    html += '</div>';
+    return { html };
+  }
+
+  function setupCustomTests() {
+    document.getElementById('saveCustomTest').addEventListener('click', saveCustomTest);
+    document.getElementById('exportCustomTest').addEventListener('click', exportCustomTests);
+    document.getElementById('clearCustomTests').addEventListener('click', clearCustomTests);
+    document.getElementById('customTask').addEventListener('change', () => {
+      const variantSelect = document.getElementById('customVariant');
+      const task = document.getElementById('customTask').value;
+      const taskVariants = getTaskVariants(task);
+      variantSelect.innerHTML = taskVariants.map(v => `<option value="${v}">${v || '(auto)'}</option>`).join('');
+    });
+  }
+
+  function setupCustomModelSelect() {
+    const select = document.getElementById('customModel');
+    const models = new Set();
+    state.runs.forEach(r => r.records.forEach(rec => models.add(rec.model)));
+    select.innerHTML = Array.from(models).sort().map(m => `<option value="${m}">${m}</option>`).join('');
+  }
+
+  function setupCustomVariantSelect() {
+    const task = document.getElementById('customTask').value;
+    const taskVariants = getTaskVariants(task);
+    const variantSelect = document.getElementById('customVariant');
+    variantSelect.innerHTML = taskVariants.map(v => `<option value="${v}">${v || '(auto)'}</option>`).join('');
+  }
+
+  function getTaskVariants(task) {
+    const variants = {
+      detect: ['center', 'clear', 'left', ''],
+      sequence: ['left', ''],
+      drive: ['center', 'clear', 'left', '']
+    };
+    return (variants[task] || []).filter(v => v !== 'left');
+  }
+
+  function saveCustomTest() {
+    const task = document.getElementById('customTask').value;
+    const variant = document.getElementById('customVariant').value;
+    const model = document.getElementById('customModel').value;
+    const prompt = document.getElementById('customPrompt').value;
+    const expected = document.getElementById('customExpected').value;
+    const images = document.getElementById('customImages').value;
+    const localAiUrl = document.getElementById('customLocalAiUrl').value;
+
+    const test = {
+      id: Date.now().toString(),
+      task,
+      variant,
+      model,
+      prompt,
+      expected,
+      images: images ? images.split(',').map(s => s.trim()) : [],
+      localAiUrl,
+      createdAt: new Date().toISOString()
+    };
+
+    let tests = loadCustomTests();
+    tests.push(test);
+    localStorage.setItem(DB_KEY, JSON.stringify(tests));
+
+    alert('Custom test saved');
+  }
+
+  function loadCustomTests() {
+    const saved = localStorage.getItem(DB_KEY);
+    return saved ? JSON.parse(saved) : [];
+  }
+
+  function exportCustomTests() {
+    const tests = loadCustomTests();
+    if (tests.length === 0) {
+      alert('No custom tests to export');
+      return;
+    }
+
+    const blob = new Blob([JSON.stringify(tests, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'vlm_benchmark_custom_tests.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function clearCustomTests() {
+    if (confirm('Clear all custom tests?')) {
+      localStorage.removeItem(DB_KEY);
+      alert('Custom tests cleared');
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  document.getElementById('showCompare').addEventListener('click', () => {
+    const section = document.getElementById('compareSection');
+    section.style.display = section.style.display === 'none' ? 'block' : 'none';
+  });
+  document.getElementById('runCustomTests').addEventListener('click', () => {
+    document.getElementById('customTestsSection').style.display = 'block';
+  });
+
+  init();
+})();
+  </script>
+</body>
+</html>
