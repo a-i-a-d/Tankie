@@ -861,10 +861,11 @@ def main() -> int:
               h17.count('<span class="temp warm">warm</span>') >= 1)
             # P1: warmup(12s) + test(1s) -> cold badge 1, warm badge 1
             # P2: legacy run1 -> cold, run2 -> warm (fallback intact)
+            cold_n = h17.count('<span class="temp cold">cold</span>')
+            warm_n = h17.count('<span class="temp warm">warm</span>')
             check("html legacy run-number fallback still works (2 cold, 2 warm)",
-                  h17.count('<span class="temp cold">cold</span>') == 2
-                  and h17.count('<span class="temp warm">warm</span>') == 2,
-                  f"cold={h17.count('<span class="temp cold">cold</span>')} warm={h17.count('<span class="temp warm">warm</span>')}")
+                  cold_n == 2 and warm_n == 2,
+                  "cold=%d warm=%d" % (cold_n, warm_n))
             check("html ranking header says 'warm median'", ">warm median<" in h17)
         else:
             check("warmup html created", False, f"missing: {html17}")
