@@ -13,11 +13,11 @@
 //   stop            speed == 0, steer == 0
 //   spin-in-place   speed == 0, steer != 0        (NEW, issue #14)
 //   fw straight     speed > 0, steer == 0         -> L = R = speed
-//   fw left         speed > 0, steer > 0          -> L = speed - r, R = speed
-//   fw right        speed > 0, steer < 0          -> L = speed, R = speed + r
+//   fw right        speed > 0, steer > 0          -> L = speed, R = speed - r
+//   fw left         speed > 0, steer < 0          -> L = speed - r, R = speed
 //   bw straight     speed < 0, steer == 0         -> L = R = speed
-//   bw left         speed < 0, steer > 0          -> L = speed + r, R = speed
-//   bw right        speed < 0, steer < 0          -> L = speed, R = speed - r
+//   bw right        speed < 0, steer > 0          -> L = speed, R = speed + r
+//   bw left         speed < 0, steer < 0          -> L = speed + r, R = speed
 //
 // (r = |steer| * |speed| / 127, the legacy relative-steer amount)
 //
@@ -61,30 +61,30 @@ TEST(stop_both_motors) {
   CHECK_EQ_INT(digitalRead(STBY), HIGH);  // drive() always releases standby
 }
 
-TEST(spin_in_place_left) {
+TEST(spin_in_place_right) {
   // NEW (issue #14): steer with zero speed spins the tank in place.
-  // steer > 0 = left: left wheel reverses, right wheel drives forward.
+  // steer > 0 = right: right wheel reverses, left wheel drives forward.
   resetTank();
   tank.setSpeed(0);
   tank.setSteer(127);
-  expectMotor(AIN1, AIN2, PWMA, -127);
-  expectMotor(BIN1, BIN2, PWMB, 127);
+  expectMotor(AIN1, AIN2, PWMA, 127);
+  expectMotor(BIN1, BIN2, PWMB, -127);
 }
 
-TEST(spin_in_place_right) {
+TEST(spin_in_place_left) {
   resetTank();
   tank.setSpeed(0);
   tank.setSteer(-127);
-  expectMotor(AIN1, AIN2, PWMA, 127);
-  expectMotor(BIN1, BIN2, PWMB, -127);
+  expectMotor(AIN1, AIN2, PWMA, -127);
+  expectMotor(BIN1, BIN2, PWMB, 127);
 }
 
 TEST(spin_in_place_full) {
   resetTank();
   tank.setSpeed(0);
   tank.setSteer(255);
-  expectMotor(AIN1, AIN2, PWMA, -255);
-  expectMotor(BIN1, BIN2, PWMB, 255);
+  expectMotor(AIN1, AIN2, PWMA, 255);
+  expectMotor(BIN1, BIN2, PWMB, -255);
 }
 
 TEST(fw_straight) {
@@ -95,28 +95,28 @@ TEST(fw_straight) {
   expectMotor(BIN1, BIN2, PWMB, 127);
 }
 
-TEST(fw_left) {
-  resetTank();
-  tank.setSpeed(127);
-  tank.setSteer(127);   // r = 127 -> L = 127-127 = 0, R = 127
-  expectMotor(AIN1, AIN2, PWMA, 0);
-  expectMotor(BIN1, BIN2, PWMB, 127);
-}
-
 TEST(fw_right) {
   resetTank();
   tank.setSpeed(127);
-  tank.setSteer(-127);  // r = 127 -> L = 127, R = 127-127 = 0
+  tank.setSteer(127);   // steer > 0 = right: r = 127 -> L = 127, R = 127-127 = 0
   expectMotor(AIN1, AIN2, PWMA, 127);
   expectMotor(BIN1, BIN2, PWMB, 0);
+}
+
+TEST(fw_left) {
+  resetTank();
+  tank.setSpeed(127);
+  tank.setSteer(-127);  // steer < 0 = left: r = 127 -> L = 127-127 = 0, R = 127
+  expectMotor(AIN1, AIN2, PWMA, 0);
+  expectMotor(BIN1, BIN2, PWMB, 127);
 }
 
 TEST(fw_partial_steer) {
   resetTank();
   tank.setSpeed(127);
-  tank.setSteer(64);    // r = int(64 * 1.0) = 64 -> L = 63, R = 127
-  expectMotor(AIN1, AIN2, PWMA, 63);
-  expectMotor(BIN1, BIN2, PWMB, 127);
+  tank.setSteer(64);    // steer > 0 = right: r = 64 -> L = 127, R = 127-64 = 63
+  expectMotor(AIN1, AIN2, PWMA, 127);
+  expectMotor(BIN1, BIN2, PWMB, 63);
 }
 
 TEST(bw_straight) {
@@ -127,28 +127,28 @@ TEST(bw_straight) {
   expectMotor(BIN1, BIN2, PWMB, -127);
 }
 
-TEST(bw_left) {
-  resetTank();
-  tank.setSpeed(-127);
-  tank.setSteer(127);   // r = 127 -> L = -127+127 = 0, R = -127
-  expectMotor(AIN1, AIN2, PWMA, 0);
-  expectMotor(BIN1, BIN2, PWMB, -127);
-}
-
 TEST(bw_right) {
   resetTank();
   tank.setSpeed(-127);
-  tank.setSteer(-127);  // r = 127 -> L = -127, R = -127-(-127) = 0
+  tank.setSteer(127);   // steer > 0 = right: r = 127 -> L = -127, R = -127+127 = 0
   expectMotor(AIN1, AIN2, PWMA, -127);
   expectMotor(BIN1, BIN2, PWMB, 0);
+}
+
+TEST(bw_left) {
+  resetTank();
+  tank.setSpeed(-127);
+  tank.setSteer(-127);  // steer < 0 = left: r = 127 -> L = -127+127 = 0, R = -127
+  expectMotor(AIN1, AIN2, PWMA, 0);
+  expectMotor(BIN1, BIN2, PWMB, -127);
 }
 
 TEST(bw_partial_steer) {
   resetTank();
   tank.setSpeed(-127);
-  tank.setSteer(-64);   // r = 64 -> L = -127, R = -127+64 = -63
-  expectMotor(AIN1, AIN2, PWMA, -127);
-  expectMotor(BIN1, BIN2, PWMB, -63);
+  tank.setSteer(-64);   // steer < 0 = left: r = 64 -> L = -127+64 = -63, R = -127
+  expectMotor(AIN1, AIN2, PWMA, -63);
+  expectMotor(BIN1, BIN2, PWMB, -127);
 }
 
 TEST(fw_extreme_values_clamped) {
@@ -158,9 +158,9 @@ TEST(fw_extreme_values_clamped) {
   // direction flip; the outer wheel saturates at 255.
   resetTank();
   tank.setSpeed(255);
-  tank.setSteer(255);
-  expectMotor(AIN1, AIN2, PWMA, -255);
-  expectMotor(BIN1, BIN2, PWMB, 255);
+  tank.setSteer(255);   // steer > 0 = right: inner (right) clamps at -255
+  expectMotor(AIN1, AIN2, PWMA, 255);
+  expectMotor(BIN1, BIN2, PWMB, -255);
 }
 
 TEST(bw_extreme_values_clamped) {
@@ -168,7 +168,7 @@ TEST(bw_extreme_values_clamped) {
   // now it clamps at +255, no direction flip.
   resetTank();
   tank.setSpeed(-255);
-  tank.setSteer(255);
-  expectMotor(AIN1, AIN2, PWMA, 255);
-  expectMotor(BIN1, BIN2, PWMB, -255);
+  tank.setSteer(255);   // steer > 0 = right: inner (right) clamps at +255
+  expectMotor(AIN1, AIN2, PWMA, -255);
+  expectMotor(BIN1, BIN2, PWMB, 255);
 }

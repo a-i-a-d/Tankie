@@ -8,16 +8,16 @@ int clampWheel(int v) {
 
 WheelOutputs computeWheels(int speed, int steer) {
   const int s = clampWheel(speed);
-  const int st = clampWheel(steer);
+  const int st = clampWheel(-steer);  // issue #85: positive steer = RIGHT
 
   if (s == 0) {
-    // Spin in place (NEW, issue #14): steer > 0 = turn left (left wheel
-    // reverses, right wheel drives forward), steer < 0 = turn right.
+    // Spin in place (NEW, issue #14): steer > 0 = turn right (right wheel
+    // reverses, left wheel drives forward), steer < 0 = turn left.
     return WheelOutputs{-st, st};
   }
 
   // Moving: the legacy relative-steer scaling, now in pure integer math.
-  // The inner wheel (left when steering left, right when steering right)
+  // The inner wheel (right when steering right, left when steering left)
   // is offset from the outer wheel by |steer| * |speed| / 127, and BOTH
   // outputs are clamped to the PWM range (issue #14: the legacy r_steer
   // was unclamped, so at speed=+/-255, steer=+/-255 the inner wheel

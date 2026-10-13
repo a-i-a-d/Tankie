@@ -117,19 +117,19 @@ def test_center_obstacle_stops_and_preempts():
 
 
 def test_left_obstacle_steers_right_away():
-    # obstacle centred at 15% width (left of lane) -> steer RIGHT (negative)
+    # obstacle centred at 15% width (left of lane) -> steer RIGHT (positive)
     obstacle = det("car", 0.15 * IMG_W, 0.85 * IMG_H)
     r = controller().decide([obstacle], IMG_W, IMG_H)
     assert r.cmd == "drive" and r.speed == 0
-    assert r.steer == -60
+    assert r.steer == 60
     assert "left" in r.reason
 
 
 def test_right_obstacle_steers_left_away():
-    # obstacle centred at 85% width (right of lane) -> steer LEFT (positive)
+    # obstacle centred at 85% width (right of lane) -> steer LEFT (negative)
     obstacle = det("dog", 0.85 * IMG_W, 0.85 * IMG_H)
     r = controller().decide([obstacle], IMG_W, IMG_H)
-    assert r.steer == 60
+    assert r.steer == -60
     assert "right" in r.reason
 
 

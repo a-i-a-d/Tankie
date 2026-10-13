@@ -196,6 +196,9 @@ func steer(d Params, ws *websocket.Conn) {
 	speed := activeSpeed
 	stateMu.Unlock()
 
+	// Steer sign convention (issue #85, tankie/wheels.h): steer > 0 = RIGHT,
+	// steer < 0 = LEFT. So "left" maps to a negative steer and "right" to a
+	// positive one — the same convention the rest of the stack uses.
 	switch d.Action {
 	case "left":
 		fmt.Printf("Turing left\n")

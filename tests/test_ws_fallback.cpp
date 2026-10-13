@@ -105,14 +105,14 @@ TEST(ws_drive_backward) {
 
 TEST(ws_drive_steer_turns_one_wheel) {
   resetWs();
-  // speed 100, steer +127 -> r_steer = int(127*(100/127)) = 100 -> one
-  // wheel at speed (100), the other stopped (speed - r_steer = 0): a full
-  // turn. tankie.ino wires TankDrive(&M1, &M2) with M1 = the BIN/PWMB
-  // motor (mLeft -> the stopped value 0) and M2 = the AIN/PWMA motor
-  // (mRight -> the full value 100).
+  // speed 100, steer +127 (issue #85: positive = right) -> r = 100 -> one
+  // wheel at speed (100), the other stopped (speed - r = 0): a full turn.
+  // tankie.ino wires TankDrive(&M1, &M2) with M1 = the BIN/PWMB motor
+  // (mLeft -> the full value 100) and M2 = the AIN/PWMA motor
+  // (mRight -> the stopped value 0).
   sendWsText("{\"cmd\":\"drive\",\"speed\":100,\"steer\":127}");
-  CHECK_EQ_INT(host_pwm[PWMA], 100);   // AIN/PWMA motor (mRight) at full
-  CHECK_EQ_INT(host_pwm[PWMB], 0);     // BIN/PWMB motor (mLeft) stopped
+  CHECK_EQ_INT(host_pwm[PWMA], 0);     // AIN/PWMA motor (mRight) stopped
+  CHECK_EQ_INT(host_pwm[PWMB], 100);   // BIN/PWMB motor (mLeft) at full
 }
 
 TEST(ws_pan_moves_pan_servo) {

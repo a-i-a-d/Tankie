@@ -29,11 +29,11 @@ Safety invariants enforced here:
     false`` to go quiet when there is nothing to do, so a human can take
     over the tank over the bridge while the ESP stays reachable.
 
-Steer sign convention (tankie/wheels.h, issue #14):
-  ``steer > 0 = turn LEFT``, ``steer < 0 = turn RIGHT``. Therefore an
+Steer sign convention (tankie/wheels.h, issue #85):
+  ``steer > 0 = turn RIGHT``, ``steer < 0 = turn LEFT``. Therefore an
   obstacle on the **left** of the lane is avoided by steering **right**
-  (``-steer_around``), and one on the **right** by steering **left**
-  (``+steer_around``) — away from the obstacle, never into it.
+  (``+steer_around``), and one on the **right** by steering **left**
+  (``-steer_around``) — away from the obstacle, never into it.
 
 No IP addresses or model names in this module (A4); the LocalAI client and
 the bridge client are injected.
@@ -190,8 +190,8 @@ class ReflexController:
              ``drive 0 0`` (stop), ``preempted=True`` when a pending action
              was overridden (invariant 2).
           2. **Side-lane obstacle is close** (and enabled) -> steer **away**:
-             obstacle left  -> ``steer = -steer_around`` (turn right),
-             obstacle right -> ``steer = +steer_around`` (turn left).
+             obstacle left  -> ``steer = +steer_around`` (turn right),
+             obstacle right -> ``steer = -steer_around`` (turn left).
           3. **Clear** -> pass the pending action through (drive clamped to
              the AUTO_PROFILE; pan/tilt with its angle), or ``drive 0 0``
              idle keep-alive when there is no pending action.
@@ -209,16 +209,17 @@ class ReflexController:
                         preempted=preempted,
                         reason=f"stop: {cls} in lane",
                     )
-                # Side-lane: steer away from the obstacle (wheels.h: + = left).
+                # Side-lane: steer away from the obstacle (wheels.h, issue #85:
+                # steer > 0 = right, steer < 0 = left).
                 cx = float(obstacle.get("x", 0.0)) + float(obstacle.get("w", 0.0)) / 2.0
                 if cx < img_w / 2.0:
                     return ReflexResult(
-                        cmd="drive", speed=0, steer=-self.steer_around,
+                        cmd="drive", speed=0, steer=self.steer_around,
                         preempted=preempted,
                         reason=f"steer-around: {cls} left",
                     )
                 return ReflexResult(
-                    cmd="drive", speed=0, steer=self.steer_around,
+                    cmd="drive", speed=0, steer=-self.steer_around,
                     preempted=preempted,
                     reason=f"steer-around: {cls} right",
                 )
