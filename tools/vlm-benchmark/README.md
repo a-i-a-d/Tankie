@@ -43,6 +43,9 @@ python3 tools/vlm-benchmark/vlm_bench.py --models auto --probe --tasks detect
 # offline dry-run (no server call)
 python3 tools/vlm-benchmark/vlm_bench.py --dry-run
 
+# skip the one-shot warmup call per model (old behaviour)
+python3 tools/vlm-benchmark/vlm_bench.py --models a,b --no-warmup
+
 # generate a report from results (text to stdout, or write to file)
 python3 tools/vlm-benchmark/report.py results/old/bench-20261010-235859.jsonl
 python3 tools/vlm-benchmark/report.py results/*.jsonl --md report.md
@@ -70,11 +73,20 @@ python3 tools/vlm-benchmark/report.py results/*.jsonl --json
 - **Audit trail** — each record stores the full prompt (plus its `sha256[:12]`),
   and the HTML report shows the prompt above every model response. Older records
   without a `prompt` field fall back to showing the hash.
-- **Cold/warm latency** — in the per-model detail section every record is labeled
-  `cold` (run 1, model not yet resident) or `warm` (run 2+, already loaded) based
-  on its `run` number, so you can read the first-call penalty next to the time.
-  Records without a `run` number (pre `--runs`) are labeled `cold`.
+- **Warmup pass (cold load)** — before the graded calls of each model, one
+  cheap `detect`-scene call (short prompt, `max_tokens` 64) loads the model
+  (weights + mmproj projector) into GPU memory, so **every measured call runs
+  warm**. The warmup is recorded with `phase: "warmup"` (test calls:
+  `phase: "test"`) and is **excluded** from all pass-rate / latency stats; its
+  elapsed time is the one-time cold/load cost, shown in the **"Load (cold)"**
+  column (before the task columns) of the text/Markdown/HTML reports.
+  `--no-warmup` restores the old behaviour.
+- **Cold/warm labels** — in the per-model detail section every record is
+  labeled `cold` (warmup call) or `warm` (test call) based on its `phase`
+  field. Older results files without `phase` fall back to the `run` number
+  (run 1 = cold, run 2+ = warm).
 - **Grading** is data-driven and re-runnable: `valid_json` → `required_keys`
   → `semantic` (task-specific expected values).
 - **Recommendation** in `report.py`: highest overall pass rate, tie-broken by
-  lowest median latency.
+  lowest **warm** median latency (steady-state; the one-time cold load is
+  informational only).
