@@ -26,3 +26,6 @@ tools/vlm-benchmark/results/*.jsonl
 # ...except named baselines (tracked so they can be referenced / diffed):
 !tools/vlm-benchmark/results/baseline-*.jsonl
 tools/vlm-benchmark/*.log
+
+# Manual integration test harness (issue #87): generated reports stay local.
+tests/manual/results/

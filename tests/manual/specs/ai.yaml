@@ -1,0 +1,78 @@
+# Stage 5 — AI control (legacy ai_control.py, issue #33) + LocalAI preflight.
+# The ai_control tests run the real client as a bounded subprocess with an
+# injected instruction (TANKIE_INSTRUCTION). The operator PASS/FAILs on the
+# tank's real behaviour; the auto-checks look for the tool-call / bridge
+# signatures in the captured output.
+- id: S5-01
+  layer: localai
+  title: "LocalAI preflight (models reachable)"
+  safety: low
+  action: {probe: models}
+  observe:
+    expected: "LocalAI /v1/models answers (HTTP 200) and lists at least one model."
+    auto:
+      - path: reply.probes.models.status
+        eq: 200
+
+- id: S5-02
+  layer: localai
+  title: "LocalAI chat (one cheap completion)"
+  safety: low
+  action: {probe: chat}
+  observe:
+    expected: "A single chat completion returns HTTP 200 with content."
+    auto:
+      - path: reply.probes.chat.status
+        eq: 200
+
+- id: S5-03
+  layer: ai_control
+  title: "one observation cycle (no directed motion)"
+  safety: low
+  action: {instruction: "Explain the current situation in 10 words or less.", duration_s: 10}
+  observe:
+    expected: "The client completes one observe->decide cycle without crashing; it prints a Generated Text / response."
+    auto:
+      - path: reply.crashed
+        eq: false
+
+- id: S5-04
+  layer: ai_control
+  title: "drive instruction (\"drive forward\")"
+  safety: med
+  action: {instruction: "Drive the tank forward slowly.", duration_s: 15}
+  observe:
+    expected: "The model calls the drive_tank tool and the tank moves forward (clamped to the AI speed limit of 40)."
+    auto:
+      - path: reply.saw_tool_call
+        eq: true
+
+- id: S5-05
+  layer: ai_control
+  title: "camera instruction (\"look left\")"
+  safety: low
+  action: {instruction: "Turn the camera to look left.", duration_s: 15}
+  observe:
+    expected: "The model calls camera_control (left) and the camera pans left."
+    auto:
+      - path: reply.saw_tool_call
+        eq: true
+
+- id: S5-06
+  layer: ai_control
+  title: "link-failure degradation (bridge down)"
+  safety: low
+  action: {instruction: "Drive the tank forward.", duration_s: 10}
+  observe:
+    expected: "With the bridge stopped, the client surfaces 'link down' / a bridge error and does NOT crash."
+    auto:
+      - path: reply.crashed
+        eq: false
+
+- id: S5-07
+  layer: ai_control
+  title: "watchdog surfacing"
+  safety: low
+  action: {instruction: "Drive the tank forward.", duration_s: 10}
+  observe:
+    expected: "If the ESP watchdog fires, the client prints the watchdog feedback (motors stopped, camera recentered)."

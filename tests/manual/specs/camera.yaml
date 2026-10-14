@@ -1,0 +1,55 @@
+# Stage 4 — Camera streaming (mediamtx). Read-only HTTP/HLS/RTSP/API probes.
+# host/ports come from --camera-host / conf/mediamtx.yml (no IP literals here).
+- id: S4-01
+  layer: camera
+  title: "WebRTC player page"
+  safety: low
+  action: {probe: webrtc}
+  observe:
+    expected: "The mediamtx WebRTC player page (http://<pi>:8889/cam/) loads (HTTP 200)."
+    auto:
+      - path: reply.probes.webrtc.status
+        eq: 200
+
+- id: S4-02
+  layer: camera
+  title: "LL-HLS playlist"
+  safety: low
+  action: {probe: hls}
+  observe:
+    expected: "The LL-HLS playlist (http://<pi>:8888/cam/index.m3u8) is served and is a valid HLS playlist."
+    auto:
+      - path: reply.probes.hls.status
+        eq: 200
+      - path: reply.probes.hls.is_playlist
+        eq: true
+
+- id: S4-03
+  layer: camera
+  title: "RTSP stream (ffprobe)"
+  safety: low
+  action: {probe: rtsp}
+  observe:
+    expected: "ffprobe resolves the RTSP stream (rtsp://<pi>:8554/cam) and reports an H.264 video stream."
+    auto:
+      - path: reply.probes.rtsp.ok
+        eq: true
+
+- id: S4-04
+  layer: camera
+  title: "on-demand start/stop"
+  safety: low
+  action: {probe: api}
+  observe:
+    expected: "With no client the camera is off; a client connects -> on; disconnects -> off after ~10 s (sourceOnDemand)."
+
+- id: S4-05
+  layer: camera
+  title: "management API (loopback only)"
+  safety: low
+  action: {probe: api}
+  observe:
+    expected: "The mediamtx management API (127.0.0.1:9997/v3/paths/list) answers locally and lists the cam path."
+    auto:
+      - path: reply.probes.api.status
+        eq: 200

@@ -1,0 +1,48 @@
+# Stage 7 — Cross-cutting / soak / safety.
+- id: S7-01
+  layer: bridge
+  title: "OTA update (issue #44)"
+  safety: high
+  action: {noop: true}
+  observe:
+    expected: "Run `bash tests/manual/flash_ota_test.sh`: firmware + data partition updated, endpoints verified before and after, WiFi restored."
+
+- id: S7-02
+  layer: bridge
+  title: "power-cycle mid-drive"
+  safety: med
+  action: {noop: true}
+  observe:
+    expected: "Power-cycle the tank while driving: on the next boot there is NO uncontrolled motion."
+
+- id: S7-03
+  layer: bridge
+  title: "long soak (60 s drive)"
+  safety: med
+  setup: [{cmd: stop}]
+  action: {cmd: drive, speed: 40, steer: 0, settle_s: 60}
+  observe:
+    expected: "Drive for 60 s: battery drains smoothly, no thermal shutdown, no false watchdog."
+    auto:
+      - path: reply.ok
+        eq: true
+  teardown: [{cmd: stop}]
+
+- id: S7-04
+  layer: bridge
+  title: "concurrent sources (bridge + web UI)"
+  safety: med
+  action: {noop: true}
+  observe:
+    expected: "Drive via the bridge AND the web UI at once: last-writer-wins, no crash, no stuck motion."
+
+- id: S7-05
+  layer: ai_control
+  title: "full-stack AI drive (corridor)"
+  safety: med
+  action: {instruction: "Drive forward down the corridor and stop at the obstacle.", duration_s: 30}
+  observe:
+    expected: "The AI drives through a simple corridor, observes, decides, and stops on the obstacle."
+    auto:
+      - path: reply.crashed
+        eq: false

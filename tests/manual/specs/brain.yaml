@@ -1,0 +1,68 @@
+# Stage 6 — AI brain reflex loop (issue #80, Phase 2 T4). Runs the REAL reflex
+# loop (FrameGrab + LocalAIClient + ReflexController + bridge) for a bounded
+# duration and records its drive commands, so the safety invariants are
+# machine-verifiable. 'record' mode uses a recording bridge (no tank needed).
+- id: S6-01
+  layer: brain
+  title: "reflex loop runs (preflight)"
+  safety: low
+  action: {mode: record, duration_s: 2}
+  observe:
+    expected: "The reflex loop starts, ticks, and stops cleanly (the brain package is importable and wired)."
+    auto:
+      - path: reply.ok
+        eq: true
+      - path: reply.ticks
+        gt: 0
+
+- id: S6-02
+  layer: brain
+  title: "idle keep-alive drive 0 0 (A4)"
+  safety: low
+  action: {mode: record, duration_s: 3}
+  observe:
+    expected: "With nothing to do, the reflex loop sends drive 0 0 every tick (idle keep-alive); the tank stays stopped."
+    auto:
+      - path: reply.all_idle
+        eq: true
+
+- id: S6-03
+  layer: brain
+  title: "stop final command (invariant: stop() sends one final drive 0 0)"
+  safety: low
+  action: {mode: record, duration_s: 3}
+  observe:
+    expected: "On stop(), the loop sends one final drive 0 0 before exiting."
+    auto:
+      - path: reply.final_stop_sent
+        eq: true
+
+- id: S6-04
+  layer: brain
+  title: "no frame -> stop (invariant 4)"
+  safety: low
+  action: {mode: record, cam_url: "http://127.0.0.1:1/nope/index.m3u8", duration_s: 3}
+  observe:
+    expected: "With no reachable camera (no frame), the reflex loop sends drive 0 0 (a dead perception stack is a stop)."
+    auto:
+      - path: reply.all_idle
+        eq: true
+
+- id: S6-05
+  layer: brain
+  title: "detect failure -> stop (invariant 4)"
+  safety: low
+  action: {mode: record, localai_url: "http://127.0.0.1:1/v1", duration_s: 3}
+  observe:
+    expected: "With LocalAI unreachable (detect fails), the reflex loop sends drive 0 0."
+    auto:
+      - path: reply.all_idle
+        eq: true
+
+- id: S6-06
+  layer: brain
+  title: "obstacle avoidance (A2, if enabled)"
+  safety: med
+  action: {mode: record, obstacle: true, duration_s: 3}
+  observe:
+    expected: "With reflex_obstacle_enabled=true and an in-lane detection, the reflex steers around / stops per config."
