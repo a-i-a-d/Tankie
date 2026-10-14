@@ -1,0 +1,219 @@
+# Stage 1 — Raw serial (firmware serial protocol, issue #29), issue #85 steer sign.
+# Drives the ESP8266 directly over pyserial NDJSON (bypasses the bridge daemon).
+# steer convention (issue #85): steer > 0 = turn RIGHT, steer < 0 = turn LEFT.
+- id: S1-01
+  layer: raw_serial
+  title: "hello handshake"
+  safety: low
+  action: {cmd: drive, speed: 0, steer: 0}
+  observe:
+    expected: "First protocol line is the hello handshake {\"type\":\"hello\",\"proto\":1,...}; an ack follows."
+    auto:
+      - path: lines
+        exists: true
+
+- id: S1-02
+  layer: raw_serial
+  title: "drive forward"
+  safety: med
+  setup: [{cmd: stop}]
+  action: {cmd: drive, speed: 100, steer: 0, settle_s: 2}
+  observe:
+    expected: "Tank rolls forward; an ack is returned."
+    auto:
+      - path: reply
+        exists: true
+  teardown: [{cmd: stop}]
+
+- id: S1-03
+  layer: raw_serial
+  title: "drive reverse"
+  safety: med
+  setup: [{cmd: stop}]
+  action: {cmd: drive, speed: -100, steer: 0, settle_s: 2}
+  observe:
+    expected: "Tank rolls backward; an ack is returned."
+    auto:
+      - path: reply
+        exists: true
+  teardown: [{cmd: stop}]
+
+- id: S1-04
+  layer: raw_serial
+  title: "steer right (steer > 0)"
+  safety: med
+  setup: [{cmd: stop}]
+  action: {cmd: drive, speed: 100, steer: 100, settle_s: 2}
+  observe:
+    expected: "Tank arcs to the RIGHT (steer>0 = right, issue #85); no wheel grinding."
+  teardown: [{cmd: stop}]
+
+- id: S1-05
+  layer: raw_serial
+  title: "steer left (steer < 0)"
+  safety: med
+  setup: [{cmd: stop}]
+  action: {cmd: drive, speed: 100, steer: -100, settle_s: 2}
+  observe:
+    expected: "Tank arcs to the LEFT (steer<0 = left, issue #85); no wheel grinding."
+  teardown: [{cmd: stop}]
+
+- id: S1-06
+  layer: raw_serial
+  title: "spin in place right"
+  safety: med
+  setup: [{cmd: stop}]
+  action: {cmd: drive, speed: 0, steer: 100, settle_s: 2}
+  observe:
+    expected: "Tank pivots in place to the right (differential spin)."
+  teardown: [{cmd: stop}]
+
+- id: S1-07
+  layer: raw_serial
+  title: "spin in place left"
+  safety: med
+  setup: [{cmd: stop}]
+  action: {cmd: drive, speed: 0, steer: -100, settle_s: 2}
+  observe:
+    expected: "Tank pivots in place to the left (differential spin)."
+  teardown: [{cmd: stop}]
+
+- id: S1-08
+  layer: raw_serial
+  title: "stop"
+  safety: low
+  action: {cmd: stop}
+  observe:
+    expected: "Wheels halt; an ack is returned."
+    auto:
+      - path: reply
+        exists: true
+
+- id: S1-09
+  layer: raw_serial
+  title: "range validation (speed out of range)"
+  safety: low
+  action: {cmd: drive, speed: 999, steer: 0}
+  observe:
+    expected: "ESP returns an error (code 'range', field 'speed') and does NOT move."
+    auto:
+      - path: reply.type
+        eq: error
+
+- id: S1-10
+  layer: raw_serial
+  title: "pan right"
+  safety: low
+  action: {cmd: pan, angle: 135}
+  observe:
+    expected: "Camera pans right; an ack is returned."
+    auto:
+      - path: reply
+        exists: true
+
+- id: S1-11
+  layer: raw_serial
+  title: "pan left"
+  safety: low
+  action: {cmd: pan, angle: 45}
+  observe:
+    expected: "Camera pans left; an ack is returned."
+    auto:
+      - path: reply
+        exists: true
+
+- id: S1-12
+  layer: raw_serial
+  title: "tilt up"
+  safety: low
+  action: {cmd: tilt, angle: 135}
+  observe:
+    expected: "Camera tilts up; an ack is returned."
+    auto:
+      - path: reply
+        exists: true
+
+- id: S1-13
+  layer: raw_serial
+  title: "tilt down"
+  safety: low
+  action: {cmd: tilt, angle: 45}
+  observe:
+    expected: "Camera tilts down; an ack is returned."
+    auto:
+      - path: reply
+        exists: true
+
+- id: S1-14
+  layer: raw_serial
+  title: "relative pan +20 (issue #31)"
+  safety: low
+  action: {cmd: pan-rel, delta: 20}
+  observe:
+    expected: "Camera pans 20 deg from its current angle; an ack is returned."
+    auto:
+      - path: reply
+        exists: true
+
+- id: S1-15
+  layer: raw_serial
+  title: "relative tilt -10 (issue #31)"
+  safety: low
+  action: {cmd: tilt-rel, delta: -10}
+  observe:
+    expected: "Camera tilts 10 deg down from its current angle; an ack is returned."
+    auto:
+      - path: reply
+        exists: true
+
+- id: S1-16
+  layer: raw_serial
+  title: "center (pan=90 + tilt=90, issue #31)"
+  safety: low
+  action: {cmd: center}
+  observe:
+    expected: "Camera returns to center (pan=90, tilt=90); an ack is returned."
+    auto:
+      - path: reply
+        exists: true
+
+- id: S1-17
+  layer: raw_serial
+  title: "sweep pan 0->180 (issue #31)"
+  safety: low
+  action: {cmd: sweep, axis: pan, from: 0, to: 180, steps: 20}
+  observe:
+    expected: "Camera sweeps smoothly across the range; a {\"type\":\"sweep\",\"done\":true} line is emitted on completion."
+    auto:
+      - path: reply
+        exists: true
+
+- id: S1-18
+  layer: raw_serial
+  title: "serial watchdog (drop keep-alive)"
+  safety: low
+  action: {cmd: watchdog-test}
+  observe:
+    expected: "After SERIAL_WATCHDOG_MS (1000 ms) with no keep-alive, the ESP stops the motors and emits {\"type\":\"watchdog\"}."
+    auto:
+      - path: reply
+        exists: true
+
+- id: S1-19
+  layer: raw_serial
+  title: "get_wifi (issue #56)"
+  safety: low
+  action: {cmd: get_wifi}
+  observe:
+    expected: "ESP returns its current WiFi state (ssid/mode/ip, no password) as a wifi line."
+    auto:
+      - path: reply
+        exists: true
+
+- id: S1-20
+  layer: raw_serial
+  title: "coexistence — non-JSON line does not break protocol (issue #29 T7)"
+  safety: low
+  action: {noop: true}
+  observe:
+    expected: "After injecting a non-JSON debug line over the serial port, the next real command still works (protocol recovers)."

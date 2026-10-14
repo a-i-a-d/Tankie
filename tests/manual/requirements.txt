@@ -1,0 +1,17 @@
+# Dependencies for the Tankie manual integration test harness (issue #87).
+#
+# Install on the tank Pi (or any dev box) before running the harness:
+#   pip3 install -r tests/manual/requirements.txt
+#
+# The runner itself (run_manual.py) + the camera/localai/ai_control adapters
+# use only the Python standard library. The two extras below are the only
+# third-party needs:
+PyYAML>=6.0,<7        # load + validate the declarative test specs (specs/*.yaml)
+pyserial>=3.5         # the raw_serial layer (direct NDJSON to the ESP8266)
+#
+# Optional, per-layer:
+#   - camera RTSP probe (S4-03): `ffprobe` on PATH (apt install ffmpeg)
+#   - brain layer (Stage 6):     the brain deps, i.e.
+#                                pip3 install -r raspberry_pi/brain/requirements.txt
+#   - ai_control layer (Stage 5): the client deps, i.e.
+#                                pip3 install -r ai-control/LocalAI/requirements.txt

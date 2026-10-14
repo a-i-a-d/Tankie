@@ -74,7 +74,13 @@ system_message = {
     "content": "You are controlling a toy tank. You observe its surroundings through images from an on board camera. You can control the direction the camera is looking and drive the tank with tools you have. Follow instructions on where to drive the tank. Without instructions, explore the environment."
 }
 
-user_prompt = 'Explain the current situation in 10 words or less. Predict the next situation in 10 words or less.'
+# The operator can override the instruction (issue #87 Q2): env var > the
+# built-in default. This is the entry point the manual test harness uses to
+# direct the AI ("drive forward", "look left", ...) for Stage 5.
+user_prompt = os.environ.get(
+    "TANKIE_INSTRUCTION",
+    'Explain the current situation in 10 words or less. Predict the next situation in 10 words or less.'
+)
 
 
 camera_position = {

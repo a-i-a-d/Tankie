@@ -1,0 +1,110 @@
+# Stage 2 — Bridge daemon (issue #29/#33). Talks to the Pi bridge daemon over
+# its Unix socket + state store — the real control link used by the CLI and
+# ai_control.py. auto_profile clamps AI drive to max_speed=40 / max_steer=120.
+- id: S2-01
+  layer: bridge
+  title: "daemon up (socket + state + link)"
+  safety: low
+  action: {cmd: state}
+  observe:
+    expected: "The bridge daemon is running: the socket answers, the state store exists, and the ESP link is up."
+    auto:
+      - path: reply
+        exists: true
+      - path: state.link_up
+        eq: true
+
+- id: S2-02
+  layer: bridge
+  title: "drive via socket"
+  safety: med
+  setup: [{cmd: stop}]
+  # Drive at a sub-limit speed (30 < auto_profile.max_speed 40) so this test is
+  # independent of whether clamping is enabled; the clamp itself is S2-03.
+  action: {cmd: drive, speed: 30, steer: 0, settle_s: 2}
+  observe:
+    expected: "Tank moves forward at speed 30; the bridge reply is ok and last_command reflects the drive."
+    auto:
+      - path: reply.ok
+        eq: true
+      - path: state.last_command.speed
+        eq: 30
+  teardown: [{cmd: stop}]
+
+- id: S2-03
+  layer: bridge
+  title: "auto_profile clamp (AI speed limit, issue #31)"
+  safety: med
+  setup: [{cmd: stop}]
+  action: {cmd: drive, speed: 200, steer: 0, settle_s: 2}
+  observe:
+    expected: "A speed of 200 is clamped to the auto_profile max_speed (40): the reply carries a clamped value and the tank moves slowly."
+    auto:
+      - path: reply.clamped.speed
+        eq: 40
+  teardown: [{cmd: stop}]
+
+- id: S2-04
+  layer: bridge
+  title: "keep-alive (tank keeps moving without re-sending)"
+  safety: med
+  setup: [{cmd: stop}]
+  action: {cmd: drive, speed: 40, steer: 0, settle_s: 3}
+  observe:
+    expected: "After issuing one drive, the tank KEEPS moving for the settle window (the bridge re-arms the ESP watchdog every 250 ms)."
+    auto:
+      - path: reply.ok
+        eq: true
+  teardown: [{cmd: stop}]
+
+- id: S2-05
+  layer: bridge
+  title: "state via socket"
+  safety: low
+  action: {cmd: state}
+  observe:
+    expected: "`state` returns the bridge state store (link_up, last_command, last_state, ...)."
+    auto:
+      - path: reply.link_up
+        exists: true
+
+- id: S2-06
+  layer: bridge
+  title: "stop clears keep-alive"
+  safety: low
+  action: {cmd: stop}
+  observe:
+    expected: "`stop` halts the tank and clears the active drive (no further keep-alive re-sends)."
+    auto:
+      - path: reply.ok
+        eq: true
+
+- id: S2-07
+  layer: bridge
+  title: "link-down detection (drop the ESP)"
+  safety: low
+  action: {noop: true}
+  observe:
+    expected: "Unplug/drop the ESP: within ack_timeout_ms the state store reports link_up==false."
+    auto:
+      - path: state.link_up
+        eq: false
+
+- id: S2-08
+  layer: bridge
+  title: "set_stream push (issue #51)"
+  safety: low
+  action: {cmd: state}
+  observe:
+    expected: "After bridge start, the ESP state includes a stream_url (the Pi pushed its own endpoint); the web-UI 'Start video stream' button appears."
+    auto:
+      - path: state.last_state.stream_url
+        exists: true
+
+- id: S2-09
+  layer: bridge
+  title: "self-healing re-arm (issue #57)"
+  safety: low
+  action: {noop: true}
+  observe:
+    expected: "Reboot the ESP: within ~30 s the stream_url is restored with no manual action (the bridge re-arms set_stream)."

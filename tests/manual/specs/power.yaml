@@ -1,0 +1,51 @@
+# Stage 0 — Power & boot (safety-gated, mostly observational).
+# These confirm the tank comes up in a safe state and the network comes up
+# correctly. Most are "noop" (the operator performs/observes by hand); the
+# bridge-state ones are auto-checkable.
+- id: P0-01
+  layer: bridge
+  title: "Cold boot — motors safe (no uncontrolled motion)"
+  safety: low
+  action: {noop: true}
+  observe:
+    expected: "On power-up the tank must NOT move on its own. Console shows the boot banner + 'Battery Voltage' line; wheels are still."
+    auto:
+      - path: state.last_state.speed
+        eq: 0
+      - path: state.last_state.steer
+        eq: 0
+
+- id: P0-02
+  layer: bridge
+  title: "Battery voltage sane"
+  safety: low
+  action: {noop: true}
+  observe:
+    expected: "state.battery is plausible for the pack (~6-9 V). Flag if <5 V or >10 V."
+    auto:
+      - path: state.last_state.battery
+        exists: true
+
+- id: P0-03
+  layer: bridge
+  title: "Boot -> AP fallback (no saved WiFi)"
+  safety: low
+  action: {noop: true}
+  observe:
+    expected: "With no saved WiFi, the 'tankie-esp' AP appears and the portal http://192.168.4.1:8080 is reachable."
+    auto:
+      - path: state.last_state.net_mode
+        eq: ap
+
+- id: P0-04
+  layer: bridge
+  title: "Boot -> STA (saved WiFi)"
+  safety: low
+  action: {noop: true}
+  observe:
+    expected: "With saved WiFi, the ESP gets a LAN IP; net_mode==sta and net_ip is present."
+    auto:
+      - path: state.last_state.net_mode
+        eq: sta
+      - path: state.last_state.net_ip
+        exists: true
