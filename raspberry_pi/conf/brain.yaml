@@ -78,6 +78,11 @@ reflex_steer_around: 60
 bridge_socket: /run/tankie/bridge.sock
 state_file: /var/lib/tankie/state.json
 
+# --- task file (T6, #82; Q5/A5) ---
+# The cross-process task channel: brain_cli.py / the MCP server write the
+# task here; Brain polls it into the in-memory TaskQueue each tick.
+task_file: /var/lib/tankie/task.json
+
 # --- data log (Phase 6 training/benchmark artifact) ---
 data_log_dir: /var/lib/tankie/brain
 data_log_max_mb: 10

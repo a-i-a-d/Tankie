@@ -49,6 +49,7 @@ __all__ = [
     "build_vlm_prompt",
     "format_state",
     "read_state_file",
+    "read_tank_state",
     "DeliberationLoop",
 ]
 
@@ -135,6 +136,58 @@ def read_state_file(path: Any) -> Optional[TankState]:
         return TankState.model_validate(filtered)
     except Exception as exc:  # noqa: BLE001 - the loop must never crash on state
         logger.debug("deliberate: could not read state file %r (%s)", path, exc)
+        return None
+
+
+# The bridge's state file nests the ESP's state broadcast under ``last_state``
+# (issue #33 StateStore._on_state). The mapping from that nested broadcast to
+# the flat :class:`TankState` fields (``battery`` -> ``battery_v``).
+_STATE_KEY_MAP = {
+    "battery": "battery_v",
+    "speed": "speed",
+    "steer": "steer",
+    "pan": "pan",
+    "tilt": "tilt",
+    "net_mode": "net_mode",
+    "net_ip": "net_ip",
+}
+
+
+def read_tank_state(path: Any) -> Optional[TankState]:
+    """Robustly load the bridge's tank-state file into a :class:`TankState`.
+
+    Unlike :func:`read_state_file` (which only reads top-level keys), this
+    also reads the **nested ``last_state``** broadcast the bridge stores
+    (issue #82, Q6/A6): the bridge writes ``link_up`` / ``watchdog_fired`` /
+    ``updated_at`` at the top level but ``battery`` / ``speed`` / ``steer`` /
+    ``pan`` / ``tilt`` / ``net_mode`` / ``net_ip`` under ``last_state``.
+
+    Precedence per field: top-level wins (it is the bridge's own summary);
+    the nested broadcast fills in whatever is missing. Missing file,
+    unreadable file, bad JSON, or a non-dict payload all return ``None``.
+    Never raises.
+    """
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        nested = data.get("last_state")
+        if not isinstance(nested, dict):
+            nested = {}
+        # Merge: nested broadcast first, then top-level overrides (top-level wins).
+        merged: dict = {}
+        for k, v in nested.items():
+            if k in _STATE_KEY_MAP:
+                merged[_STATE_KEY_MAP[k]] = v
+        for k, v in data.items():
+            if k in TankState.model_fields:
+                merged[k] = v
+        valid = set(TankState.model_fields)
+        filtered = {k: v for k, v in merged.items() if k in valid}
+        return TankState.model_validate(filtered)
+    except Exception as exc:  # noqa: BLE001 - the loop must never crash on state
+        logger.debug("deliberate: could not read tank state %r (%s)", path, exc)
         return None
 
 
@@ -238,7 +291,9 @@ class DeliberationLoop:
             return
 
         # 3) tank state (A3) — None is fine (renders as "unknown").
-        state = read_state_file(self._state_file) if self._state_file else None
+        #    read_tank_state also reads the nested last_state broadcast
+        #    (issue #82, Q6/A6) so the VLM sees the real tank state.
+        state = read_tank_state(self._state_file) if self._state_file else None
 
         # 4) prompt (A2: configurable).
         messages = build_vlm_prompt(
