@@ -327,6 +327,9 @@ class ReflexLoop:
         self._lock = threading.Lock()
         self.ticks = 0
         self.stops_sent = 0
+        # T6 (#82): the last decision, for Brain.state() observability.
+        # Written under _lock each tick; read as a copy (never mutated).
+        self._last_result: Optional[ReflexResult] = None
 
     # -- lifecycle ------------------------------------------------------
     def start(self) -> None:
@@ -350,6 +353,14 @@ class ReflexLoop:
         self._send_idle()
 
     # -- internals ------------------------------------------------------
+    @property
+    def last_result(self) -> Optional[dict]:
+        """The last :class:`ReflexResult` as a dict, or ``None`` before
+        the first tick. Thread-safe (T6: feeds ``Brain.state()``)."""
+        with self._lock:
+            r = self._last_result
+            return r.model_dump() if r is not None else None
+
     def _send_idle(self) -> None:
         try:
             self._bridge.send(IDLE_CMD)
@@ -399,6 +410,8 @@ class ReflexLoop:
         result = self._controller.decide(
             det.get("detections", []), img_w, img_h, pending
         )
+        with self._lock:
+            self._last_result = result
         cmd = self._controller.to_bridge_cmd(result, pending)
         if not self._idle_keepalive and cmd == IDLE_CMD:
             return  # A4: quiet idle (human can take over)

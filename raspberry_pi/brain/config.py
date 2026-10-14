@@ -90,6 +90,7 @@ _SCALAR_FIELDS = (
     "reflex_steer_around",
     "reflex_obstacle_enabled",
     "state_file",
+    "task_file",
     "data_log_dir",
     "data_log_max_mb",
     "data_log_keep",
@@ -149,6 +150,10 @@ class BrainConfig:
     reflex_steer_around: int = 60          # A3: steer magnitude when avoiding (configurable)
     reflex_obstacle_enabled: bool = False  # A2: off until depth (T15); on = detection-only avoidance
     state_file: str = "/var/lib/tankie/state.json"
+    # --- task file (T6, #82; Q5/A5: the cross-process task channel) ---
+    # brain_cli.py / the MCP server write the task here; Brain polls it
+    # into the in-memory TaskQueue each tick (one tiny read).
+    task_file: str = "/var/lib/tankie/task.json"
     data_log_dir: str = "/var/lib/tankie/brain"
     data_log_max_mb: int = 10
     data_log_keep: int = 5
