@@ -39,6 +39,7 @@ from __future__ import annotations
 import re
 import threading
 import time
+from collections import deque
 from typing import Optional, Protocol, runtime_checkable
 
 # ---------------------------------------------------------------------------
@@ -317,13 +318,16 @@ class FrameGrab:
         source: FrameSource,
         interval_s: float = 0.2,
         stale_after_s: float = 3.0,
+        ring_size: int = 4,
     ) -> None:
         self._source = source
         self._interval_s = max(0.01, float(interval_s))
         self._stale_after_s = max(0.0, float(stale_after_s))
+        self._ring_size = max(1, int(ring_size))
         self._lock = threading.Lock()
         self._frame = None
         self._ts: Optional[float] = None
+        self._ring: deque = deque(maxlen=self._ring_size)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -363,6 +367,32 @@ class FrameGrab:
                 return None
             return max(0.0, time.monotonic() - self._ts)
 
+    def read_sequence(self, n: int = 4) -> list:
+        """Return the last ``n`` distinct fresh frames, oldest first.
+
+        Used by the deliberation loop (T5) to give the VLM a short sequence
+        so it can infer motion. Frames are drawn from the ring buffer (up to
+        ``ring_size`` most-recent frames). A frame is included only if it is
+        younger than ``stale_after_s`` (same freshness rule as
+        :meth:`read_latest`). If fewer than ``n`` fresh frames are available,
+        the shorter list is returned. Returns ``[]`` when no fresh frame
+        exists (the deliberation loop treats that as "no frames" and skips).
+
+        Never raises.
+        """
+        n = max(1, int(n))
+        with self._lock:
+            # The ring only ever holds recent frames; the newest one's age is
+            # the max age in the ring, so a single freshness check on it
+            # covers the whole ring (same rule as read_latest()).
+            if self._ts is None:
+                return []
+            if (time.monotonic() - self._ts) > self._stale_after_s:
+                return []
+            # _ring holds the most-recent frames in arrival order (oldest ->
+            # newest). Take the last n.
+            return list(self._ring)[-n:]
+
     # -- internals --------------------------------------------------------
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -374,6 +404,7 @@ class FrameGrab:
                 with self._lock:
                     self._frame = frame
                     self._ts = time.monotonic()
+                    self._ring.append(frame)
             self._stop.wait(self._interval_s)
 
 
@@ -400,6 +431,7 @@ def build_frame_grab(config, *, prefer: str = "auto", client=None) -> "FrameGrab
         source,
         interval_s=getattr(config, "grab_interval_s", 0.2),
         stale_after_s=getattr(config, "grab_stale_after_s", 3.0),
+        ring_size=getattr(config, "deliberate_frames", 4),
     )
 
 

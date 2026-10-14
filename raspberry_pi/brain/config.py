@@ -40,6 +40,30 @@ _ENV_OVERRIDES = {
     "TANKIE_REFLEX_OBSTACLE_ENABLED": "reflex_obstacle_enabled",
 }
 
+# --------------------------------------------------------------------------
+# Deliberation (System 2) default prompts (issue #81, T5; A2: configurable).
+# Kept here (the single config source, D10/D19) so the deliberation loop
+# brain.yaml / env so the phrasing changes without a code edit.
+DEFAULT_SYSTEM_PROMPT = (
+    "You are the deliberation layer of a tank robot.\n"
+    "You receive camera frames, the current task, and the tank state.\n"
+    "Decide the next action. Respond with a single JSON object:\n"
+    '{"intent": "go_to|find|explore|stop|say|wait",\n'
+    ' "cmd": "drive|pan|tilt|stop|none",\n'
+    ' "speed": <int -100..100>, "steer": <int -100..100>,\n'
+    ' "pan": <int 0..180 or null>, "tilt": <int 0..180 or null>,\n'
+    ' "say": "<what to say, optional>", "reason": "<why>"}\n'
+    "The reflex safety layer will clamp and may override. Focus on the task."
+)
+# ``{task}`` and ``{state}`` are the only placeholders; both are always
+# provided by brain.deliberate.build_vlm_prompt. A single user message
+# because the T2 client attaches the image parts to the *last* user message.
+DEFAULT_USER_PROMPT_TEMPLATE = (
+    "Current task: {task}\n"
+    "Tank state: {state}\n"
+    "Decide the next action and respond with the JSON object."
+)
+
 # Scalar BrainConfig fields (the nested AutoProfile/Timeouts are handled
 # separately). Kept in declaration order for a stable to_dict().
 _SCALAR_FIELDS = (
@@ -51,6 +75,9 @@ _SCALAR_FIELDS = (
     "tts_model",
     "reflex_hz",
     "deliberate_hz",
+    "deliberate_frames",
+    "deliberate_system_prompt",
+    "deliberate_user_prompt_template",
     "cam_url",
     "grab_interval_s",
     "grab_stale_after_s",
@@ -96,12 +123,16 @@ class BrainConfig:
 
     localai_base_url: str = "http://localai.local:8080/v1"
     localai_api_key: str = "sk-0123456789"  # LocalAI accepts any key
-    vlm_model: str = "qwen3.8-4b-q4"        # OPEN Q2 (#73) — confirm vision
+    vlm_model: str = "ornith-1.5-9b-obliterated-q4"  # benchmark best (issue #81, Q1)
     detection_model: str = "rfdetr-base"    # Q1 (#73) — detector (config-driven)
     stt_model: str = "whisper-1"        # Q3 (#73) — STT (confirmed deployed)
     tts_model: str = "qwen3-tts-0.6b-custom-voice"  # Q3 (#73) — TTS default (configurable)
     reflex_hz: int = 10                     # D3
     deliberate_hz: int = 1                  # conservative start (1-5 Hz)
+    # --- deliberate loop (T5, #81) ---
+    deliberate_frames: int = 4              # 1-4 frames per VLM call (A1: sequence)
+    deliberate_system_prompt: str = DEFAULT_SYSTEM_PROMPT
+    deliberate_user_prompt_template: str = DEFAULT_USER_PROMPT_TEMPLATE
     cam_url: str = "http://tankie.local:8888/cam_low/index.m3u8"  # D5 (LL-HLS)
     grab_interval_s: float = 0.2        # T3: how often FrameGrab polls the source
     grab_stale_after_s: float = 3.0     # T3: read_latest() -> None once a frame is this old

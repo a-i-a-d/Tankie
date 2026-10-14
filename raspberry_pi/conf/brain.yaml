@@ -17,7 +17,7 @@ localai_base_url: http://192.168.178.10:8080/v1   # local override (A4); code de
 localai_api_key: "sk-0123456789"                   # LocalAI accepts any key (or none)
 
 # --- models (all configurable — switch and re-test easily; none are hardcoded in code) ---
-vlm_model: qwen3.8-4b-q4                 # Q2 (#73): vision VLM (configurable)
+vlm_model: ornith-1.5-9b-obliterated-q4  # issue #81 Q1 (A1): benchmark-best vision VLM (configurable — switch + re-test easily)
 detection_model: rfdetr-base             # Q1 (#73): detector for POST /v1/detection (configurable)
 stt_model: whisper-1                     # Q3 (#73): speech-to-text (confirmed deployed)
 tts_model: qwen3-tts-0.6b-custom-voice   # Q3 (#73): text-to-speech default (configurable)
@@ -25,6 +25,28 @@ tts_model: qwen3-tts-0.6b-custom-voice   # Q3 (#73): text-to-speech default (con
 # --- loop rates (D3: reflex 10 Hz, deliberate 1-5 Hz) ---
 reflex_hz: 10
 deliberate_hz: 1                # conservative start; raise once the loop is stable
+
+# --- deliberation loop (T5, #81) — the slow thinker (System 2) ---------
+# A1 (#81): a short *sequence* of frames per VLM call so it can infer
+# motion. 1-4; the frame grabber's ring buffer is sized to this.
+deliberate_frames: 4
+# A2 (#81): the VLM prompts are fully configurable — edit here to change
+# the phrasing without touching code. {task} and {state} are the only
+# placeholders in the user template (both always provided).
+deliberate_system_prompt: |
+  You are the deliberation layer of a tank robot.
+  You receive camera frames, the current task, and the tank state.
+  Decide the next action. Respond with a single JSON object:
+  {"intent": "go_to|find|explore|stop|say|wait",
+   "cmd": "drive|pan|tilt|stop|none",
+   "speed": <int -100..100>, "steer": <int -100..100>,
+   "pan": <int 0..180 or null>, "tilt": <int 0..180 or null>,
+   "say": "<what to say, optional>", "reason": "<why>"}
+  The reflex safety layer will clamp and may override. Focus on the task.
+deliberate_user_prompt_template: |
+  Current task: {task}
+  Tank state: {state}
+  Decide the next action and respond with the JSON object.
 
 # --- camera (D5: LL-HLS cam_low is the brain's frame source) ---
 cam_url: http://tankie.local:8888/cam_low/index.m3u8   # LL-HLS; rtsp://tankie.local:8554/cam_low is the fallback
