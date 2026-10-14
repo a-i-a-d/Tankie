@@ -218,7 +218,9 @@ def test_load_config_missing_file_defaults():
     c = load_config(path="/nonexistent/brain.yaml", env={})
     assert c == BrainConfig()
     assert c.localai_base_url == "http://localai.local:8080/v1"
-    assert c.vlm_model == "qwen3.8-4b-q4"
+    # vlm_model default changed to the benchmark-best vision model
+    # (issue #81, Q1 A1: ornith-1.5-9b-obliterated-q4).
+    assert c.vlm_model == "ornith-1.5-9b-obliterated-q4"
 
 
 def test_load_config_env_override_wins(tmp_path):
