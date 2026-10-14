@@ -134,14 +134,22 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      # Node 20 is needed by harness section 18 (issue #90): it runs the REAL
+      # inline <script> from benchmark-ui.html in a VM sandbox (no DOM/network)
+      # to guard the dynamic UI's pure logic (parse/stats/rank/compare/grade).
+      - name: Install Node.js (for the benchmark-UI harness, issue #90)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
       - name: py_compile the VLM-benchmark scripts (stdlib only)
         run: |
           python -m py_compile tools/vlm-benchmark/vlm_bench.py \
             tools/vlm-benchmark/scene_gen.py tools/vlm-benchmark/report.py
-      - name: Run the offline VLM-benchmark harness (issue #81)
+      - name: Run the offline VLM-benchmark harness (issue #81, #90)
         # tools/vlm-benchmark is pure stdlib (no pip install). The harness
-        # verifies scene generation, report.py recommendation + --json, and
-        # PNG validity against the committed results - no server/network.
+        # verifies scene generation, report.py recommendation + --json, PNG
+        # validity, and the dynamic UI's core logic (section 18, Node) -
+        # no LocalAI server / network needed.
         run: python tests/vlm_bench_harness.py
 
   firmware-build:

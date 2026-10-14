@@ -885,6 +885,245 @@ def main() -> int:
         import traceback
         check("warmup section ran", False, f"{type(e).__name__}: {e}\n{traceback.format_exc()[-800:]}")
 
+
+    # 18. benchmark-ui.html — dynamic frontend core logic (issue #90).
+    #     Runs the REAL inline <script> from the self-contained HTML in a Node
+    #     VM sandbox (no DOM, no network) and asserts the pure logic:
+    #     JSONL parsing, stats/aggregate/ranking (mirrors report.py),
+    #     run comparison ("only changed"), grading (mirrors vlm_bench._grade),
+    #     and the LocalAI chat request/response/record shapes.
+    print("18. benchmark-ui.html (dynamic UI core logic, issue #90)")
+    import shutil
+    import tempfile as _tmp18
+    ui_html = os.path.join(TOOLS, "benchmark-ui.html")
+    if not os.path.isfile(ui_html):
+        check("benchmark-ui.html present", False, f"missing: {ui_html}")
+    else:
+        check("benchmark-ui.html present", True)
+        node = shutil.which("node")
+        if not node:
+            check("node available (UI harness)", False, "node not found on PATH")
+        else:
+            js_runner = r"""
+'use strict';
+const fs = require('fs');
+const vm = require('vm');
+const htmlPath = process.argv[2];
+const html = fs.readFileSync(htmlPath, 'utf8');
+const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+const sandbox = { console: console };
+sandbox.globalThis = sandbox;
+vm.createContext(sandbox);
+for (const s of scripts) vm.runInContext(s, sandbox, { filename: 'inline.js' });
+const M = sandbox.TankieBenchUI;
+if (!M) { console.error('NO_MODULE'); process.exit(3); }
+const out = {};
+const p = M.parseJsonl('{"a":1}\n\nnot-json\n{"b":2}\n');
+out.parse = { records: p.records.length, malformed: p.malformed };
+const statsRecs = [
+  { phase: 'warmup', elapsed_s: 100, error: null },
+  { phase: 'test', elapsed_s: 2, error: null, grade: { semantic: true } },
+  { phase: 'test', elapsed_s: 4, error: null, grade: { semantic: true } },
+  { phase: 'test', elapsed_s: 0.1, error: 'HTTP 500', grade: { semantic: false } },
+];
+out.stats = M.stats(statsRecs);
+out.cell = {
+  empty: M.cellStatus({ n: 0 }),
+  pass: M.cellStatus({ n: 2, pass: 2 }),
+  partial: M.cellStatus({ n: 2, pass: 1 }),
+  error: M.cellStatus({ n: 2, pass: 0, errors: 2 }),
+  fail: M.cellStatus({ n: 2, pass: 0, errors: 0 }),
+};
+function mkRun(model, passN, latMed) {
+  const recs = [];
+  for (let i = 0; i < 2; i++) {
+    const ok = i < passN;
+    recs.push({ model: model, task: 'detect', variant: '', phase: 'test',
+      elapsed_s: latMed, error: ok ? null : 'HTTP 500',
+      grade: { valid_json: ok, required_keys: ok, semantic: ok } });
+  }
+  return { name: model, records: recs };
+}
+const cmp = M.compareRuns(mkRun('M', 1, 10), mkRun('M', 2, 8));
+out.compare = { changed: cmp.changed.length, improved: cmp.improved, regressed: cmp.regressed,
+  unchanged: cmp.unchanged, passDelta: cmp.rows[0].pass_rate_delta,
+  latDelta: cmp.rows[0].lat_delta, errDelta: cmp.rows[0].errors_delta };
+const g = (t, v, x) => M.grade(t, v, x);
+out.grade = {
+  drive_left_50: g('drive', 'left', { error: null, parsed: { action: 'forward', steer: 50 } }),
+  drive_left_neg50: g('drive', 'left', { error: null, parsed: { action: 'forward', steer: -50 } }),
+  drive_left_10: g('drive', 'left', { error: null, parsed: { action: 'forward', steer: 10 } }),
+  drive_left_20: g('drive', 'left', { error: null, parsed: { action: 'forward', steer: 20 } }),
+  drive_center_stop: g('drive', 'center', { error: null, parsed: { action: 'stop' } }),
+  drive_center_fwd: g('drive', 'center', { error: null, parsed: { action: 'forward', throttle: 50 } }),
+  drive_clear_50: g('drive', 'clear', { error: null, parsed: { action: 'forward', throttle: 50 } }),
+  drive_clear_10: g('drive', 'clear', { error: null, parsed: { action: 'forward', throttle: 10 } }),
+  detect_ok: g('detect', '', { error: null, parsed: { objects: [{ label: 'red circle' }, { label: 'green square' }] } }),
+  detect_missing: g('detect', '', { error: null, parsed: { objects: [{ label: 'red circle' }] } }),
+  seq_ok: g('sequence', '', { error: null, parsed: { moving: 'square', direction: 'right' } }),
+  seq_wrong: g('sequence', '', { error: null, parsed: { moving: 'square', direction: 'left' } }),
+  err: g('detect', '', { error: 'HTTP 500', parsed: { objects: [] } }),
+};
+const req = M.buildChatRequest({ base: 'http://x/v1/', model: 'm', prompt: 'P',
+  images: ['data:image/png;base64,AAA'], max_tokens: 100, json_mode: true });
+out.chat = { url: req.url, model: req.body.model, text: req.body.messages[1].content[0].text,
+  max_tokens: req.body.max_tokens, temp: req.body.temperature,
+  rf: req.body.response_format ? req.body.response_format.type : null,
+  img: req.body.messages[1].content[1].image_url.url };
+const reqOff = M.buildChatRequest({ base: 'http://x/v1', model: 'm', prompt: 'P', images: [],
+  max_tokens: 100, json_mode: false });
+out.chat.rf_off = reqOff.body.response_format ? 'present' : 'absent';
+out.parseResp = {
+  c1: M.parseChatResponse({ choices: [{ message: { content: '{"a":1}' } }] }),
+  c2: M.parseChatResponse({ choices: [{ message: { content: '', reasoning: '{"b":2}' } }] }),
+  c3: M.parseChatResponse({ choices: [{ message: { content: [{ type: 'text', text: 'hi' }] } }] }),
+};
+const rec = M.buildRecord({ base: 'http://x', model: 'm', task: 'detect', variant: '', images: [],
+  max_tokens: 500, prompt: 'P', http: 200, content: '{}', reasoning: null, parsed: {}, error: null,
+  grade: { valid_json: false, required_keys: false, semantic: false }, t0: Date.now() - 1500 });
+out.record = { phase: rec.phase, task: rec.task, hasTs: !!rec.ts,
+  hasElapsed: typeof rec.elapsed_s === 'number', n_images: rec.n_images };
+const recs = [
+  { model: 'M1', task: 'detect', variant: '', phase: 'test', elapsed_s: 10, error: null,
+    grade: { valid_json: true, required_keys: true, semantic: true } },
+  { model: 'M1', task: 'detect', variant: '', phase: 'test', elapsed_s: 0.1, error: 'HTTP 500',
+    grade: { valid_json: false, required_keys: false, semantic: false } },
+  { model: 'M2', task: 'detect', variant: '', phase: 'test', elapsed_s: 12, error: null,
+    grade: { valid_json: true, required_keys: true, semantic: true } },
+  { model: 'M2', task: 'detect', variant: '', phase: 'test', elapsed_s: 14, error: null,
+    grade: { valid_json: true, required_keys: true, semantic: true } },
+];
+const agg = M.aggregate(recs);
+out.recommend = M.recommend(agg);
+out.agg = { models: Object.keys(agg).sort(), m1_pr: agg.M1.overall.pass_rate,
+  m1_lat: agg.M1.overall.lat_med, m1_err: agg.M1.overall.errors,
+  m2_pr: agg.M2.overall.pass_rate, m2_lat: agg.M2.overall.lat_med, m2_err: agg.M2.overall.errors };
+console.log(JSON.stringify(out));
+"""
+            js_path = os.path.join(_tmp18.mkdtemp(), "ui_runner.js")
+            with open(js_path, "w", encoding="utf-8") as fh:
+                fh.write(js_runner)
+            r = run([node, js_path, ui_html])
+            if r.returncode != 0:
+                check("UI core loads in Node", False,
+                      f"node exit {r.returncode}: {r.stderr[:300]}")
+            else:
+                try:
+                    out = json.loads(r.stdout.strip().splitlines()[-1])
+                except Exception as e:
+                    check("UI core JSON output", False, f"{e}: {r.stdout[:200]}")
+                    out = None
+                if out is not None:
+                    # parse
+                    check("18 parseJsonl records=2", out["parse"]["records"] == 2, str(out["parse"]))
+                    check("18 parseJsonl malformed=1", out["parse"]["malformed"] == 1, str(out["parse"]))
+                    # stats (mirrors report.py._stats)
+                    st = out["stats"]
+                    check("18 stats n=3 (test only)", st["n"] == 3, str(st))
+                    check("18 stats pass=2", st["pass"] == 2, str(st))
+                    check("18 stats pass_rate=0.667", st["pass_rate"] == 0.667, str(st))
+                    check("18 stats errors=1", st["errors"] == 1, str(st))
+                    check("18 stats lat_med=3.0 (warm success only)", st["lat_med"] == 3.0, str(st))
+                    check("18 stats lat_err_med=0.1", st["lat_err_med"] == 0.1, str(st))
+                    check("18 stats lat_cold_med=100 (warmup)", st["lat_cold_med"] == 100, str(st))
+                    # cellStatus
+                    check("18 cell empty", out["cell"]["empty"] == "empty", str(out["cell"]))
+                    check("18 cell pass", out["cell"]["pass"] == "pass", str(out["cell"]))
+                    check("18 cell partial", out["cell"]["partial"] == "partial", str(out["cell"]))
+                    check("18 cell error", out["cell"]["error"] == "error", str(out["cell"]))
+                    check("18 cell fail", out["cell"]["fail"] == "fail", str(out["cell"]))
+                    # compare (issue #90 A4)
+                    c = out["compare"]
+                    check("18 compare changed=1", c["changed"] == 1, str(c))
+                    check("18 compare improved=1", c["improved"] == 1, str(c))
+                    check("18 compare regressed=0", c["regressed"] == 0, str(c))
+                    check("18 compare pass_delta=+0.5", c["passDelta"] == 0.5, str(c))
+                    check("18 compare lat_delta=-2", c["latDelta"] == -2, str(c))
+                    check("18 compare err_delta=-1", c["errDelta"] == -1, str(c))
+                    # chat request shape
+                    ch = out["chat"]
+                    check("18 chat url", ch["url"] == "http://x/v1/chat/completions", str(ch["url"]))
+                    check("18 chat model", ch["model"] == "m")
+                    check("18 chat prompt text", ch["text"] == "P")
+                    check("18 chat max_tokens", ch["max_tokens"] == 100)
+                    check("18 chat temperature=0", ch["temp"] == 0)
+                    check("18 chat json mode on", ch["rf"] == "json_object")
+                    check("18 chat image attached", ch["img"] == "data:image/png;base64,AAA")
+                    check("18 chat json mode off omits response_format", ch["rf_off"] == "absent")
+                    # parseChatResponse
+                    pr = out["parseResp"]
+                    check("18 parseResp content", pr["c1"]["content"] == '{"a":1}' and pr["c1"]["parsed"] == {"a": 1}, str(pr["c1"]))
+                    check("18 parseResp reasoning fallback", pr["c2"]["content"] == "" and pr["c2"]["parsed"] == {"b": 2}, str(pr["c2"]))
+                    check("18 parseResp list content", pr["c3"]["content"] == "hi", str(pr["c3"]))
+                    # buildRecord
+                    rc = out["record"]
+                    check("18 record phase=test", rc["phase"] == "test", str(rc))
+                    check("18 record has ts + elapsed", rc["hasTs"] and rc["hasElapsed"], str(rc))
+                    check("18 record n_images=0", rc["n_images"] == 0, str(rc))
+                    # aggregate + recommend (cross-checked vs report.py below)
+                    check("18 aggregate models", out["agg"]["models"] == ["M1", "M2"], str(out["agg"]))
+                    check("18 agg M1 pass_rate=0.5", out["agg"]["m1_pr"] == 0.5, str(out["agg"]))
+                    check("18 agg M1 lat_med=10", out["agg"]["m1_lat"] == 10, str(out["agg"]))
+                    check("18 agg M2 pass_rate=1.0", out["agg"]["m2_pr"] == 1.0, str(out["agg"]))
+
+                    # --- cross-check: JS grade == Python vlm_bench._grade ---
+                    sys.path.insert(0, TOOLS)
+                    import vlm_bench as _vb18
+                    importlib.reload(_vb18)
+                    cases = {
+                        "drive_left_50": ("drive", "left", {"action": "forward", "steer": 50}),
+                        "drive_left_neg50": ("drive", "left", {"action": "forward", "steer": -50}),
+                        "drive_left_10": ("drive", "left", {"action": "forward", "steer": 10}),
+                        "drive_left_20": ("drive", "left", {"action": "forward", "steer": 20}),
+                        "drive_center_stop": ("drive", "center", {"action": "stop"}),
+                        "drive_center_fwd": ("drive", "center", {"action": "forward", "throttle": 50}),
+                        "drive_clear_50": ("drive", "clear", {"action": "forward", "throttle": 50}),
+                        "drive_clear_10": ("drive", "clear", {"action": "forward", "throttle": 10}),
+                        "detect_ok": ("detect", "", {"objects": [{"label": "red circle"}, {"label": "green square"}]}),
+                        "detect_missing": ("detect", "", {"objects": [{"label": "red circle"}]}),
+                        "seq_ok": ("sequence", "", {"moving": "square", "direction": "right"}),
+                        "seq_wrong": ("sequence", "", {"moving": "square", "direction": "left"}),
+                    }
+                    all_match = True
+                    mismatch = []
+                    for cid, (t, v, parsed) in cases.items():
+                        py = _vb18._grade(t, v, {"error": None, "parsed": parsed, "content": json.dumps(parsed)})
+                        js = out["grade"][cid]
+                        if py != js:
+                            all_match = False
+                            mismatch.append(f"{cid}: py={py} js={js}")
+                    check("18 JS grade == Python vlm_bench._grade (12 cases)", all_match, "; ".join(mismatch))
+                    # error case: both all-False
+                    check("18 JS grade error -> all False",
+                          out["grade"]["err"] == {"valid_json": False, "required_keys": False, "semantic": False},
+                          str(out["grade"]["err"]))
+
+                    # --- cross-check: JS recommend == Python report.recommend ---
+                    import report as _rp18
+                    importlib.reload(_rp18)
+                    recs18 = [
+                        {"model": "M1", "task": "detect", "variant": "", "phase": "test", "elapsed_s": 10, "error": None,
+                         "grade": {"valid_json": True, "required_keys": True, "semantic": True}},
+                        {"model": "M1", "task": "detect", "variant": "", "phase": "test", "elapsed_s": 0.1, "error": "HTTP 500",
+                         "grade": {"valid_json": False, "required_keys": False, "semantic": False}},
+                        {"model": "M2", "task": "detect", "variant": "", "phase": "test", "elapsed_s": 12, "error": None,
+                         "grade": {"valid_json": True, "required_keys": True, "semantic": True}},
+                        {"model": "M2", "task": "detect", "variant": "", "phase": "test", "elapsed_s": 14, "error": None,
+                         "grade": {"valid_json": True, "required_keys": True, "semantic": True}},
+                    ]
+                    py_sum = _rp18.aggregate(recs18, None, None)
+                    py_best, _ = _rp18.recommend(py_sum)
+                    check("18 JS recommend == Python recommend (M2)",
+                          out["recommend"]["model"] == py_best == "M2",
+                          f"js={out['recommend']} py={py_best}")
+                    # JS aggregate stats match Python aggregate stats
+                    py_m1 = py_sum["M1"]["overall"]
+                    check("18 JS aggregate M1 == Python (pr/lat/err)",
+                          out["agg"]["m1_pr"] == py_m1["pass_rate"]
+                          and out["agg"]["m1_lat"] == py_m1["lat_med"]
+                          and out["agg"]["m1_err"] == py_m1["errors"],
+                          f"js={out['agg']} py={py_m1}")
+    
     print()
     print(f"{'=' * 40}")
     print(f"  {passed} passed, {failed} failed")

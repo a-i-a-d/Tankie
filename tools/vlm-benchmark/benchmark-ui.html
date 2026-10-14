@@ -1,0 +1,1008 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VLM Benchmark UI</title>
+<style>
+:root{--bg:#0f1117;--card:#171a23;--card2:#12151d;--fg:#e6e8ee;--muted:#8b90a0;--line:#262b38;
+--pass:#2ea44f;--fail:#e5484d;--partial:#d29922;--err:#6e7681;--accent:#4493f8;}
+*{box-sizing:border-box;}
+body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg);}
+.wrap{max-width:1280px;margin:0 auto;padding:24px 28px 60px;}
+h1{font-size:22px;margin:0 0 4px;}
+h2{font-size:15px;margin:28px 0 10px;color:var(--fg);text-transform:uppercase;letter-spacing:.04em;}
+.sub{color:var(--muted);font-size:13px;margin-bottom:20px;}
+.cards{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px;}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px;min-width:100px;}
+.card .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;}
+.card .v{font-size:20px;font-weight:600;margin-top:3px;}
+.card.rec .v{color:var(--accent);font-size:13px;word-break:break-word;}
+table{border-collapse:collapse;width:100%;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+th,td{padding:9px 11px;text-align:center;border-bottom:1px solid var(--line);}
+th{background:var(--card2);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;cursor:default;white-space:nowrap;}
+th.sortable{cursor:pointer;}
+th.sortable:hover{color:var(--fg);}
+th .arrow{color:var(--accent);font-size:9px;margin-left:3px;}
+td.model,th.model{text-align:left;font-weight:500;word-break:break-word;}
+tbody tr:last-child td{border-bottom:none;}
+tbody tr{cursor:pointer;}
+tbody tr:hover td{background:rgba(68,147,248,.05);}
+.cell{display:flex;flex-direction:column;align-items:center;gap:2px;}
+.mark{font-size:16px;line-height:1;}
+.lat{font-size:11px;color:var(--muted);}
+td.pass{background:rgba(46,164,79,.10);}
+td.fail{background:rgba(229,72,77,.10);}
+td.partial{background:rgba(210,153,34,.12);}
+td.error{background:rgba(110,118,129,.14);}
+td.empty{background:rgba(110,118,129,.06);}
+.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;margin-left:6px;vertical-align:middle;}
+.badge.rec{background:rgba(68,147,248,.20);color:var(--accent);}
+tr.rec-row td{box-shadow:inset 0 0 0 1px var(--accent);}
+td.coldload{background:rgba(94,158,255,.06);}
+td.coldload .lat{color:#7fb0ff;font-size:12px;}
+.temp{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:10px;margin-left:6px;vertical-align:middle;}
+.temp.cold{background:rgba(94,158,255,.18);color:#7fb0ff;}
+.temp.warm{background:rgba(255,171,64,.18);color:#ffb066;}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin:8px 0 16px;font-size:12px;color:var(--muted);}
+.legend span{display:inline-flex;align-items:center;gap:6px;}
+.dot{width:11px;height:11px;border-radius:3px;display:inline-block;}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px;}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;}
+.field{display:flex;flex-direction:column;gap:4px;}
+.field label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;}
+input,select,textarea,button{font:inherit;color:var(--fg);background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:7px 10px;}
+input,select{min-width:120px;}
+textarea{min-width:220px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;resize:vertical;}
+button{cursor:pointer;background:#1c2130;font-weight:600;}
+button:hover{border-color:var(--accent);}
+button.primary{background:var(--accent);color:#08111f;border-color:var(--accent);}
+button.danger:hover{border-color:var(--fail);color:#ff9a9d;}
+button.small{padding:4px 8px;font-size:12px;}
+.muted{color:var(--muted);font-size:12px;}
+.ok{color:var(--pass);font-weight:600;}
+.err{color:#ff8b8e;font-weight:600;}
+pre{background:#0c0e14;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;font-size:12px;white-space:pre-wrap;word-break:break-word;margin:8px 0;}
+.prompt{background:var(--card2);border-left:3px solid var(--accent);border-radius:6px;padding:8px 12px;font-size:12px;white-space:pre-wrap;word-break:break-word;margin:8px 0 4px;color:#c8cdd9;}
+.prompt .lbl{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px;}
+.kv{color:var(--muted);font-size:12px;}
+.runs{display:flex;gap:10px;flex-wrap:wrap;}
+.run{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:230px;flex:1;}
+.run .name{font-weight:600;margin-bottom:4px;word-break:break-word;}
+.run .meta{color:var(--muted);font-size:12px;margin-bottom:8px;}
+.run .acts{display:flex;gap:6px;flex-wrap:wrap;}
+.tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:700;margin-right:4px;}
+.tag.A{background:rgba(46,164,79,.2);color:var(--pass);}
+.tag.B{background:rgba(210,153,34,.2);color:var(--partial);}
+.drawer{position:fixed;top:0;right:0;height:100%;width:min(560px,92vw);background:var(--card);border-left:1px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.5);transform:translateX(100%);transition:transform .18s ease;z-index:50;overflow:auto;padding:18px 20px;}
+.drawer.open{transform:translateX(0);}
+.drawer h3{margin:0 0 4px;font-size:16px;word-break:break-word;}
+.drawer .close{position:sticky;top:0;float:right;}
+.delta.pos{color:var(--pass);font-weight:600;}
+.delta.neg{color:var(--fail);font-weight:600;}
+.delta.zero{color:var(--muted);}
+.hidden{display:none;}
+footer{margin-top:26px;color:var(--muted);font-size:12px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>VLM Benchmark UI</h1>
+<div class="sub">Dynamic frontend for the Tankie VLM benchmark &middot; load runs, compare, and experiment with custom tests &middot; issue #90</div>
+
+<!-- ===================== CONFIG ===================== -->
+<h2>LocalAI config</h2>
+<div class="panel">
+  <div class="row">
+    <div class="field"><label>Base URL</label><input id="cfg-base" placeholder="http://localai.local:8080/v1"></div>
+    <div class="field"><label>API key</label><input id="cfg-key" type="password" placeholder="sk-..."></div>
+    <div class="field"><label>Timeout (s)</label><input id="cfg-timeout" type="number" value="240" style="min-width:80px"></div>
+    <button id="btn-test-conn" class="small">Test connection</button>
+    <span id="conn-status" class="muted"></span>
+  </div>
+</div>
+
+<!-- ===================== RUNS ===================== -->
+<h2>Runs</h2>
+<div class="panel">
+  <div class="row" style="margin-bottom:12px">
+    <div class="field"><label>Load result file(s) (JSONL)</label>
+      <input type="file" id="file-runs" accept=".jsonl,.json,.txt" multiple>
+    </div>
+    <button id="btn-clear-runs" class="small danger">Clear all</button>
+  </div>
+  <div id="runs-list" class="runs"><span class="muted">No runs loaded yet. Pick one or more JSONL result files (e.g. <code>results/baseline-*.jsonl</code>).</span></div>
+</div>
+
+<!-- ===================== MATRIX ===================== -->
+<h2>Results matrix</h2>
+<div class="panel">
+  <div class="row" style="margin-bottom:10px">
+    <div class="field"><label>Run to display</label><select id="sel-display"></select></div>
+    <div class="field"><label>Filter models</label><input id="filter-model" placeholder="substring" style="min-width:160px"></div>
+    <div class="field"><label>Sort</label><select id="sel-sort">
+      <option value="model">model (A&ndash;Z)</option>
+      <option value="pass_rate">pass rate (desc)</option>
+      <option value="lat_med">warm median (asc)</option>
+      <option value="errors">errors (asc)</option>
+    </select></div>
+  </div>
+  <div class="legend">
+    <span><span class="dot" style="background:var(--pass)"></span> pass</span>
+    <span><span class="dot" style="background:var(--partial)"></span> partial</span>
+    <span><span class="dot" style="background:var(--fail)"></span> fail (semantic)</span>
+    <span><span class="dot" style="background:var(--err)"></span> error</span>
+    <span>&middot; click a row for full prompt + response</span>
+  </div>
+  <div id="matrix-wrap"></div>
+</div>
+
+<!-- ===================== COMPARE ===================== -->
+<h2>Compare two runs</h2>
+<div class="panel">
+  <div class="row" style="margin-bottom:10px">
+    <div class="field"><label>Run A (baseline)</label><select id="sel-a"></select></div>
+    <div class="field"><label>Run B (candidate)</label><select id="sel-b"></select></div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)">
+      <input type="checkbox" id="chk-changed" style="min-width:auto"> only show changed
+    </label>
+    <button id="btn-compare" class="primary small">Compare</button>
+  </div>
+  <div id="compare-summary" class="muted" style="margin-bottom:10px"></div>
+  <div id="compare-wrap"></div>
+</div>
+
+<!-- ===================== CUSTOM TESTS ===================== -->
+<h2>Custom tests (experiment against LocalAI)</h2>
+<div class="panel">
+  <div class="row" style="margin-bottom:10px">
+    <div class="field"><label>Model</label><input id="ct-model" placeholder="model id" style="min-width:220px"></div>
+    <div class="field"><label>Task</label><select id="ct-task">
+      <option value="detect">detect</option>
+      <option value="sequence">sequence</option>
+      <option value="drive">drive</option>
+      <option value="custom">custom (no grading)</option>
+    </select></div>
+    <div class="field"><label>Drive variant</label><select id="ct-variant">
+      <option value="center">center</option>
+      <option value="left">left</option>
+      <option value="clear">clear</option>
+    </select></div>
+    <div class="field"><label>Max tokens</label><input id="ct-maxtok" type="number" value="500" style="min-width:90px"></div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);padding-bottom:8px">
+      <input type="checkbox" id="ct-jsonmode" checked style="min-width:auto"> json mode
+    </label>
+  </div>
+  <div class="field" style="margin-bottom:10px"><label>Prompt</label>
+    <textarea id="ct-prompt" rows="3" placeholder="e.g. Look at the image. Respond with JSON: {...}"></textarea>
+  </div>
+  <div class="row" style="margin-bottom:10px">
+    <div class="field"><label>Image(s) (optional)</label><input type="file" id="ct-images" accept="image/*" multiple></div>
+    <button id="btn-ct-run" class="primary small">Run test</button>
+    <button id="btn-ct-save" class="small">Save test</button>
+    <button id="btn-ct-export" class="small">Export results (JSONL)</button>
+    <button id="btn-ct-import" class="small">Import results (JSONL)</button>
+    <input type="file" id="ct-import-file" accept=".jsonl,.json,.txt" class="hidden">
+  </div>
+  <div id="ct-images-preview" class="muted" style="margin-bottom:10px"></div>
+  <div id="ct-result"></div>
+</div>
+
+<!-- ===================== SAVED TESTS ===================== -->
+<h2>Saved tests</h2>
+<div class="panel">
+  <div id="saved-tests" class="runs"><span class="muted">No saved tests. Fill the custom-test form and press &ldquo;Save test&rdquo; (stored in this browser&rsquo;s localStorage).</span></div>
+</div>
+
+<footer>Tankie VLM benchmark &middot; dynamic UI (issue #90) &middot; self-contained, no external assets</footer>
+</div>
+
+<!-- ===================== DETAIL DRAWER ===================== -->
+<div id="drawer" class="drawer">
+  <button id="drawer-close" class="small close">&times; close</button>
+  <div id="drawer-body"></div>
+</div>
+
+<script>
+/* VLM benchmark UI — core logic (issue #90).
+ *
+ * Pure, DOM-free, no external dependencies. This module is the single source
+ * of truth for the UI's parsing / aggregation / ranking / comparison /
+ * grading / chat logic, and it is tested offline in Node (see
+ * tests/vlm_bench_harness.py, section 18). It mirrors the semantics of
+ * report.py (stats, ranking, recommendation) and vlm_bench.py (grading) so
+ * the dynamic UI and the static report stay consistent.
+ *
+ * Exposed as `window.TankieBenchUI` in the browser and as `globalThis.TankieBenchUI`
+ * in Node (guarded so the same file runs in both).
+ */
+(function (g) {
+  'use strict';
+
+  // --- small utilities -----------------------------------------------------
+
+  function median(arr) {
+    if (!arr || !arr.length) return null;
+    const s = arr.slice().sort((a, b) => a - b);
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  }
+
+  function isNum(v) { return typeof v === 'number' && isFinite(v); }
+  function round2(v) { return Math.round(v * 100) / 100; }
+  function round3(v) { return Math.round(v * 1000) / 1000; }
+
+  function isWarmup(r) { return r && r.phase === 'warmup'; }
+  function semantic(r) { const gr = (r && r.grade) || {}; return !!gr.semantic; }
+  function validJson(r) { const gr = (r && r.grade) || {}; return !!gr.valid_json; }
+
+  // --- parsing -------------------------------------------------------------
+
+  // Parse a JSONL string into records. Blank lines are skipped; malformed
+  // lines are counted (not fatal) so one bad line never loses the whole run.
+  function parseJsonl(text) {
+    const records = [];
+    let malformed = 0;
+    const lines = String(text == null ? '' : text).split('\n');
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
+      try { records.push(JSON.parse(line)); }
+      catch (e) { malformed += 1; }
+    }
+    return { records: records, malformed: malformed };
+  }
+
+  // --- stats (mirrors report.py._stats) ------------------------------------
+
+  function stats(records) {
+    const tests = records.filter((r) => !isWarmup(r));
+    const warmups = records.filter((r) => isWarmup(r));
+    const n = tests.length;
+    const pass = tests.filter(semantic).length;
+    const valid_json = tests.filter(validJson).length;
+    const errors = tests.filter((r) => r && r.error).length;
+    const warmup_errors = warmups.filter((r) => r && r.error).length;
+    const lats = tests.map((r) => r && r.elapsed_s).filter(isNum);
+    const ok_lats = tests.filter((r) => r && !r.error && isNum(r.elapsed_s)).map((r) => r.elapsed_s);
+    const err_lats = tests.filter((r) => r && !!r.error && isNum(r.elapsed_s)).map((r) => r.elapsed_s);
+    const cold_lats = warmups.filter((r) => r && !r.error && isNum(r.elapsed_s)).map((r) => r.elapsed_s);
+    return {
+      n: n,
+      pass: pass,
+      pass_rate: n ? round3(pass / n) : 0.0,
+      valid_json: valid_json,
+      errors: errors,
+      warmup_errors: warmup_errors,
+      lat_min: lats.length ? Math.min.apply(null, lats) : null,
+      lat_med: ok_lats.length ? round2(median(ok_lats)) : null,
+      lat_max: lats.length ? Math.max.apply(null, lats) : null,
+      lat_err_med: err_lats.length ? round2(median(err_lats)) : null,
+      lat_cold_med: cold_lats.length ? round2(median(cold_lats)) : null,
+    };
+  }
+
+  function taskKey(task, variant) { return variant ? (task + '/' + variant) : task; }
+
+  // --- aggregate (mirrors report.py.aggregate) ------------------------------
+
+  function aggregate(records, models, tasks) {
+    const byModel = {};
+    for (const r of records) {
+      if (!r || !r.model || !r.task) continue;
+      if (models && !models.includes(r.model)) continue;
+      if (tasks && !tasks.includes(r.task)) continue;
+      (byModel[r.model] = byModel[r.model] || []).push(r);
+    }
+    const out = {};
+    for (const m of Object.keys(byModel)) {
+      const recs = byModel[m];
+      const tests = recs.filter((r) => !isWarmup(r));
+      const warmups = recs.filter((r) => isWarmup(r));
+      const perTask = {};
+      for (const r of tests) {
+        const k = taskKey(r.task, r.variant);
+        (perTask[k] = perTask[k] || []).push(r);
+      }
+      const coldLats = warmups.filter((r) => !r.error && isNum(r.elapsed_s)).map((r) => r.elapsed_s);
+      out[m] = {
+        overall: stats(tests),
+        per_task: Object.keys(perTask).sort().reduce((o, k) => { o[k] = stats(perTask[k]); return o; }, {}),
+        load_cold_s: coldLats.length ? round2(median(coldLats)) : null,
+        warmup_errors: warmups.filter((r) => r && r.error).length,
+      };
+    }
+    return out;
+  }
+
+  // --- ranking / recommendation (mirrors report.py) -------------------------
+
+  function rankKey(ov) {
+    return [ -ov.pass_rate, ov.errors, (ov.lat_med == null ? 1e9 : ov.lat_med) ];
+  }
+
+  function cmpRank(a, b) {
+    for (let i = 0; i < 3; i++) { if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1; }
+    return 0;
+  }
+
+  function recommend(summary) {
+    if (!summary || !Object.keys(summary).length) return { model: null, passes_all: false };
+    const tasksPresent = new Set();
+    for (const m of Object.keys(summary)) {
+      for (const k of Object.keys(summary[m].per_task)) tasksPresent.add(k.split('/')[0]);
+    }
+    const allPass = (entry) => {
+      for (const t of tasksPresent) {
+        for (const k of Object.keys(entry.per_task)) {
+          if (k.split('/')[0] === t && entry.per_task[k].n && entry.per_task[k].pass !== entry.per_task[k].n) return false;
+        }
+      }
+      return true;
+    };
+    let best = null;
+    for (const m of Object.keys(summary)) {
+      if (best === null || cmpRank(rankKey(summary[m].overall), rankKey(summary[best].overall)) < 0) best = m;
+    }
+    return { model: best, passes_all: allPass(summary[best]) };
+  }
+
+  // --- display helpers ------------------------------------------------------
+
+  function cellStatus(st) {
+    if (!st || st.n === 0) return 'empty';
+    if (st.pass === st.n) return 'pass';
+    if (st.pass > 0) return 'partial';
+    if (st.errors >= st.n) return 'error';
+    return 'fail';
+  }
+
+  // --- compare (issue #90 A4: side-by-side 2-run, "only changed" filter) ----
+
+  function compareRuns(runA, runB) {
+    const a = aggregate(runA.records);
+    const b = aggregate(runB.records);
+    const models = Array.from(new Set(Object.keys(a).concat(Object.keys(b)))).sort();
+    const LAT_EPS = 0.5;
+    const rows = models.map((m) => {
+      const sa = a[m] ? a[m].overall : null;
+      const sb = b[m] ? b[m].overall : null;
+      const d = {
+        model: m,
+        a: sa, b: sb,
+        pass_rate_delta: (sa && sb) ? round3(sb.pass_rate - sa.pass_rate) : null,
+        lat_delta: (sa && sb && sa.lat_med != null && sb.lat_med != null) ? round2(sb.lat_med - sa.lat_med) : null,
+        errors_delta: (sa && sb) ? sb.errors - sa.errors : null,
+      };
+      d.changed = !sa || !sb
+        || d.pass_rate_delta !== 0
+        || d.errors_delta !== 0
+        || (d.lat_delta != null && Math.abs(d.lat_delta) >= LAT_EPS);
+      return d;
+    });
+    const changed = rows.filter((r) => r.changed);
+    return {
+      rows: rows,
+      changed: changed,
+      improved: changed.filter((r) => r.pass_rate_delta > 0 || (r.pass_rate_delta === 0 && r.errors_delta < 0)).length,
+      regressed: changed.filter((r) => r.pass_rate_delta < 0 || (r.pass_rate_delta === 0 && r.errors_delta > 0)).length,
+      unchanged: rows.length - changed.length,
+    };
+  }
+
+  // --- grading (mirrors vlm_bench.py._grade) --------------------------------
+
+  const EXPECTED = {
+    detect: { objects: ['circle', 'square'] },
+    sequence: { moving: 'square', direction: 'right' },
+    drive: {
+      center: { action: ['stop'] },
+      left: { action: ['forward', 'right'], steer_min: 20 },
+      clear: { action: ['forward'], throttle_min: 40 },
+    },
+  };
+
+  function grade(task, variant, rec) {
+    const g = { valid_json: false, required_keys: false, semantic: false };
+    if (!rec || rec.error) return g;
+    const parsed = rec.parsed;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return g;
+    g.valid_json = true;
+    if (task === 'detect') {
+      const objs = parsed.objects;
+      g.required_keys = Array.isArray(objs) && objs.length > 0;
+      if (g.required_keys) {
+        const text = JSON.stringify(parsed).toLowerCase();
+        g.semantic = EXPECTED.detect.objects.every((k) => text.includes(k));
+      }
+    } else if (task === 'sequence') {
+      g.required_keys = 'moving' in parsed && 'direction' in parsed;
+      if (g.required_keys) {
+        const moving = String(parsed.moving == null ? '' : parsed.moving).toLowerCase();
+        const dir = String(parsed.direction == null ? '' : parsed.direction).toLowerCase();
+        g.semantic = moving.includes(EXPECTED.sequence.moving) && dir === EXPECTED.sequence.direction;
+      }
+    } else if (task === 'drive') {
+      g.required_keys = 'action' in parsed;
+      if (g.required_keys) {
+        const exp = EXPECTED.drive[variant] || { action: [] };
+        const action = String(parsed.action == null ? '' : parsed.action).toLowerCase();
+        const allowed = Array.isArray(exp.action) ? exp.action : [exp.action];
+        let ok = allowed.includes(action);
+        if (exp.steer_min != null) {
+          const sv = Number(parsed.steer);
+          ok = ok && isFinite(sv) && sv >= exp.steer_min;
+        }
+        if (exp.throttle_min != null) {
+          const tv = Number(parsed.throttle);
+          ok = ok && isFinite(tv) && tv >= exp.throttle_min;
+        }
+        g.semantic = !!ok;
+      }
+    }
+    return g;
+  }
+
+  // --- chat (custom tests -> LocalAI) ---------------------------------------
+
+  const SYSTEM = 'You are a small tank robot. Respond ONLY with a JSON object. No commentary.';
+
+  function buildChatRequest(opts) {
+    const images = Array.isArray(opts.images) ? opts.images : [];
+    const user = [{ type: 'text', text: opts.prompt }].concat(
+      images.map((url) => ({ type: 'image_url', image_url: { url: url } }))
+    );
+    const body = {
+      model: opts.model,
+      messages: [
+        { role: 'system', content: SYSTEM },
+        { role: 'user', content: user },
+      ],
+      max_tokens: opts.max_tokens || 500,
+      temperature: 0,
+    };
+    if (opts.json_mode !== false) body.response_format = { type: 'json_object' };
+    return { url: String(opts.base).replace(/\/+$/, '') + '/chat/completions', body: body };
+  }
+
+  function parseChatResponse(data) {
+    const message = (data && data.choices && data.choices[0] && data.choices[0].message) || {};
+    let content = message.content;
+    if (Array.isArray(content)) {
+      content = content
+        .map((p) => (p && typeof p === 'object' && typeof p.text === 'string' ? p.text : (typeof p === 'string' ? p : '')))
+        .map((s) => s.trim()).filter(Boolean).join(' ');
+    }
+    content = typeof content === 'string' ? content.trim() : '';
+    let reasoning = message.reasoning;
+    if (Array.isArray(reasoning)) {
+      reasoning = reasoning
+        .map((p) => (p && typeof p === 'object' && typeof p.text === 'string' ? p.text : (typeof p === 'string' ? p : '')))
+        .map((s) => s.trim()).filter(Boolean).join(' ');
+    }
+    reasoning = typeof reasoning === 'string' ? reasoning.trim() : '';
+    const answer = content || reasoning;
+    let parsed = null;
+    try { parsed = JSON.parse(answer); } catch (e) { parsed = null; }
+    return { content: content, reasoning: reasoning, parsed: parsed };
+  }
+
+  function buildRecord(opts) {
+    const t0 = opts.t0 || Date.now();
+    const elapsed = round2((Date.now() - t0) / 1000);
+    const rec = {
+      ts: new Date().toISOString(),
+      base: opts.base, model: opts.model, task: opts.task, variant: opts.variant || '',
+      n_images: (opts.images && opts.images.length) || 0,
+      max_tokens: opts.max_tokens || 500,
+      phase: 'test',
+      prompt: opts.prompt,
+      http: opts.http == null ? null : opts.http,
+      elapsed_s: elapsed,
+      content: opts.content != null ? opts.content : null,
+      reasoning: opts.reasoning != null ? opts.reasoning : null,
+      parsed: opts.parsed != null ? opts.parsed : null,
+      error: opts.error != null ? opts.error : null,
+      grade: opts.grade || { valid_json: false, required_keys: false, semantic: false },
+    };
+    return rec;
+  }
+
+  // --- export ----------------------------------------------------------------
+
+  const api = {
+    VERSION: 1,
+    median: median,
+    parseJsonl: parseJsonl,
+    stats: stats,
+    aggregate: aggregate,
+    rankKey: rankKey,
+    recommend: recommend,
+    cellStatus: cellStatus,
+    compareRuns: compareRuns,
+    EXPECTED: EXPECTED,
+    grade: grade,
+    SYSTEM: SYSTEM,
+    buildChatRequest: buildChatRequest,
+    parseChatResponse: parseChatResponse,
+    buildRecord: buildRecord,
+  };
+
+  if (typeof globalThis !== 'undefined') globalThis.TankieBenchUI = api;
+  else if (typeof window !== 'undefined') window.TankieBenchUI = api;
+})(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this));
+
+</script>
+<script>
+
+/* ============================================================================
+ * DOM GLUE (issue #90) — UI wiring. Runs only in a browser (guarded below so
+ * the same file stays loadable in Node for the offline harness).
+ * All pure logic lives in the core module above (globalThis.TankieBenchUI).
+ * ==========================================================================*/
+(function () {
+  'use strict';
+  if (typeof document === 'undefined' || typeof window === 'undefined') return;
+  const M = globalThis.TankieBenchUI || (window && window.TankieBenchUI);
+  if (!M) { console.error('TankieBenchUI core module missing'); return; }
+
+  const $ = (id) => document.getElementById(id);
+  const esc = (v) => (v == null ? '' : String(v).replace(/[&<>"']/g,
+    (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+
+  // ---- state ---------------------------------------------------------------
+  const state = {
+    runs: [],          // {name, records, malformed, base, ts}
+    compare: { a: null, b: null },
+    customResults: [], // records produced by custom tests (in-memory)
+  };
+
+  // ---- persistence ---------------------------------------------------------
+  const LS_CFG = 'tankie-bench.cfg';
+  const LS_TESTS = 'tankie-bench.saved-tests';
+  function loadJSON(key, fallback) {
+    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+    catch (e) { return fallback; }
+  }
+  function saveJSON(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {} }
+
+  // ---- config --------------------------------------------------------------
+  function cfg() {
+    return {
+      base: $('cfg-base').value.trim() || 'http://localai.local:8080/v1',
+      key: $('cfg-key').value.trim() || 'sk-0123456789',
+      timeout: Number($('cfg-timeout').value) || 240,
+    };
+  }
+  function persistCfg() { saveJSON(LS_CFG, cfg()); }
+  function restoreCfg() {
+    const c = loadJSON(LS_CFG, null);
+    if (c) {
+      if (c.base) $('cfg-base').value = c.base;
+      if (c.key) $('cfg-key').value = c.key;
+      if (c.timeout) $('cfg-timeout').value = c.timeout;
+    }
+  }
+
+  // ---- runs ----------------------------------------------------------------
+  function runName(path) {
+    const base = (path || '').replace(/\\/g, '/').split('/').pop() || 'run';
+    return base.replace(/\.(jsonl|json|txt)$/i, '');
+  }
+  function addRun(name, text) {
+    const { records, malformed } = M.parseJsonl(text);
+    const baseRec = records.find((r) => r && r.base);
+    const ts = records.map((r) => (r && r.ts) || '').filter(Boolean).sort()[0] || null;
+    const run = { name: name, records: records, malformed: malformed,
+                  base: baseRec ? baseRec.base : null, ts: ts };
+    // de-duplicate by name
+    state.runs = state.runs.filter((r) => r.name !== name);
+    state.runs.push(run);
+    renderRuns();
+    renderSelects();
+    renderMatrix();
+  }
+  function renderRuns() {
+    const el = $('runs-list');
+    if (!state.runs.length) {
+      el.innerHTML = '<span class="muted">No runs loaded yet. Pick one or more JSONL result files.</span>';
+      return;
+    }
+    el.innerHTML = state.runs.map((r) => {
+      const agg = M.aggregate(r.records);
+      const models = Object.keys(agg).length;
+      const calls = r.records.filter((x) => x && x.phase !== 'warmup' && x.model && x.task).length;
+      const pass = Object.values(agg).reduce((s, e) => s + e.overall.pass, 0);
+      const n = Object.values(agg).reduce((s, e) => s + e.overall.n, 0);
+      const rec = M.recommend(agg);
+      const tags = [];
+      if (state.compare.a === r.name) tags.push('<span class="tag A">A</span>');
+      if (state.compare.b === r.name) tags.push('<span class="tag B">B</span>');
+      const rate = n ? Math.round((pass / n) * 100) + '%' : '—';
+      return '<div class="run"><div class="name">' + tags.join('') + esc(r.name) + '</div>'
+        + '<div class="meta">' + models + ' models &middot; ' + n + ' calls &middot; ' + rate
+        + ' pass' + (r.malformed ? ' &middot; ' + r.malformed + ' bad line(s)' : '')
+        + (r.ts ? ' &middot; ' + esc(r.ts) : '') + '</div>'
+        + '<div class="acts"><button class="small" data-act="display" data-run="' + esc(r.name) + '">display</button>'
+        + '<button class="small" data-act="setA" data-run="' + esc(r.name) + '">set A</button>'
+        + '<button class="small" data-act="setB" data-run="' + esc(r.name) + '">set B</button>'
+        + '<button class="small danger" data-act="remove" data-run="' + esc(r.name) + '">remove</button></div></div>';
+    }).join('');
+  }
+  function renderSelects() {
+    const names = state.runs.map((r) => r.name);
+    for (const id of ['sel-display', 'sel-a', 'sel-b']) {
+      const sel = $(id);
+      const cur = sel.value;
+      sel.innerHTML = names.length
+        ? names.map((n) => '<option value="' + esc(n) + '">' + esc(n) + '</option>').join('')
+        : '<option value="">(no runs)</option>';
+      if (names.includes(cur)) sel.value = cur;
+      else if (names.length) sel.value = names[names.length - 1];
+    }
+    if (!state.compare.a && names.length) state.compare.a = names[0];
+    if (!state.compare.b && names.length > 1) state.compare.b = names[1];
+    else if (!state.compare.b && names.length) state.compare.b = names[0];
+  }
+  function getRun(name) { return state.runs.find((r) => r.name === name); }
+
+  // ---- matrix --------------------------------------------------------------
+  function renderMatrix() {
+    const wrap = $('matrix-wrap');
+    const name = $('sel-display').value;
+    const run = getRun(name);
+    if (!run) { wrap.innerHTML = '<span class="muted">Load a run to see the matrix.</span>'; return; }
+    const agg = M.aggregate(run.records);
+    const models = Object.keys(agg).sort();
+    const tasks = Array.from(new Set(models.flatMap((m) => Object.keys(agg[m].per_task)))).sort();
+    const rec = M.recommend(agg);
+    const filter = $('filter-model').value.trim().toLowerCase();
+    const shown = models.filter((m) => !filter || m.toLowerCase().includes(filter));
+    const sortKey = $('sel-sort').value;
+    const sorted = shown.slice().sort((a, b) => {
+      if (sortKey === 'model') return a < b ? -1 : 1;
+      const oa = agg[a].overall, ob = agg[b].overall;
+      if (sortKey === 'pass_rate') return (ob.pass_rate - oa.pass_rate) || (a < b ? -1 : 1);
+      if (sortKey === 'lat_med') return ((oa.lat_med == null ? 1e9 : oa.lat_med) - (ob.lat_med == null ? 1e9 : ob.lat_med)) || (a < b ? -1 : 1);
+      if (sortKey === 'errors') return (oa.errors - ob.errors) || (a < b ? -1 : 1);
+      return 0;
+    });
+    const cards = [
+      ['Models', models.length],
+      ['Calls', Object.values(agg).reduce((s, e) => s + e.overall.n, 0)],
+      ['Pass rate', (() => { const n = Object.values(agg).reduce((s, e) => s + e.overall.n, 0);
+        const p = Object.values(agg).reduce((s, e) => s + e.overall.pass, 0); return n ? Math.round(p / n * 100) + '%' : '—'; })()],
+      ['Errors', Object.values(agg).reduce((s, e) => s + e.overall.errors, 0)],
+      ['Recommended', rec.model || '—'],
+    ];
+    let html = '<div class="cards">' + cards.map((c) =>
+      '<div class="card' + (c[0] === 'Recommended' ? ' rec' : '') + '"><div class="k">' + c[0]
+      + '</div><div class="v">' + esc(c[1]) + '</div></div>').join('') + '</div>';
+    html += '<table><thead><tr><th class="model">model</th><th title="one-time model load (warmup call, issue #89)">Load (cold)</th>'
+      + tasks.map((t) => '<th>' + esc(t) + '</th>').join('') + '</tr></thead><tbody>';
+    for (const m of sorted) {
+      const rowCls = m === rec.model ? ' class="rec-row"' : '';
+      const badge = m === rec.model ? '<span class="badge rec">recommended</span>' : '';
+      const cold = agg[m].load_cold_s;
+      let tds = '<td class="model">' + esc(m) + badge + '</td>'
+        + '<td class="coldload"><div class="cell"><span class="lat">' + (cold != null ? esc(cold) + 's' : '-') + '</span></div></td>';
+      for (const t of tasks) {
+        const st = agg[m].per_task[t];
+        const status = M.cellStatus(st);
+        const mark = { pass: '✓', partial: '⚠', fail: '✗', error: '✕', empty: '' }[status] || '';
+        const lat = st && st.lat_med != null ? st.lat_med + 's' : '-';
+        tds += '<td class="' + status + '"><div class="cell"><span class="mark">' + mark
+          + '</span><span class="lat">' + (st ? esc(st.pass + '/' + st.n) + ' &middot; ' + esc(lat) : '-') + '</span></div></td>';
+      }
+      html += '<tr' + rowCls + ' data-model="' + esc(m) + '">' + tds + '</tr>';
+    }
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  }
+
+  // ---- detail drawer -------------------------------------------------------
+  function tempBadge(rec) {
+    if (rec.phase === 'warmup') return '<span class="temp cold">cold</span>';
+    if (rec.phase === 'test') return '<span class="temp warm">warm</span>';
+    const runNo = rec.run;
+    const warm = typeof runNo === 'number' && runNo >= 2;
+    return '<span class="temp ' + (warm ? 'warm' : 'cold') + '">' + (warm ? 'warm' : 'cold') + '</span>';
+  }
+  function openRecord(runNameStr, rec) {
+    const g = rec.grade || {};
+    const mark = g.semantic ? '<span class="ok">PASS</span>' : '<span class="err">FAIL</span>';
+    const body = rec.content || rec.reasoning || (rec.error || '(no response)');
+    const prompt = rec.prompt || '(prompt not stored - sha256[:12]=' + (rec.prompt_sha || '?') + ')';
+    $('drawer-body').innerHTML =
+      '<h3>' + esc(rec.model || '') + '</h3>'
+      + '<div class="kv">' + esc(rec.task || '') + (rec.variant ? '/' + esc(rec.variant) : '') + ' &mdash; ' + mark
+      + ' ' + tempBadge(rec) + '</div>'
+      + '<div class="kv" style="margin:6px 0">http ' + esc(rec.http) + ' &middot; ' + esc(rec.elapsed_s) + 's'
+      + (rec.retries != null ? ' &middot; ' + rec.retries + ' retr' : '') + (rec.n_images ? ' &middot; ' + rec.n_images + ' image(s)' : '')
+      + (rec.max_tokens ? ' &middot; max_tokens ' + esc(rec.max_tokens) : '') + '</div>'
+      + '<div class="prompt"><span class="lbl">prompt</span>' + esc(prompt) + '</div>'
+      + (rec.reasoning && rec.content ? '<div class="prompt"><span class="lbl">reasoning</span>' + esc(rec.reasoning) + '</div>' : '')
+      + '<div class="kv" style="margin-top:6px">grade: valid_json=' + !!g.valid_json + ' required_keys=' + !!g.required_keys + ' semantic=' + !!g.semantic + '</div>'
+      + '<pre>' + esc(body) + '</pre>'
+      + (rec.error ? '<div class="err">error: ' + esc(rec.error) + '</div>' : '');
+    $('drawer').classList.add('open');
+  }
+  function openModel(runNameStr, model) {
+    const run = getRun(runNameStr);
+    if (!run) return;
+    const recs = run.records.filter((r) => r && r.model === model).sort((a, b) =>
+      (a.task || '') < (b.task || '') ? -1 : (a.task || '') > (b.task || '') ? 1 : 0);
+    let html = '<h3>' + esc(model) + ' <span class="muted">(' + recs.length + ' record(s))</span></h3>';
+    for (const r of recs) {
+      const g = r.grade || {};
+      const mark = g.semantic ? '<span class="ok">PASS</span>' : '<span class="err">FAIL</span>';
+      const body = r.content || r.reasoning || (r.error || '(no response)');
+      const prompt = r.prompt || '(not stored - sha ' + (r.prompt_sha || '?') + ')';
+      html += '<div style="margin-bottom:14px">'
+        + '<div><b>' + esc(r.task || '') + (r.variant ? '/' + esc(r.variant) : '') + '</b> &mdash; ' + mark + ' ' + tempBadge(r)
+        + ' <span class="kv">http ' + esc(r.http) + ' &middot; ' + esc(r.elapsed_s) + 's</span></div>'
+        + '<div class="prompt"><span class="lbl">prompt</span>' + esc(prompt) + '</div>'
+        + '<pre>' + esc(body) + '</pre></div>';
+    }
+    $('drawer-body').innerHTML = html;
+    $('drawer').classList.add('open');
+  }
+
+  // ---- compare -------------------------------------------------------------
+  function renderCompare() {
+    const wrap = $('compare-wrap');
+    const sumEl = $('compare-summary');
+    const a = getRun($('sel-a').value), b = getRun($('sel-b').value);
+    if (!a || !b) { wrap.innerHTML = '<span class="muted">Load at least one run and pick A and B.</span>'; sumEl.textContent = ''; return; }
+    const cmp = M.compareRuns(a, b);
+    const onlyChanged = $('chk-changed').checked;
+    const rows = onlyChanged ? cmp.changed : cmp.rows;
+    sumEl.innerHTML = 'Changed: <b>' + cmp.changed.length + '</b> &middot; '
+      + '<span class="ok">improved ' + cmp.improved + '</span> &middot; '
+      + '<span class="err">regressed ' + cmp.regressed + '</span> &middot; unchanged ' + cmp.unchanged;
+    let html = '<table><thead><tr><th class="model">model</th>'
+      + '<th>A pass</th><th>B pass</th><th>&Delta;pass</th>'
+      + '<th>A med</th><th>B med</th><th>&Delta;med</th>'
+      + '<th>A err</th><th>B err</th><th>&Delta;err</th></tr></thead><tbody>';
+    const fmt = (st) => st ? st.pass + '/' + st.n : '—';
+    const fmtLat = (st) => (st && st.lat_med != null) ? st.lat_med + 's' : '—';
+    const delta = (d, invert) => {
+      if (d == null) return '<td class="zero">—</td>';
+      const good = invert ? d < 0 : d > 0;
+      const cls = d === 0 ? 'zero' : (good ? 'pos' : 'neg');
+      const sign = d > 0 ? '+' : '';
+      return '<td class="delta ' + cls + '">' + sign + d + '</td>';
+    };
+    for (const r of rows) {
+      html += '<tr><td class="model">' + esc(r.model) + '</td>'
+        + '<td>' + fmt(r.a) + '</td><td>' + fmt(r.b) + '</td>' + delta(r.pass_rate_delta, false)
+        + '<td>' + fmtLat(r.a) + '</td><td>' + fmtLat(r.b) + '</td>' + delta(r.lat_delta, true)
+        + '<td>' + (r.a ? r.a.errors : '—') + '</td><td>' + (r.b ? r.b.errors : '—') + '</td>' + delta(r.errors_delta, true)
+        + '</tr>';
+    }
+    html += '</tbody></table>';
+    if (!rows.length) html = '<span class="muted">No changed models (with &ldquo;only show changed&rdquo; on, nothing differs).</span>';
+    wrap.innerHTML = html;
+  }
+
+  // ---- custom tests --------------------------------------------------------
+  let ctImages = []; // data URLs
+  function fileToDataURL(file) {
+    return new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.onerror = rej;
+      fr.readAsDataURL(file);
+    });
+  }
+  async function onCtImages() {
+    const files = Array.from($('ct-images').files || []);
+    ctImages = [];
+    for (const f of files) ctImages.push(await fileToDataURL(f));
+    $('ct-images-preview').innerHTML = ctImages.length
+      ? ctImages.length + ' image(s) attached: ' + ctImages.map((u) => '<span style="display:inline-block;width:34px;height:34px;margin-right:4px;border-radius:4px;background:url(' + u + ') center/cover;"></span>').join('')
+      : '';
+  }
+  async function runCustomTest() {
+    const c = cfg();
+    const model = $('ct-model').value.trim();
+    const task = $('ct-task').value;
+    const variant = task === 'drive' ? $('ct-variant').value : '';
+    const prompt = $('ct-prompt').value;
+    const maxTok = Number($('ct-maxtok').value) || 500;
+    const jsonMode = $('ct-jsonmode').checked;
+    const out = $('ct-result');
+    if (!model) { out.innerHTML = '<span class="err">Set a model.</span>'; return; }
+    if (!prompt) { out.innerHTML = '<span class="err">Set a prompt.</span>'; return; }
+    out.innerHTML = '<span class="muted">Calling LocalAI &hellip;</span>';
+    const req = M.buildChatRequest({ base: c.base, model: model, prompt: prompt,
+      images: ctImages, max_tokens: maxTok, json_mode: jsonMode });
+    const t0 = Date.now();
+    let http = null, data = null, errText = null;
+    try {
+      const resp = await fetch(req.url, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + c.key, 'Content-Type': 'application/json' },
+        body: JSON.stringify(req.body),
+      });
+      http = resp.status;
+      const raw = await resp.text();
+      try { data = JSON.parse(raw); } catch (e) { data = null; }
+      if (!resp.ok) errText = 'HTTP ' + http + (data ? '' : ' ' + raw.slice(0, 300));
+    } catch (e) {
+      errText = e.name + ': ' + e.message;
+    }
+    const parsedResp = data ? M.parseChatResponse(data) : { content: '', reasoning: '', parsed: null };
+    const grade = (task === 'custom')
+      ? { valid_json: false, required_keys: false, semantic: false }
+      : M.grade(task, variant, { error: errText, parsed: parsedResp.parsed });
+    const rec = M.buildRecord({
+      base: c.base, model: model, task: task, variant: variant,
+      images: ctImages, max_tokens: maxTok, prompt: prompt,
+      http: http, content: parsedResp.content, reasoning: parsedResp.reasoning,
+      parsed: parsedResp.parsed, error: errText, grade: grade, t0: t0,
+    });
+    state.customResults.push(rec);
+    const g = rec.grade;
+    const mark = (task === 'custom') ? '<span class="muted">custom</span>'
+      : (g.semantic ? '<span class="ok">PASS</span>' : '<span class="err">FAIL</span>');
+    out.innerHTML =
+      '<div style="margin:6px 0"><b>' + esc(model) + '</b> &mdash; ' + mark + ' '
+      + '<span class="kv">http ' + esc(http) + ' &middot; ' + esc(rec.elapsed_s) + 's</span></div>'
+      + (rec.reasoning && rec.content ? '<div class="prompt"><span class="lbl">reasoning</span>' + esc(rec.reasoning) + '</div>' : '')
+      + '<div class="kv" style="margin:6px 0">grade: valid_json=' + !!g.valid_json + ' required_keys=' + !!g.required_keys + ' semantic=' + !!g.semantic + '</div>'
+      + '<pre>' + esc(rec.content || rec.reasoning || (rec.error || '(no response)')) + '</pre>'
+      + (rec.error ? '<div class="err">error: ' + esc(rec.error) + '</div>' : '');
+  }
+  function download(name, text, mime) {
+    const blob = new Blob([text], { type: mime || 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 500);
+  }
+  function exportCustom() {
+    if (!state.customResults.length) { $('ct-result').innerHTML = '<span class="err">No custom results to export.</span>'; return; }
+    const text = state.customResults.map((r) => JSON.stringify(r)).join('\n') + '\n';
+    download('custom-tests-' + new Date().toISOString().replace(/[:.]/g, '-') + '.jsonl', text, 'application/x-ndjson');
+  }
+  function importCustom(file) {
+    file.text().then((text) => {
+      const { records, malformed } = M.parseJsonl(text);
+      state.customResults = state.customResults.concat(records);
+      $('ct-result').innerHTML = '<span class="ok">Imported ' + records.length + ' record(s)'
+        + (malformed ? ' (' + malformed + ' skipped)' : '') + '.</span>';
+    });
+  }
+  // ---- saved tests ---------------------------------------------------------
+  function saveTest() {
+    const test = {
+      name: $('ct-model').value.trim() + ' / ' + $('ct-task').value,
+      model: $('ct-model').value.trim(),
+      task: $('ct-task').value,
+      variant: $('ct-task').value === 'drive' ? $('ct-variant').value : '',
+      prompt: $('ct-prompt').value,
+      max_tokens: Number($('ct-maxtok').value) || 500,
+      json_mode: $('ct-jsonmode').checked,
+      ts: new Date().toISOString(),
+    };
+    const saved = loadJSON(LS_TESTS, []);
+    saved.unshift(test);
+    saveJSON(LS_TESTS, saved.slice(0, 50));
+    renderSaved();
+  }
+  function renderSaved() {
+    const el = $('saved-tests');
+    const saved = loadJSON(LS_TESTS, []);
+    if (!saved.length) {
+      el.innerHTML = '<span class="muted">No saved tests. Fill the custom-test form and press &ldquo;Save test&rdquo;.</span>';
+      return;
+    }
+    el.innerHTML = saved.map((t, i) =>
+      '<div class="run"><div class="name">' + esc(t.name) + '</div>'
+      + '<div class="meta">' + esc(t.prompt.slice(0, 80)) + (t.prompt.length > 80 ? '&hellip;' : '') + '</div>'
+      + '<div class="acts"><button class="small" data-saved="' + i + '">load</button>'
+      + '<button class="small danger" data-unsaved="' + i + '">delete</button></div></div>').join('');
+  }
+  function loadTest(i) {
+    const saved = loadJSON(LS_TESTS, []);
+    const t = saved[i]; if (!t) return;
+    $('ct-model').value = t.model || '';
+    $('ct-task').value = t.task || 'custom';
+    if (t.task === 'drive') $('ct-variant').value = t.variant || 'center';
+    $('ct-prompt').value = t.prompt || '';
+    $('ct-maxtok').value = t.max_tokens || 500;
+    $('ct-jsonmode').checked = t.json_mode !== false;
+  }
+
+  // ---- connection test -----------------------------------------------------
+  async function testConn() {
+    const c = cfg();
+    const el = $('conn-status');
+    el.textContent = 'testing &hellip;';
+    try {
+      const resp = await fetch(String(c.base).replace(/\/+$/, '') + '/models', {
+        headers: { 'Authorization': 'Bearer ' + c.key },
+      });
+      const data = await resp.json();
+      const n = (data.data || []).length;
+      el.innerHTML = '<span class="ok">OK — ' + n + ' model(s)</span>';
+    } catch (e) {
+      el.innerHTML = '<span class="err">failed: ' + esc(e.message) + '</span>';
+    }
+  }
+
+  // ---- events --------------------------------------------------------------
+  function bind() {
+    $('cfg-base').addEventListener('change', persistCfg);
+    $('cfg-key').addEventListener('change', persistCfg);
+    $('cfg-timeout').addEventListener('change', persistCfg);
+    $('btn-test-conn').addEventListener('click', testConn);
+
+    $('file-runs').addEventListener('change', (e) => {
+      const files = Array.from(e.target.files || []);
+      files.forEach((f) => f.text().then((text) => addRun(runName(f.name), text)));
+      e.target.value = '';
+    });
+    $('btn-clear-runs').addEventListener('click', () => {
+      state.runs = []; state.compare = { a: null, b: null };
+      renderRuns(); renderSelects(); renderMatrix(); renderCompare();
+    });
+    $('runs-list').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-act]'); if (!btn) return;
+      const name = btn.getAttribute('data-run');
+      const act = btn.getAttribute('data-act');
+      if (act === 'display') { $('sel-display').value = name; renderMatrix(); }
+      else if (act === 'setA') { state.compare.a = name; renderRuns(); renderCompare(); }
+      else if (act === 'setB') { state.compare.b = name; renderRuns(); renderCompare(); }
+      else if (act === 'remove') {
+        state.runs = state.runs.filter((r) => r.name !== name);
+        if (state.compare.a === name) state.compare.a = null;
+        if (state.compare.b === name) state.compare.b = null;
+        renderRuns(); renderSelects(); renderMatrix(); renderCompare();
+      }
+    });
+    $('sel-display').addEventListener('change', renderMatrix);
+    $('filter-model').addEventListener('input', renderMatrix);
+    $('sel-sort').addEventListener('change', renderMatrix);
+    $('matrix-wrap').addEventListener('click', (e) => {
+      const tr = e.target.closest('tr[data-model]'); if (!tr) return;
+      openModel($('sel-display').value, tr.getAttribute('data-model'));
+    });
+    $('drawer-close').addEventListener('click', () => $('drawer').classList.remove('open'));
+
+    $('sel-a').addEventListener('change', renderCompare);
+    $('sel-b').addEventListener('change', renderCompare);
+    $('chk-changed').addEventListener('change', renderCompare);
+    $('btn-compare').addEventListener('click', renderCompare);
+
+    $('ct-images').addEventListener('change', onCtImages);
+    $('btn-ct-run').addEventListener('click', runCustomTest);
+    $('btn-ct-save').addEventListener('click', saveTest);
+    $('btn-ct-export').addEventListener('click', exportCustom);
+    $('btn-ct-import').addEventListener('click', () => $('ct-import-file').click());
+    $('ct-import-file').addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0]; if (f) importCustom(f); e.target.value = '';
+    });
+    $('saved-tests').addEventListener('click', (e) => {
+      const load = e.target.closest('button[data-saved]');
+      const del = e.target.closest('button[data-unsaved]');
+      if (load) { loadTest(Number(load.getAttribute('data-saved'))); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+      if (del) {
+        const saved = loadJSON(LS_TESTS, []);
+        saved.splice(Number(del.getAttribute('data-unsaved')), 1);
+        saveJSON(LS_TESTS, saved); renderSaved();
+      }
+    });
+  }
+
+  // ---- init ----------------------------------------------------------------
+  function init() {
+    restoreCfg();
+    renderRuns(); renderSelects(); renderMatrix(); renderCompare(); renderSaved();
+    bind();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+
+</script>
+</body></html>

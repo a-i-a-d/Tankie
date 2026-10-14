@@ -19,6 +19,7 @@ Scenes are **generated on the fly** (pure-stdlib PNG encoder in `scene_gen.py`)
 | `vlm_bench.py`  | the benchmark runner (stdlib-only, `urllib`)         |
 | `scene_gen.py`  | synthetic scene generator (pure-stdlib PNG encoder)  |
 | `report.py`     | JSONL → text/Markdown/HTML/JSON report + recommendation |
+| `benchmark-ui.html` | dynamic browser frontend: load runs, compare, custom tests (issue #90) |
 | `results/`      | new benchmark runs (JSONL records; git-ignored)      |
 | `results/baseline-*.jsonl` | tracked baselines (committed)                  |
 | `results/old/`  | superseded / historical runs (kept for reference)    |
@@ -51,7 +52,40 @@ python3 tools/vlm-benchmark/report.py results/old/bench-20261010-235859.jsonl
 python3 tools/vlm-benchmark/report.py results/*.jsonl --md report.md
 python3 tools/vlm-benchmark/report.py results/*.jsonl --html report.html
 python3 tools/vlm-benchmark/report.py results/*.jsonl --json
+```# generate a report from results (text to stdout, or write to file)
+python3 tools/vlm-benchmark/report.py results/old/bench-20261010-235859.jsonl
+python3 tools/vlm-benchmark/report.py results/*.jsonl --md report.md
+python3 tools/vlm-benchmark/report.py results/*.jsonl --html report.html
+python3 tools/vlm-benchmark/report.py results/*.jsonl --json
 ```
+
+## Dynamic UI (issue #90)
+
+`benchmark-ui.html` is a **self-contained** browser frontend (inline CSS + JS,
+no CDN / build step / external assets) for exploring benchmark results
+interactively. Open it directly from the filesystem (`file://`) in any modern
+browser — no server required.
+
+- **Runs** — load one or more JSONL result files (each becomes a named run);
+  per-run cards show models / calls / pass rate and the recommended model.
+- **Results matrix** — a sortable model × task matrix (pass/n + warm median
+  latency, color-coded), with a click-through detail drawer showing the full
+  prompt, response, grade, HTTP status, latency and cold/warm label.
+- **Compare two runs** — pick run A (baseline) and run B (candidate) to see
+  per-model deltas (pass rate, warm median, errors) with an improved/regressed
+  summary and an **only-show-changed** filter (e.g. to diff two runs that used
+  slightly different prompts).
+- **Custom tests** — edit the prompt, attach image(s), set the model / task /
+  variant / max-tokens, and run live against the LocalAI server (CORS must be
+  enabled on the server). Results are graded in the browser (same rules as
+  `vlm_bench._grade`) and can be **exported as JSONL** in the exact
+  `vlm_bench.py` schema (so `report.py` can report on them too) or imported
+  back. Saved tests persist in the browser's `localStorage`.
+
+The UI's pure logic (parse / stats / aggregate / rank / compare / grade /
+chat-request shape) is exercised offline in CI by harness section 18, which
+runs the real inline `<script>` in a Node VM sandbox — no browser, no network.
+
 
 ## Environment
 
@@ -90,3 +124,9 @@ python3 tools/vlm-benchmark/report.py results/*.jsonl --json
 - **Recommendation** in `report.py`: highest overall pass rate, tie-broken by
   lowest **warm** median latency (steady-state; the one-time cold load is
   informational only).
+- **Dynamic UI** (`benchmark-ui.html`, issue #90): the interactive frontend
+  reuses the *same* aggregation / ranking / grading semantics as `report.py`
+  and `vlm_bench.py` (the JS core mirrors them 1:1 and is cross-checked in
+  harness section 18), so the dynamic view and the static report always agree.
+  It is fully self-contained and works from `file://`; custom-test results are
+  emitted in the exact `vlm_bench.py` JSONL schema for round-tripping.
