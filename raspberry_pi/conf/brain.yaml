@@ -95,7 +95,7 @@ mcp_port: 9000
 auto_profile:
   enabled: true
   max_speed: 40
-  max_steer: 120
+  max_steer: 100
 
 # --- per-call timeouts (seconds) for the LocalAI client (T2) ---
 # chat_s: short timeout for health() (liveness probe) and other fast endpoints.

@@ -105,7 +105,7 @@ class AutoProfile:
 
     enabled: bool = True
     max_speed: int = 40
-    max_steer: int = 120
+    max_steer: int = 100
 
 
 @dataclass(frozen=True)

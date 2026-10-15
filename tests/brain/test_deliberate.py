@@ -809,7 +809,7 @@ def test_integration_loop_writes_to_pending_action():
 
     # The ReflexController can consume this pending action
     from brain.reflex import ReflexController
-    ctrl = ReflexController(enabled=False, max_speed=40, max_steer=120)
+    ctrl = ReflexController(enabled=False, max_speed=40, max_steer=100)
     result = ctrl.decide([], 640, 480, pending=pending)
     assert result.cmd == "drive"
     assert result.speed == 35

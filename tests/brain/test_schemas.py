@@ -113,29 +113,29 @@ def test_action_clamp_bounds_to_auto_profile():
     # over-limit input: built without validation to model a raw LLM output
     # that the clamp must bring back into the AUTO_PROFILE range.
     a = Action.model_construct(intent="go_to", cmd="drive", speed=90, steer=-200)
-    c = a.clamp(40, 120)
+    c = a.clamp(40, 100)
     assert c["speed"] == 40
-    assert c["steer"] == -120
+    assert c["steer"] == -100
     # other fields preserved
     assert c["intent"] == "go_to" and c["cmd"] == "drive"
 
 
 def test_action_clamp_negative_bound():
     a = Action.model_construct(intent="go_to", cmd="drive", speed=-90, steer=200)
-    c = a.clamp(40, 120)
+    c = a.clamp(40, 100)
     assert c["speed"] == -40
-    assert c["steer"] == 120
+    assert c["steer"] == 100
 
 
 def test_action_clamp_within_limits_noop():
     a = Action(intent="go_to", cmd="drive", speed=10, steer=-5)
-    c = a.clamp(40, 120)
+    c = a.clamp(40, 100)
     assert c["speed"] == 10 and c["steer"] == -5
 
 
 def test_action_clamp_preserves_other_fields():
     a = Action(intent="go_to", cmd="drive", speed=90, steer=0, say="hi", reason="why")
-    c = a.clamp(40, 120)
+    c = a.clamp(40, 100)
     assert c["say"] == "hi" and c["reason"] == "why" and c["intent"] == "go_to" and c["cmd"] == "drive"
 
 
@@ -286,7 +286,7 @@ def test_load_config_nested_sub_dict(tmp_path):
     c = load_config(path=y, env={})
     assert c.auto_profile.enabled is False
     assert c.auto_profile.max_speed == 10
-    assert c.auto_profile.max_steer == 120     # untouched default
+    assert c.auto_profile.max_steer == 100     # untouched default
     assert c.timeouts.chat_s == 9.5
     assert c.timeouts.vlm_chat_s == 60.0   # #100: dedicated VLM timeout
 
@@ -306,7 +306,7 @@ def test_brain_yaml_in_repo_loads():
     assert c.reflex_hz == 10
     assert c.deliberate_hz == 1
     assert c.auto_profile.max_speed == 40
-    assert c.auto_profile.max_steer == 120
+    assert c.auto_profile.max_steer == 100
     assert c.detection_model == "rfdetr-base"
     assert c.timeouts.vlm_chat_s == 60.0   # #100: committed brain.yaml has it
     # A4: the code default must be the dnsmasq hostname, not a literal IP

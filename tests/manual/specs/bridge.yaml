@@ -1,6 +1,6 @@
 # Stage 2 — Bridge daemon (issue #29/#33). Talks to the Pi bridge daemon over
 # its Unix socket + state store — the real control link used by the CLI and
-# ai_control.py. auto_profile clamps AI drive to max_speed=40 / max_steer=120.
+# ai_control.py. auto_profile clamps AI drive to max_speed=40 / max_steer=100.
 - id: S2-01
   layer: bridge
   title: "daemon up (socket + state + link)"

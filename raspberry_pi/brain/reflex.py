@@ -124,7 +124,7 @@ class ReflexController:
         min_bottom_ratio: float = 0.70,
         steer_around: int = 60,
         max_speed: int = 40,
-        max_steer: int = 120,
+        max_steer: int = 100,
     ) -> None:
         self.enabled = bool(enabled)
         self.block_classes = tuple(str(c) for c in block_classes)
@@ -230,7 +230,7 @@ class ReflexController:
             if cmd == "drive":
                 # Clamp to the AUTO_PROFILE (issue #31), then to the
                 # ReflexResult schema bounds (±100). The bridge is the real
-                # enforcement layer (±120); we are always within it.
+                # enforcement layer (±100); we are always within it.
                 speed = self._clamp(int(pending.get("speed", 0)), self.max_speed)
                 steer = self._clamp(int(pending.get("steer", 0)), self.max_steer)
                 return ReflexResult(

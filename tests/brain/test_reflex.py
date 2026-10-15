@@ -50,7 +50,7 @@ def det(class_name, cx, cy, w=60, h=60, conf=0.9):
 
 
 def controller(**over) -> ReflexController:
-    base = dict(enabled=True, steer_around=60, max_speed=40, max_steer=120)
+    base = dict(enabled=True, steer_around=60, max_speed=40, max_steer=100)
     base.update(over)
     return ReflexController(**base)
 
@@ -70,7 +70,7 @@ def test_clear_pending_drive_passes_through_clamped():
     r = controller().decide([], IMG_W, IMG_H, pending={"cmd": "drive", "speed": 99, "steer": -150, "reason": "go"})
     assert r.cmd == "drive"
     assert r.speed == 40          # clamped to max_speed (40)
-    assert r.steer == -100        # clamped to max_steer (120), then schema (±100)
+    assert r.steer == -100        # clamped to max_steer (100) == schema (±100)
     assert r.preempted is False
     assert r.reason == "go"
 

@@ -82,4 +82,4 @@ stream_path: /cam/
 auto_profile:
   enabled: true
   max_speed: 40      # AI speed limit (manual stays ±255)
-  max_steer: 120     # AI steer limit (manual stays ±255)
+  max_steer: 100     # AI steer limit (manual stays ±255)

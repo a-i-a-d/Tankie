@@ -14,7 +14,7 @@ Rules (from the #72 plan):
     must not discard an otherwise-valid action (issue #103). Every *internal*
     schema stays ``forbid``.
   * ``speed``/``steer`` are bounded to the ESP8266 serial range (±100 here;
-    the bridge clamps the AI path to the AUTO_PROFILE of ±40/±120 — see
+    the bridge clamps the AI path to the AUTO_PROFILE of ±40/±100 — see
     ``Action.clamp`` for the UX mirror).
   * ``pan``/``tilt`` are camera angles in degrees [0..180], optional (None =
     "leave as is").
@@ -81,11 +81,10 @@ class Action(BaseModel):
         that can tell AI traffic from manual traffic); this is a UX mirror
         so a prompt can show the brain the values it will actually get.
 
-        Returns a plain ``dict`` (not a re-validated ``Action``) because the
-        AUTO_PROFILE steer limit (120) is wider than the ``Action`` steer
-        field (±100, the ESP8266 serial range) — e.g. ``clamp(40, 120)`` on
-        an over-limit action must be able to represent ``steer=120``. The
-        dict is for display/logging, not for re-validation.
+        Returns a plain ``dict`` (not a re-validated ``Action``): it is a
+        display/logging mirror of the values the brain will actually get, so
+        it is not re-validated (issue #104 aligned the AUTO_PROFILE steer
+        limit to the ``Action`` steer field bound of ±100).
         """
         data = self.model_dump()
         data["speed"] = max(-max_speed, min(max_speed, data["speed"]))
