@@ -311,6 +311,7 @@ class ReflexLoop:
         controller: ReflexController,
         bridge: Any,
         pending_action: Optional[Callable[[], Optional[dict]]] = None,
+        pending_clear: Optional[Callable[[], None]] = None,
         *,
         hz: int = 10,
         min_confidence: float = 0.5,
@@ -321,6 +322,9 @@ class ReflexLoop:
         self._controller = controller
         self._bridge = bridge
         self._pending_action = pending_action or (lambda: None)
+        # #101: consume-once hook — clears the pending slot after a one-shot
+        # pan/tilt is applied (so it is not re-sent every tick).
+        self._pending_clear = pending_clear or (lambda: None)
         self._hz = max(1, int(hz))
         self._min_confidence = float(min_confidence)
         self._idle_keepalive = bool(idle_keepalive)
@@ -376,6 +380,16 @@ class ReflexLoop:
         except Exception:
             return None
 
+    def _consume_pending(self) -> None:
+        """Clear the pending slot after applying a one-shot pan/tilt (#101).
+
+        Never raises (a failing clear must not kill the loop).
+        """
+        try:
+            self._pending_clear()
+        except Exception:
+            pass
+
     def _loop(self) -> None:
         period = 1.0 / self._hz
         while not self._stop.is_set():
@@ -423,6 +437,12 @@ class ReflexLoop:
         )
         with self._lock:
             self._last_result = result
+        # #101: consume-once. A one-shot pan/tilt is applied once; clear the
+        # pending slot so the reflex loop stops re-sending it every tick.
+        # (drive is a *level* command — it stays until re-proposed or the
+        # deliberation loop clears the slot when the task ends.)
+        if result.cmd in ("pan", "tilt"):
+            self._consume_pending()
         cmd = self._controller.to_bridge_cmd(result, pending)
         if not self._idle_keepalive and cmd == IDLE_CMD:
             return  # A4: quiet idle (human can take over)

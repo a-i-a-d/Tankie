@@ -396,20 +396,62 @@ def test_deliberate_valid_action_sets_pending():
     assert localai.calls  # VLM was called
 
 
-def test_deliberate_malformed_json_slot_unchanged():
-    """Malformed VLM reply -> logged + ignored (slot keeps previous value)."""
+def test_deliberate_malformed_json_clears_stale_action():
+    """#101: malformed VLM reply -> stale action cleared (tank stops).
+
+    A malformed reply means "no valid action this tick". Rather than coasting
+    on the last good proposal, the slot is cleared so the reflex loop idles to
+    ``drive 0 0`` (the tank stops instead of moving on a stale command).
+    """
     grabber = FakeGrabber(frames=[_frame(0)])
     localai = FakeLocalAI(result={"ok": True, "raw": "this is not json"})
     pa = PendingAction()
-    # Pre-set a valid action so we can verify it's unchanged
-    pa.set({"intent": "stop", "cmd": "stop", "speed": 0, "steer": 0})
+    # Pre-set a stale drive so we can verify it is cleared.
+    pa.set({"intent": "go_to", "cmd": "drive", "speed": 40, "steer": 0})
     tq = FakeTaskQueue(task="go")
     loop = DeliberationLoop(grabber, localai, pa, tq, hz=100)
     loop.start()
     time.sleep(0.15)
     loop.stop()
-    # The slot must still hold the pre-set action (malformed reply ignored)
-    assert pa.get()["intent"] == "stop"
+    # The stale action must be cleared (not kept).
+    assert pa.get() is None
+    assert loop.errors >= 1
+
+
+def test_deliberate_no_task_clears_stale_action():
+    """#101: task cleared -> stale drive cleared (tank stops).
+
+    When the task is done the deliberation loop clears the pending slot so a
+    stale drive does not keep the tank moving; the reflex loop then idles.
+    """
+    grabber = FakeGrabber(frames=[_frame(0), _frame(1)])
+    localai = FakeLocalAI(result={"ok": True, "raw": _action_json(speed=50)})
+    pa = PendingAction()
+    # A stale drive is present (e.g. left over from a previous task).
+    pa.set({"intent": "go_to", "cmd": "drive", "speed": 50, "steer": 0})
+    tq = FakeTaskQueue(task=None)  # no task -> done
+    loop = DeliberationLoop(grabber, localai, pa, tq, hz=100)
+    loop.start()
+    time.sleep(0.15)
+    loop.stop()
+    # No task -> the stale drive is cleared and no VLM call is made.
+    assert pa.get() is None
+    assert localai.calls == []
+
+
+def test_deliberate_vlm_error_clears_stale_action():
+    """#101: VLM down -> stale drive cleared (tank stops, invariant 4)."""
+    grabber = FakeGrabber(frames=[_frame(0)])
+    localai = FakeLocalAI(result={"ok": False, "error": "connection refused"})
+    pa = PendingAction()
+    pa.set({"intent": "go_to", "cmd": "drive", "speed": 40, "steer": 0})
+    tq = FakeTaskQueue(task="go")
+    loop = DeliberationLoop(grabber, localai, pa, tq, hz=100)
+    loop.start()
+    time.sleep(0.15)
+    loop.stop()
+    # VLM failed -> the stale action is cleared (perception dead => stop).
+    assert pa.get() is None
     assert loop.errors >= 1
 
 

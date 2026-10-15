@@ -269,6 +269,9 @@ class Brain:
                 self._controller,
                 self._bridge,
                 pending_action=self._pending.get,
+                # #101: consume-once — after the reflex loop applies a one-shot
+                # pan/tilt it clears the slot so it is not re-sent every tick.
+                pending_clear=self._pending.clear,
                 hz=self._cfg.reflex_hz,
             )
         except Exception as exc:  # noqa: BLE001
