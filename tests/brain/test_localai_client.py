@@ -298,6 +298,30 @@ def test_chat_attaches_images_to_last_user_message():
     assert parts[1] == {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}}
 
 
+# --- issue #100: chat() uses vlm_chat_s, not chat_s ---
+
+def test_chat_uses_vlm_chat_s_timeout():
+    """#100: chat() must use vlm_chat_s (60 s default) for the openai call,
+    not the short chat_s (5 s) used by health() and other fast endpoints."""
+    rec = {}
+    fake = _FakeOpenAI(content='{"intent":"go_to"}', record=rec)
+    c = make_client(lambda req: None, openai_client=fake)
+    c.chat([{"role": "user", "content": "go"}])
+    assert rec["timeout"] == 60.0  # vlm_chat_s default
+
+
+def test_chat_vlm_chat_s_respected_from_config():
+    """#100: a custom vlm_chat_s in config is passed to the openai call."""
+    rec = {}
+    fake = _FakeOpenAI(content='{"intent":"go_to"}', record=rec)
+    c = make_client(lambda req: None, openai_client=fake,
+                    timeouts=type("T", (), {"chat_s": 5.0, "vlm_chat_s": 120.0,
+                                           "detect_s": 1.0, "transcribe_s": 10.0,
+                                           "speak_s": 10.0})())
+    c.chat([{"role": "user", "content": "go"}])
+    assert rec["timeout"] == 120.0  # custom vlm_chat_s
+
+
 def test_chat_sdk_exception_is_data():
     fake = _FakeOpenAI(exc=RuntimeError("connection refused"))
     c = make_client(lambda req: None, openai_client=fake)

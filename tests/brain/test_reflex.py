@@ -392,6 +392,86 @@ def test_loop_disabled_obstacle_ignored():
         loop.stop()
 
 
+# --- issue #99: detect() is only called when obstacle avoidance is enabled ---
+
+def test_loop_disabled_detect_not_called():
+    """#99: when controller.enabled=False, detect() must never be called —
+    a dead/missing detector must not block the VLM path."""
+    localai = FakeLocalAI({"ok": False, "error": "501"})
+    bridge = FakeBridge()
+    loop = ReflexLoop(
+        FakeGrabber(_frame()), localai,
+        controller(enabled=False), bridge,
+        pending_action=lambda: {"cmd": "drive", "speed": 25, "steer": 0},
+        hz=100,
+    )
+    loop.start()
+    try:
+        assert _wait_until(lambda: bridge.sent)
+        assert bridge.sent[0] == {"cmd": "drive", "speed": 25, "steer": 0}
+        assert localai.calls == []  # detect() was never called
+    finally:
+        loop.stop()
+
+
+def test_loop_disabled_detect_fail_pending_drive_forwarded():
+    """#99: disabled + detect() would fail + pending drive → drive forwarded.
+    This is the exact scenario that was broken before the fix: the detector
+    was required to succeed even when obstacle avoidance was off."""
+    localai = FakeLocalAI({"ok": False, "error": "501"})
+    bridge = FakeBridge()
+    loop = ReflexLoop(
+        FakeGrabber(_frame()), localai,
+        controller(enabled=False), bridge,
+        pending_action=lambda: {"cmd": "drive", "speed": 30, "steer": -10},
+        hz=100,
+    )
+    loop.start()
+    try:
+        assert _wait_until(lambda: bridge.sent)
+        # The pending drive passes through despite detect() failing
+        assert bridge.sent[0] == {"cmd": "drive", "speed": 30, "steer": -10}
+    finally:
+        loop.stop()
+
+
+def test_loop_disabled_no_pending_sends_idle():
+    """#99: disabled + no pending action → idle keep-alive (no crash)."""
+    localai = FakeLocalAI({"ok": False, "error": "501"})
+    bridge = FakeBridge()
+    loop = ReflexLoop(
+        FakeGrabber(_frame()), localai,
+        controller(enabled=False), bridge,
+        hz=100,
+    )
+    loop.start()
+    try:
+        assert _wait_until(lambda: bridge.sent)
+        assert bridge.sent[0] == IDLE_CMD
+    finally:
+        loop.stop()
+
+
+def test_loop_enabled_detect_fail_stops():
+    """#99 (invariant 4 preserved): enabled + detect() fails → drive 0 0.
+    When obstacle avoidance IS enabled, a dead detector is a hard stop."""
+    localai = FakeLocalAI({"ok": False, "error": "501"})
+    bridge = FakeBridge()
+    loop = ReflexLoop(
+        FakeGrabber(_frame()), localai,
+        controller(enabled=True), bridge,
+        pending_action=lambda: {"cmd": "drive", "speed": 40, "steer": 0},
+        hz=100,
+    )
+    loop.start()
+    try:
+        assert _wait_until(lambda: bridge.sent)
+        assert bridge.sent[0] == IDLE_CMD  # stop pre-empts the pending drive
+        assert len(localai.calls) >= 1     # detect() WAS called
+    finally:
+        loop.stop()
+
+
 def test_loop_quiet_idle_when_keepalive_disabled():
     # A4: idle_keepalive=False + nothing to do => the loop stays silent
     bridge = FakeBridge()

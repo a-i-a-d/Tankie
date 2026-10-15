@@ -266,6 +266,7 @@ def test_load_config_nested_sub_dict(tmp_path):
     assert c.auto_profile.max_speed == 10
     assert c.auto_profile.max_steer == 120     # untouched default
     assert c.timeouts.chat_s == 9.5
+    assert c.timeouts.vlm_chat_s == 60.0   # #100: dedicated VLM timeout
 
 
 def test_load_config_ignores_unknown_scalar(tmp_path):
@@ -285,6 +286,7 @@ def test_brain_yaml_in_repo_loads():
     assert c.auto_profile.max_speed == 40
     assert c.auto_profile.max_steer == 120
     assert c.detection_model == "rfdetr-base"
+    assert c.timeouts.vlm_chat_s == 60.0   # #100: committed brain.yaml has it
     # A4: the code default must be the dnsmasq hostname, not a literal IP
     assert BrainConfig().localai_base_url == "http://localai.local:8080/v1"
 
