@@ -110,9 +110,17 @@ class AutoProfile:
 
 @dataclass(frozen=True)
 class Timeouts:
-    """Per-call timeouts (seconds) for the LocalAI client (T2)."""
+    """Per-call timeouts (seconds) for the LocalAI client (T2).
+
+    ``chat_s`` is the short timeout for ``health()`` (the liveness probe) and
+    other fast httpx endpoints.  ``vlm_chat_s`` is the dedicated timeout for
+    the VLM ``chat()`` call — the 9B model takes ~7 s warm and much longer
+    cold, so it needs a much longer timeout than the fast endpoints
+    (issue #100).
+    """
 
     chat_s: float = 5.0
+    vlm_chat_s: float = 60.0
     detect_s: float = 1.0
     transcribe_s: float = 10.0
     speak_s: float = 10.0

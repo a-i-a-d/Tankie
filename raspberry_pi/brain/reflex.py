@@ -295,7 +295,9 @@ class ReflexLoop:
     (invariant 1).
 
     * ``grabber.read_latest()`` -> ``None`` => ``drive 0 0`` (invariant 4).
-    * ``localai.detect()`` not ok => ``drive 0 0`` (invariant 4).
+    * ``localai.detect()`` not ok => ``drive 0 0`` (invariant 4) —
+      only when ``controller.enabled`` is True (issue #99); when disabled
+      the detector is skipped entirely and the pending action passes through.
     * ``bridge.send()`` not ok => keep sending ``drive 0 0`` (the stop is
       retried until the bridge is back; never raises).
     * ``start()`` / ``stop()`` are idempotent; ``stop()`` sends one final
@@ -394,10 +396,19 @@ class ReflexLoop:
             self._send_idle()  # invariant 4: no frame => stop
             return
 
-        det = self._localai.detect(img_b64, min_confidence=self._min_confidence)
-        if not isinstance(det, Mapping) or not det.get("ok"):
-            self._send_idle()  # invariant 4: server unreachable => stop
-            return
+        # #99: only call detect() when obstacle avoidance is actually enabled.
+        # When disabled (the default until depth/T15 lands), a dead or missing
+        # detector must not block the VLM path — the pending action passes
+        # through. When enabled, a detect() failure is still a hard stop
+        # (invariant 4: perception dead => stop).
+        if self._controller.enabled:
+            det = self._localai.detect(img_b64, min_confidence=self._min_confidence)
+            if not isinstance(det, Mapping) or not det.get("ok"):
+                self._send_idle()  # invariant 4: server unreachable => stop
+                return
+            detections = det.get("detections", [])
+        else:
+            detections = []
 
         pending = self._pending()
         # Image size: the detection payload carries it when the server
@@ -408,7 +419,7 @@ class ReflexLoop:
         # size metadata).
         img_w, img_h = _frame_size(frame)
         result = self._controller.decide(
-            det.get("detections", []), img_w, img_h, pending
+            detections, img_w, img_h, pending
         )
         with self._lock:
             self._last_result = result

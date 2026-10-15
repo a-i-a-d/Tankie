@@ -204,7 +204,7 @@ class LocalAIClient:
                 model=self._cfg.vlm_model,
                 messages=msgs,
                 response_format={"type": "json_object"},
-                timeout=self._timeout("chat_s"),
+                timeout=self._timeout("vlm_chat_s"),
             )
         except Exception as exc:  # SDK raises many types; map them all
             return _err(f"chat failed: {type(exc).__name__}: {exc}")
