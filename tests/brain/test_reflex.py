@@ -161,6 +161,47 @@ def test_custom_block_classes():
     assert "cup" in c.decide([det("cup", IMG_W / 2, 0.9 * IMG_H)], IMG_W, IMG_H).reason
 
 
+# ===========================================================================
+# Coordinate convention (issue #102) — pin that the reflex geometry operates in
+# PIXELS of the sent image, matching LocalAI's rfdetr-base output (verified
+# empirically: boxes scale with the sent image size).
+# ===========================================================================
+
+def test_geometry_uses_sent_image_pixel_convention():
+    # A person whose box bottom is at 0.9 * IMG_H (pixels) and centered in the
+    # lane is "close" and "in lane" -> stop. This pins the pixel convention:
+    # the controller compares box coords against IMG_W/IMG_H (the sent frame
+    # size), NOT against normalized [0..1] values.
+    obstacle = det("person", IMG_W / 2, 0.85 * IMG_H)
+    r = controller().decide([obstacle], IMG_W, IMG_H)
+    assert (r.speed, r.steer) == (0, 0)
+    assert "person" in r.reason and "in lane" in r.reason
+
+
+def test_geometry_rejects_normalized_coords_as_close():
+    # If a (hypothetical) server returned NORMALIZED coords (x,y,w,h in [0..1])
+    # and we (wrongly) treated them as pixels, a box at y=0.85 would be at
+    # 0.85px — far from the bottom — and NOT be considered close. This test
+    # documents that the pixel convention is what makes the geometry work:
+    # a real "close" box must have y+h near IMG_H (pixels), not near 1.0.
+    normalized_like = det("person", 0.5, 0.85, w=0.05, h=0.05)  # [0..1] coords
+    r = controller().decide([normalized_like], IMG_W, IMG_H)
+    # 0.85 + 0.05 = 0.90 px << 0.70 * 480 = 336 px -> NOT close -> idle
+    assert r.reason == "idle"
+
+
+def test_frame_size_non_numpy_degenerates_to_safe():
+    # _frame_size() returns (1, 1) for a non-numpy frame, which degenerates the
+    # geometry to "nothing is close" (safe default). Pin this behaviour.
+    from brain.reflex import _frame_size
+    assert _frame_size(object()) == (1, 1)
+    assert _frame_size(None) == (1, 1)
+    # A numpy-style frame with shape (H, W, C) -> (W, H)
+    class Fake:
+        shape = (480, 640, 3)
+    assert _frame_size(Fake()) == (640, 480)
+
+
 def test_to_bridge_cmd_drive_and_pan():
     c = controller()
     r = c.decide([], IMG_W, IMG_H, pending={"cmd": "drive", "speed": 20, "steer": 5})
