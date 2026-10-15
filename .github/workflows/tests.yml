@@ -1,6 +1,6 @@
 # CI for the Tankie ESP8266 firmware (issue #5).
 #
-# 9 jobs, all on push/PR:
+# 10 jobs, all on push/PR:
 #
 #   unit-tests     - host-side unit tests (g++, no ESP toolchain): compiles
 #                    the pure firmware modules against tests/shims/Arduino.h
@@ -23,6 +23,12 @@
 #                    pytest tests/brain/ --strict-markers (fully offline —
 #                    no tank/Pi/LocalAI). Separate from python-checks so the
 #                    legacy client guard stays independent (issue #75).
+#
+#   bridge-safety  - the serial-bridge safety-net guard (issue #98):
+#                    py_compile bridge.py + the offline bridge harnesses
+#                    (command timeout / auto-profile / stream re-arm /
+#                    set_wifi). The command-timeout harness guards the net
+#                    that stops the tank if the brain process dies.
 #
 #   vlm-bench      - the VLM-benchmark tool guard (issue #81): py_compile the
 #                    three stdlib scripts + an offline harness (dry-run scene
@@ -125,6 +131,32 @@ jobs:
         # pytest command — CI and a human on a dev machine run the exact
         # same line (issue #75).
         run: bash tests/run_brain_tests.sh
+
+  # bridge-safety  - the serial-bridge safety-net guard (issue #98): py_compile
+  #                    bridge.py + run the offline bridge harnesses (command
+  #                    timeout, auto-profile, stream re-arm, set_wifi). The
+  #                    command-timeout harness is the guard for the safety
+  #                    net that stops the tank if the brain process dies
+  #                    (no new `drive` within command_timeout_ms => stop).
+  #                    Pure stdlib (serial/yaml stubbed) — no tank/Pi needed.
+  bridge-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: py_compile the bridge daemon
+        run: python -m py_compile raspberry_pi/serial_bridge/bridge.py
+      - name: Run the bridge command-timeout harness (issue #98, safety)
+        run: python tests/bridge_command_timeout_harness.py
+      - name: Run the bridge auto-profile harness (issue #31)
+        run: python tests/bridge_auto_profile_harness.py
+      - name: Run the bridge stream re-arm harness (issue #57)
+        run: python tests/bridge_stream_rearm_harness.py
+      - name: Run the bridge set_wifi harness (issue #56)
+        run: python tests/bridge_wifi_harness.py
 
   vlm-bench:
     runs-on: ubuntu-latest

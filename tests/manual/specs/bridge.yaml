@@ -108,3 +108,22 @@
   action: {noop: true}
   observe:
     expected: "Reboot the ESP: within ~30 s the stream_url is restored with no manual action (the bridge re-arms set_stream)."
+
+- id: S2-10
+  layer: bridge
+  title: "command timeout safety net (issue #98)"
+  safety: med
+  setup: [{cmd: stop}]
+  action: {cmd: drive, speed: 40, steer: 0, settle_s: 1}
+  observe:
+    expected: >
+      Drive for ~1 s, then let the client go silent (send no further `drive`
+      for > command_timeout_ms, default 5 s). The bridge must clear the active
+      drive and send one `drive 0 0` stop on its own (the safety net for a dead
+      brain). Verify: state.command_timeout_fired becomes true, and the tank
+      stops within ~command_timeout_ms even though the client is no longer
+      sending anything.
+    auto:
+      - path: reply.ok
+        eq: true
+  teardown: [{cmd: stop}]
