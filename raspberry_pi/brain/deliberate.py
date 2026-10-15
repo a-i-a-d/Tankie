@@ -279,10 +279,24 @@ class DeliberationLoop:
             return []
         return list(frames)
 
+    def _clear_pending(self) -> None:
+        """Clear the pending slot (issue #101) — a stale action must not keep
+        the tank moving once the task is done or the VLM stops producing a
+        valid action. Never raises (a failing clear must not kill the loop).
+        """
+        try:
+            self._pending.clear()
+        except Exception:  # noqa: BLE001
+            pass
+
     def _tick(self) -> None:
         # 1) task — no task, don't burn tokens.
         task = self._current_task()
         if task is None:
+            # #101: the task is done (or never set) — clear the pending slot
+            # so a stale drive/pan/tilt does not keep the tank moving (the
+            # reflex loop then idles to ``drive 0 0``).
+            self._clear_pending()
             return
 
         # 2) frames — a real sequence (A1); empty -> skip.
@@ -313,6 +327,9 @@ class DeliberationLoop:
             self.errors += 1
             err = res.get("error") if isinstance(res, Mapping) else "no result"
             logger.warning("deliberate: VLM call failed: %s", err)
+            # #101: the VLM is down — a stale action must not keep the tank
+            # moving. Clear the slot; the reflex loop idles to ``drive 0 0``.
+            self._clear_pending()
             return
 
         # 6) validate — malformed reply is logged + ignored (slot unchanged).
@@ -324,6 +341,9 @@ class DeliberationLoop:
             logger.warning(
                 "deliberate: malformed VLM reply ignored: %s (raw=%r)", exc, raw[:200]
             )
+            # #101: no valid action this tick — clear any stale action so the
+            # tank stops rather than coasting on the last proposal.
+            self._clear_pending()
             return
 
         # 7) write to the pending slot (latest deliberation wins).

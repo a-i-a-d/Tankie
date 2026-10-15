@@ -556,3 +556,98 @@ def test_reflex_obstacle_enabled_env_bool(tmp_path):
     assert c.reflex_obstacle_enabled is True
     c2 = load_config(path=y, env={"TANKIE_REFLEX_OBSTACLE_ENABLED": "off"})
     assert c2.reflex_obstacle_enabled is False
+
+
+# ===========================================================================
+# #101 — consume-once: one-shot pan/tilt are applied once, then cleared
+# ===========================================================================
+
+def test_loop_pending_pan_consumed_once():
+    """#101: a one-shot pan is applied once, then the slot is cleared.
+
+    The reflex loop sends the pan command, clears the pending slot (via
+    ``pending_clear``), and does NOT re-send the pan on subsequent ticks.
+    """
+    from brain.pending_action import PendingAction
+
+    bridge = FakeBridge()
+    pa = PendingAction()
+    pa.set({"intent": "go_to", "cmd": "pan", "pan": 45, "reason": "look left"})
+    loop = ReflexLoop(
+        FakeGrabber(_frame()),
+        FakeLocalAI({"ok": True, "detections": []}),
+        controller(), bridge,
+        pending_action=pa.get,
+        pending_clear=pa.clear,
+        hz=100,
+    )
+    loop.start()
+    try:
+        assert _wait_until(lambda: len(bridge.sent) >= 3)
+        # The pan was sent exactly once (then the slot was cleared).
+        pans = [c for c in bridge.sent if c.get("cmd") == "pan"]
+        assert len(pans) == 1
+        assert pans[0] == {"cmd": "pan", "angle": 45}
+        # The slot must be empty after consumption.
+        assert pa.get() is None
+    finally:
+        loop.stop()
+
+
+def test_loop_pending_tilt_consumed_once():
+    """#101: a one-shot tilt is applied once, then the slot is cleared."""
+    from brain.pending_action import PendingAction
+
+    bridge = FakeBridge()
+    pa = PendingAction()
+    pa.set({"intent": "go_to", "cmd": "tilt", "tilt": 120, "reason": "look up"})
+    loop = ReflexLoop(
+        FakeGrabber(_frame()),
+        FakeLocalAI({"ok": True, "detections": []}),
+        controller(), bridge,
+        pending_action=pa.get,
+        pending_clear=pa.clear,
+        hz=100,
+    )
+    loop.start()
+    try:
+        assert _wait_until(lambda: len(bridge.sent) >= 3)
+        tilts = [c for c in bridge.sent if c.get("cmd") == "tilt"]
+        assert len(tilts) == 1
+        assert tilts[0] == {"cmd": "tilt", "angle": 120}
+        assert pa.get() is None
+    finally:
+        loop.stop()
+
+
+def test_loop_pending_drive_not_cleared_by_reflex():
+    """#101: drive is a *level* command — the reflex loop does NOT clear it.
+
+    A pending drive stays in force (re-sent each tick) until the deliberation
+    loop clears the slot when the task ends. The reflex loop only consumes
+    one-shot pan/tilt.
+    """
+    from brain.pending_action import PendingAction
+
+    bridge = FakeBridge()
+    pa = PendingAction()
+    pa.set({"intent": "go_to", "cmd": "drive", "speed": 25, "steer": 0})
+    loop = ReflexLoop(
+        FakeGrabber(_frame()),
+        FakeLocalAI({"ok": True, "detections": []}),
+        controller(), bridge,
+        pending_action=pa.get,
+        pending_clear=pa.clear,
+        hz=100,
+    )
+    loop.start()
+    try:
+        assert _wait_until(lambda: len(bridge.sent) >= 2)
+        # The drive keeps being sent (a level command, not consumed once).
+        drives = [c for c in bridge.sent
+                  if c.get("cmd") == "drive" and c.get("speed") == 25]
+        assert len(drives) >= 2
+        # The slot was NOT cleared by the reflex loop.
+        assert pa.get() is not None
+    finally:
+        loop.stop()
