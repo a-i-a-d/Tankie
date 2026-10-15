@@ -13,11 +13,28 @@ baud: 921600
 
 # Keep-alive: the bridge re-sends the active drive command at this interval
 # so the ESP8266 watchdog (SERIAL_WATCHDOG_MS = 1000 ms) never fires while
-# the tank is supposed to be moving. 250 ms gives 4× margin.
+# the tank is supposed to be moving. 250 ms gives 4x margin.
 keepalive_ms: 250
 
-# Link-down detection: if no ack is received within this window after a
-# command, the link is considered down and the state file is updated.
+# ---------------------------------------------------------------------------
+# Command timeout (issue #98, safety)
+#
+# If the client (the brain's reflex loop) stops sending `drive` commands for
+# this long, the bridge clears the active drive and sends one `drive 0 0`
+# stop. This makes the bridge itself a safety net *independent of the brain*:
+# if the brain process dies (crash / OOM / SIGKILL) while the tank is
+# driving, the bridge would otherwise keep re-sending the last non-zero drive
+# forever (re-arming the ESP watchdog on every send) and the tank would drive
+# indefinitely.
+#
+# The brain's reflex loop is the primary safety net, but it sits ABOVE the
+# bridge, so the bridge must be able to self-protect when the brain vanishes.
+# A live brain sends `drive` every reflex tick (10 Hz => 100 ms), far inside
+# this window, so normal operation is unaffected. 5000 ms = 50 ticks of
+# margin.
+# ---------------------------------------------------------------------------
+command_timeout_ms: 5000
+
 ack_timeout_ms: 500
 
 # State store: written by the bridge, read by the CLI and (future) Web UI.

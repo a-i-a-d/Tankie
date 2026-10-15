@@ -76,6 +76,13 @@ DEFAULTS = {
     "baud": 921600,
     "keepalive_ms": 250,
     "ack_timeout_ms": 500,
+    # Issue #98 (safety): if the client (brain) stops sending `drive`
+    # commands for this long, the bridge clears the active drive and sends
+    # one stop. This makes the bridge itself a safety net independent of the
+    # brain (the primary net, but it sits *above* the bridge). Must be >> the
+    # reflex tick period (10 Hz => 100 ms) so a live brain never trips it;
+    # 5000 ms = 50 ticks of margin.
+    "command_timeout_ms": 5000,
     "state_file": "/var/lib/tankie/state.json",
     "socket_path": "/run/tankie/bridge.sock",
     "log_level": "INFO",
@@ -157,6 +164,7 @@ class StateStore:
             "last_command": None,
             "last_state": None,
             "watchdog_fired": False,
+            "command_timeout_fired": False,
             "updated_at": None,
         }
         self._ensure_dir()
@@ -200,6 +208,10 @@ class Bridge:
         self._active_drive = None      # {"speed": int, "steer": int} or None
         self._active_drive_lock = threading.Lock()
         self._last_send_ms = 0
+        # Issue #98: wall-clock ms of the last `drive` command received from a
+        # client (set in _dispatch, read by _writer_loop). Guarded by
+        # _active_drive_lock (one logical unit with _active_drive).
+        self._last_cmd_ms = 0
         self._serial = None
         self._sock = None
         # Guards the self._serial reference (the stream thread may race stop()).
@@ -385,9 +397,53 @@ class Bridge:
 
     # -- writer thread (keep-alive) ------------------------------------------
 
+    def _check_command_timeout(self):
+        """Safety net (issue #98): stop the tank if the client goes silent.
+
+        The brain's reflex loop is the primary safety net, but it sits
+        *above* the bridge. If the brain process dies (crash / OOM /
+        SIGKILL) while the tank is driving, the bridge would otherwise keep
+        re-sending the last non-zero ``drive`` forever (re-arming the ESP
+        1000 ms watchdog on every send), and the tank would drive
+        indefinitely. This makes the bridge itself a safety net: no new
+        ``drive`` command within ``command_timeout_ms`` => clear the active
+        drive and send one stop.
+
+        A live brain sends ``drive`` every reflex tick (10 Hz => 100 ms), far
+        inside the timeout, so normal operation is unaffected. The clear +
+        stop happen atomically under ``_active_drive_lock`` so a concurrent
+        ``_dispatch`` drive either re-arms the timestamp (client alive) or is
+        issued after we've stopped (client re-issued a command) — both
+        correct.
+        """
+        timeout_ms = int(self.cfg.get("command_timeout_ms", 5000))
+        now_ms = int(time.time() * 1000)
+        with self._active_drive_lock:
+            drive = self._active_drive
+            if not drive:
+                return
+            if int(drive.get("speed", 0)) == 0 and int(drive.get("steer", 0)) == 0:
+                return  # already stopped — nothing to time out
+            if now_ms - self._last_cmd_ms <= timeout_ms:
+                return  # still fresh — the client is alive
+            self._active_drive = None
+            stale_ms = now_ms - self._last_cmd_ms
+            try:
+                self._send_line({"cmd": "drive", "speed": 0, "steer": 0})
+            except Exception as e:
+                log.error("command-timeout stop send failed: %s", e)
+        log.warning("command timeout: no drive command for %d ms — "
+                    "cleared active drive and sent stop (issue #98)",
+                    stale_ms)
+        self.state.update(command_timeout_fired=True)
+
     def _writer_loop(self):
         keepalive_s = self.cfg["keepalive_ms"] / 1000.0
         while not self._stop.is_set():
+            # Issue #98 (safety): if the client stopped sending `drive`
+            # commands, clear the active drive and send one stop BEFORE we
+            # would re-send a stale non-zero drive.
+            self._check_command_timeout()
             with self._active_drive_lock:
                 drive = dict(self._active_drive) if self._active_drive else None
 
@@ -565,9 +621,15 @@ class Bridge:
             speed, steer, clamped = self._clamp_drive(speed, steer)
             with self._active_drive_lock:
                 self._active_drive = {"speed": speed, "steer": steer}
+                # Issue #98: a `drive` command is proof the client is alive —
+                # refresh the freshness timestamp (read by _writer_loop).
+                self._last_cmd_ms = int(time.time() * 1000)
             self._send_line({"cmd": "drive", "speed": speed, "steer": steer})
             self._last_send_ms = int(time.time() * 1000)
-            self.state.update(last_command={"cmd": "drive", "speed": speed, "steer": steer})
+            # A fresh drive command means the client is (re-)engaged — clear
+            # any prior command-timeout flag so state reflects "alive" now.
+            self.state.update(last_command={"cmd": "drive", "speed": speed, "steer": steer},
+                              command_timeout_fired=False)
             result = {"ok": True}
             if clamped:
                 result["clamped"] = clamped
@@ -626,7 +688,10 @@ class Bridge:
             with self._active_drive_lock:
                 self._active_drive = None
             self._send_line({"cmd": "stop"})
-            self.state.update(last_command={"cmd": "stop"})
+            # An explicit stop means the client is engaged — clear any prior
+            # command-timeout flag so state reflects "client present" now.
+            self.state.update(last_command={"cmd": "stop"},
+                              command_timeout_fired=False)
             return {"ok": True}
 
         elif c == "state":
