@@ -396,6 +396,36 @@ def test_deliberate_valid_action_sets_pending():
     assert localai.calls  # VLM was called
 
 
+def test_deliberate_extra_key_in_reply_still_sets_action():
+    """#103: a VLM reply carrying an extra key still yields a valid action.
+
+    A small VLM routinely adds fields (``confidence``, trailing noise). With
+    ``Action`` parsed permissively (``extra="ignore"``), the loop must set a
+    valid action in the pending slot instead of logging a malformed reply and
+    leaving the slot empty.
+    """
+    grabber = FakeGrabber(frames=[_frame(0), _frame(1), _frame(2), _frame(3)])
+    raw = _action_json(speed=50, steer=10)
+    # inject an extra key the VLM "shouldn't" have emitted
+    extra = raw[: -1] + ', "confidence": 0.9}'
+    localai = FakeLocalAI(result={"ok": True, "raw": extra})
+    pa = PendingAction()
+    tq = FakeTaskQueue(task="go to the door")
+    loop = DeliberationLoop(grabber, localai, pa, tq, hz=100)
+    loop.start()
+    assert _wait_until(lambda: pa.has())
+    loop.stop()
+    action = pa.get()
+    assert action["intent"] == "go_to"
+    assert action["cmd"] == "drive"
+    assert action["speed"] == 50
+    assert action["steer"] == 10
+    # the extra key must not leak into the pending action
+    assert "confidence" not in action
+    assert loop.errors == 0
+    assert loop.valid_actions >= 1
+
+
 def test_deliberate_malformed_json_clears_stale_action():
     """#101: malformed VLM reply -> stale action cleared (tank stops).
 
