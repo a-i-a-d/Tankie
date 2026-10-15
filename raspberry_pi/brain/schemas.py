@@ -8,7 +8,11 @@ LoRA/benchmark work in Phase 6 trains on).
 
 Rules (from the #72 plan):
   * Pydantic v2, ``model_config = ConfigDict(extra="forbid")`` — a stray key
-    is a bug, not a silent pass-through.
+    is a bug, not a silent pass-through. **Exception:** the *external*
+    (model-produced) :class:`Action` uses ``extra="ignore"`` — a small VLM
+    routinely adds fields (``confidence``, trailing noise), and one stray key
+    must not discard an otherwise-valid action (issue #103). Every *internal*
+    schema stays ``forbid``.
   * ``speed``/``steer`` are bounded to the ESP8266 serial range (±100 here;
     the bridge clamps the AI path to the AUTO_PROFILE of ±40/±120 — see
     ``Action.clamp`` for the UX mirror).
@@ -34,19 +38,32 @@ Cmd = Literal["drive", "pan", "tilt", "stop", "none"]
 
 
 class _Strict(BaseModel):
-    """Base for all brain models: reject unknown keys."""
+    """Base for **internal** brain models: reject unknown keys.
+
+    The one exception is the external, model-produced :class:`Action`, which
+    opts into ``extra="ignore"`` (see issue #103).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
 
-class Action(_Strict):
+class Action(BaseModel):
     """One deliberation decision: what to do and why.
 
     ``intent`` is the high-level goal (for the LLM and the data log);
     ``cmd`` is the concrete actuator command. ``speed``/``steer`` are only
     meaningful when ``cmd == "drive"``; ``pan``/``tilt`` only when
     ``cmd`` is ``"pan"``/``"tilt"``.
+
+    This is the **only** brain model parsed from external (VLM) output, so it
+    is permissive about *unknown* keys (``extra="ignore"``): a small VLM
+    routinely emits extra fields (``confidence``, ``confidence_score``,
+    trailing noise) and one stray key must not discard an otherwise-valid
+    action (issue #103). Required fields and all range/literal checks are
+    still enforced — only unknown keys are dropped.
     """
+
+    model_config = ConfigDict(extra="ignore")
 
     intent: Intent
     cmd: Cmd

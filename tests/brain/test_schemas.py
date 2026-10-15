@@ -82,9 +82,31 @@ def test_action_rejects_out_of_range_tilt(tilt):
         Action(intent="go_to", cmd="tilt", tilt=tilt)
 
 
-def test_action_rejects_extra_key():
+def test_action_ignores_extra_key():
+    """Issue #103: a VLM reply with extra keys still yields a valid Action.
+
+    Unknown keys are dropped; required fields and range checks are still
+    enforced (only *unknown* keys are permissive).
+    """
+    a = Action.model_validate(
+        {"intent": "stop", "cmd": "stop", "confidence": 0.9, "bogus": 1}
+    )
+    assert a.intent == "stop" and a.cmd == "stop"
+    # the extra keys must NOT leak into the model
+    dumped = a.model_dump()
+    assert "confidence" not in dumped and "bogus" not in dumped
+
+
+def test_action_still_rejects_bad_values_with_extra_key():
+    """Permissive about *unknown* keys, but range checks still apply."""
     with pytest.raises(ValidationError):
-        Action(intent="stop", cmd="stop", bogus=1)
+        Action.model_validate(
+            {"intent": "go_to", "cmd": "drive", "speed": 1000, "confidence": 0.9}
+        )
+    with pytest.raises(ValidationError):
+        Action.model_validate(
+            {"intent": "fly", "cmd": "stop", "confidence": 0.9}
+        )
 
 
 def test_action_clamp_bounds_to_auto_profile():
