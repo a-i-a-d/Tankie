@@ -54,6 +54,31 @@ def _err(message: str) -> dict:
     return {"ok": False, "error": str(message)}
 
 
+_DATA_URI_PREFIX = "data:image/jpeg;base64,"
+
+
+def _to_data_uri(image_b64: str) -> str:
+    """Wrap a raw base64 string in a JPEG data-URI (issue #102).
+
+    LocalAI's ``/v1/detection`` endpoint requires the ``image`` field to be a
+    **data-URI** (``data:image/jpeg;base64,<b64>``); a bare base64 string is
+    rejected with ``400 "not valid base64 data type string"`` (verified
+    against the live server, 2026-10-15). ``frame_to_b64()`` (reflex.py) and
+    the deliberation loop both produce raw base64 of a JPEG-encoded frame, so
+    the correct prefix is ``data:image/jpeg;base64,``.
+
+    Idempotent: if the caller already passed a data-URI (any
+    ``data:...;base64,...`` or ``data:...`` form), it is returned unchanged so
+    we never double-wrap. An empty/None input returns the empty string (the
+    server will reject it as an empty image — same as passing ``""`` today).
+    """
+    if not image_b64:
+        return ""
+    if image_b64.startswith("data:"):
+        return image_b64
+    return _DATA_URI_PREFIX + image_b64
+
+
 class LocalAIClient:
     """One typed surface for every LocalAI endpoint the brain uses.
 
@@ -231,10 +256,25 @@ class LocalAIClient:
 
         Returns ``{"ok": True, "detections": [...]}`` or an error dict (e.g.
         the ``501`` when no detector model is deployed yet). Never raises.
+
+        Coordinate convention (issue #102): the boxes are returned in **pixels
+        of the image that was sent** — LocalAI's ``rfdetr-base`` detector
+        returns pixel coordinates (verified empirically: the same object at
+        960x720 and 1920x1440 yields boxes that scale exactly 2x). ``ReflexController``
+        geometry therefore compares against the *sent* frame's size, which is
+        exactly the convention the reflex loop passes (``_frame_size(frame)``).
+
+        Image format (issue #102): LocalAI's ``/v1/detection`` requires a
+        **data-URI** (``data:image/jpeg;base64,<b64>``) in the ``image`` field
+        — a raw base64 string is rejected with ``400 "not valid base64 data
+        type string"`` (verified against the live server). ``detect()``
+        therefore wraps the caller's raw base64 in a data-URI before sending.
+        The ``chat()`` path (OpenAI SDK) is unaffected — it already builds
+        data-URIs in ``_build_chat_messages``.
         """
         body = {
             "model": self._cfg.detection_model,
-            "image": image_b64,
+            "image": _to_data_uri(image_b64),
             "threshold": min_confidence,
         }
         res = self._request("POST", "detection", timeout=self._timeout("detect_s"), json_body=body)

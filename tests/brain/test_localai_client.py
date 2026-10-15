@@ -113,7 +113,13 @@ def test_detect_happy_maps_width_height_and_request_shape():
         {"class_name": "dog", "x": 10.0, "y": 20.0, "w": 30.0, "h": 40.0, "confidence": 0.95}
     ]
     assert seen["url"] == "http://localai.test/v1/detection"
-    assert seen["body"] == {"model": "det-test", "image": "BASE64IMG", "threshold": 0.5}
+    # issue #102: the raw base64 is wrapped in a JPEG data-URI before sending
+    # (LocalAI's /v1/detection rejects a bare base64 string with 400).
+    assert seen["body"] == {
+        "model": "det-test",
+        "image": "data:image/jpeg;base64,BASE64IMG",
+        "threshold": 0.5,
+    }
 
 
 def test_detect_min_confidence_filters():
@@ -147,6 +153,48 @@ def test_detect_timeout_is_data():
 
     r = make_client(handler).detect("IMG")
     assert r["ok"] is False and "timeout" in r["error"]
+
+
+def test_detect_wraps_raw_base64_in_data_uri():
+    # issue #102: LocalAI's /v1/detection requires a data-URI in the image
+    # field. A raw base64 string must arrive prefixed with the JPEG data-URI.
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return _json(200, {"detections": []})
+
+    c = make_client(handler)
+    c.detect("QUJD", min_confidence=0.5)
+    assert seen["body"]["image"] == "data:image/jpeg;base64,QUJD"
+
+
+def test_detect_does_not_double_wrap_existing_data_uri():
+    # issue #102: if the caller already passed a data-URI, leave it unchanged
+    # so we never double-wrap.
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return _json(200, {"detections": []})
+
+    c = make_client(handler)
+    c.detect("data:image/png;base64,QUJD")
+    assert seen["body"]["image"] == "data:image/png;base64,QUJD"
+
+
+def test_detect_empty_image_stays_empty():
+    # issue #102: an empty image string is passed through unchanged (the
+    # server rejects it as an empty image — same as before the fix).
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return _json(200, {"detections": []})
+
+    c = make_client(handler)
+    c.detect("")
+    assert seen["body"]["image"] == ""
 
 
 # ---------------------------------------------------------------------------
