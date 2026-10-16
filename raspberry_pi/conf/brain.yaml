@@ -72,9 +72,14 @@ reflex_block_classes: [person, car, truck, bus, bicycle, motorcycle, dog, cat, h
 reflex_lane_half_width: 0.30
 reflex_min_bottom_ratio: 0.70
 # A3 (#80): steer magnitude (±) when avoiding a side-lane obstacle.
-# The tank arcs around it: forward at max_speed while steering this much
+# The tank arcs around it: forward at reflex_arc_speed while steering this much
 # (issue #105: not a spin-in-place).
 reflex_steer_around: 60
+# Forward speed while arcing around a side-lane obstacle (issue #105).
+# Kept separate from auto_profile.max_speed so it can be tuned independently.
+# Note: motors need enough speed to overcome static friction; 40 is the
+# normal AI cruising speed and works well in practice.
+reflex_arc_speed: 40
 
 # --- serial bridge (#33) ---
 bridge_socket: /run/tankie/bridge.sock

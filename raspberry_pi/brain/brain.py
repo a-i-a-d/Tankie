@@ -248,6 +248,7 @@ class Brain:
                 lane_half_width=self._cfg.reflex_lane_half_width,
                 min_bottom_ratio=self._cfg.reflex_min_bottom_ratio,
                 steer_around=self._cfg.reflex_steer_around,
+                arc_speed=self._cfg.reflex_arc_speed,
                 max_speed=ap.max_speed,
                 max_steer=ap.max_steer,
             )

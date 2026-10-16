@@ -50,7 +50,7 @@ def det(class_name, cx, cy, w=60, h=60, conf=0.9):
 
 
 def controller(**over) -> ReflexController:
-    base = dict(enabled=True, steer_around=60, max_speed=40, max_steer=255)
+    base = dict(enabled=True, steer_around=60, arc_speed=40, max_speed=40, max_steer=255)
     base.update(over)
     return ReflexController(**base)
 
@@ -137,11 +137,19 @@ def test_right_obstacle_arcs_left_around():
     assert "right" in r.reason
 
 
-def test_side_arc_uses_configured_max_speed():
-    # the arc speed follows max_speed (configurable), not a hardcoded value.
+def test_side_arc_uses_configured_arc_speed():
+    # the arc speed follows arc_speed (configurable), not a hardcoded value.
     obstacle = det("car", 0.15 * IMG_W, 0.85 * IMG_H)
-    r = controller(max_speed=25).decide([obstacle], IMG_W, IMG_H)
+    r = controller(arc_speed=25).decide([obstacle], IMG_W, IMG_H)
     assert (r.speed, r.steer) == (25, 60)
+
+
+def test_side_arc_speed_independent_of_max_speed():
+    # arc_speed and max_speed are independent: a low max_speed (cruise)
+    # does not reduce the arc speed (which must overcome static friction).
+    obstacle = det("car", 0.15 * IMG_W, 0.85 * IMG_H)
+    r = controller(max_speed=10, arc_speed=40).decide([obstacle], IMG_W, IMG_H)
+    assert (r.speed, r.steer) == (40, 60)
 
 
 def test_side_arc_preempts_pending_action():
@@ -583,6 +591,7 @@ def test_reflex_config_defaults():
     c = BrainConfig()
     assert c.reflex_obstacle_enabled is False          # A2: off until depth (T15)
     assert c.reflex_steer_around == 60                 # A3
+    assert c.reflex_arc_speed == 40                    # #105: arc speed (configurable)
     assert c.reflex_lane_half_width == 0.30            # A2
     assert c.reflex_min_bottom_ratio == 0.70           # A2
     assert "person" in c.reflex_block_classes          # A1
@@ -594,11 +603,13 @@ def test_reflex_config_yaml_overrides(tmp_path):
     y.write_text(
         "reflex_obstacle_enabled: true\n"
         "reflex_steer_around: 40\n"
+        "reflex_arc_speed: 20\n"
         "reflex_block_classes: [person, cat]\n"
     )
     c = load_config(path=y, env={})
     assert c.reflex_obstacle_enabled is True
     assert c.reflex_steer_around == 40
+    assert c.reflex_arc_speed == 20
     assert c.reflex_block_classes == ("person", "cat")
 
 

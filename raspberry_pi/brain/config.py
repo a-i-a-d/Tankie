@@ -88,6 +88,7 @@ _SCALAR_FIELDS = (
     "reflex_lane_half_width",
     "reflex_min_bottom_ratio",
     "reflex_steer_around",
+    "reflex_arc_speed",
     "reflex_obstacle_enabled",
     "state_file",
     "task_file",
@@ -156,6 +157,7 @@ class BrainConfig:
     reflex_lane_half_width: float = 0.30   # A2: box center within +/-30% of image center x
     reflex_min_bottom_ratio: float = 0.70  # A2: box bottom below 70% of image height = "close"
     reflex_steer_around: int = 60          # A3: steer magnitude when avoiding (configurable)
+    reflex_arc_speed: int = 40             # forward speed while arcing around a side obstacle (configurable)
     reflex_obstacle_enabled: bool = False  # A2: off until depth (T15); on = detection-only avoidance
     state_file: str = "/var/lib/tankie/state.json"
     # --- task file (T6, #82; Q5/A5: the cross-process task channel) ---
