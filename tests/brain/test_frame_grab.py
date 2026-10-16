@@ -20,6 +20,10 @@ Covers the issue #74 acceptance:
   * stop() then start() again works (restart cycle)
   * a mid-stream None burst doesn't blank the loop until stale
   * HTTPHLSSource (the Q2 option-(a) fallback) decodes the latest segment
+  * issue #107: a *real* MPEG-TS video segment is decoded to a frame
+    (cv2.VideoCapture file:// path), while cv2.imdecode alone returns None;
+    rtsp:// URLs route to LLHLSSource (cv2 handles RTSP natively), including
+    when prefer="http" (logged redirect)
 """
 
 from __future__ import annotations
@@ -412,14 +416,173 @@ def test_http_hls_undecodable_segment_returns_none():
 
 
 # ---------------------------------------------------------------------------
+# issue #107 -- a *real* video segment (MPEG-TS) must decode to a frame
+# ---------------------------------------------------------------------------
+
+def _seg_frame(tag: int, size=(64, 48)) -> "np.ndarray":
+    """A distinct BGR frame at the segment's native size (64x48)."""
+    w, h = size
+    arr = np.zeros((h, w, 3), dtype=np.uint8)
+    arr[:, :, 0] = 255
+    arr[:, :, 1] = (tag * 37) % 256
+    arr[:, :, 2] = (tag * 91) % 256
+    return arr
+
+
+def _real_ts_bytes(n_frames: int = 5, tag: int = 21) -> bytes:
+    """Generate a real MPEG-TS video segment with cv2.VideoWriter.
+
+    This is what mediamtx actually serves for ``.ts`` -- H.264/MPEG-4 frames
+    in an MPEG transport stream container, *not* a still image. (The headless
+    OpenCV wheel has no H.264 encoder; MPEG-4 Part 2 in an mpegts container
+    is the closest the encoder stack allows, and it exercises the same
+    demux+decode path.)
+
+    NOTE: the frames must match the writer's ``(width, height)`` --
+    ``VideoWriter.write()`` silently drops mismatched frames.
+    """
+    import cv2
+    import os
+    import tempfile
+
+    size = (64, 48)
+    fd, path = tempfile.mkstemp(suffix=".ts", prefix="tankie-test-")
+    try:
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(path, fourcc, 10.0, size)
+        assert writer.isOpened()
+        for i in range(n_frames):
+            writer.write(_seg_frame((tag + i) % 256, size))
+        writer.release()
+        with open(path, "rb") as fh:
+            data = fh.read()
+        assert data, "VideoWriter produced an empty .ts (encoder unavailable?)"
+        return data
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def test_http_hls_decodes_real_ts_segment():
+    """The regression that was missed: a real MPEG-TS segment decodes to a frame.
+
+    The old code fed the segment bytes to ``cv2.imdecode`` (still images only)
+    and got ``None``; the fix decodes via ``cv2.VideoCapture("file://…")``.
+    """
+    import httpx
+
+    ts = _real_ts_bytes(n_frames=5, tag=21)
+    assert ts[:4] != b"\xff\xd8"  # sanity: this is NOT a JPEG
+
+    def handler(request):
+        if request.url.path.endswith(".m3u8"):
+            return httpx.Response(
+                200, text="#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1.0,\nseg0.ts\n"
+            )
+        if request.url.path.endswith(".ts"):
+            return httpx.Response(200, content=ts)
+        return httpx.Response(404)
+
+    src = HTTPHLSSource(
+        "http://hls.test/cam_low/index.m3u8",
+        poll_s=0.01,
+        timeout_s=1.0,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    try:
+        frame = None
+        for _ in range(200):
+            frame = src.read()
+            if frame is not None:
+                break
+            time.sleep(0.01)
+        assert frame is not None, "real .ts segment must decode to a frame (issue #107)"
+        assert frame.shape == (48, 64, 3)
+        # the last frame of the segment is the marker (tag=25)
+        ref = _seg_frame(25).astype("int16")
+        assert abs(frame.astype("int16") - ref).max() <= 8
+        assert src.age_s() is not None
+    finally:
+        src.stop()
+
+
+def test_imdecode_none_on_real_ts_but_videocapture_decodes():
+    """Direct proof of the decode-path choice (the root cause of #107)."""
+    import cv2
+    import numpy as np
+
+    ts = _real_ts_bytes(n_frames=5, tag=31)
+    buf = np.frombuffer(ts, dtype=np.uint8)
+    # the OLD path: cv2.imdecode on a transport stream -> None (it only
+    # decodes still images; on cv2 5.x it raises for empty input, so accept
+    # either "None" or "raised" as proof it cannot decode the segment)
+    try:
+        assert cv2.imdecode(buf, cv2.IMREAD_COLOR) is None
+    except cv2.error:
+        pass  # equally proves imdecode cannot handle the segment
+    # the NEW path: the video decoder handles the container
+    frame = HTTPHLSSource._decode_video_bytes(cv2, ts)
+    assert frame is not None
+    ref = _seg_frame(35).astype("int16")
+    assert abs(frame.astype("int16") - ref).max() <= 8
+
+
+# ---------------------------------------------------------------------------
 # create_source factory
 # ---------------------------------------------------------------------------
 
 def test_create_source_auto_and_explicit():
     assert isinstance(create_source("http://x/cam.m3u8"), LLHLSSource)
-    assert isinstance(create_source("rtsp://x/cam"), HTTPHLSSource)
     assert isinstance(create_source("http://x/cam.m3u8", prefer="http"), HTTPHLSSource)
+    assert isinstance(create_source("http://x/cam.m3u8", prefer="cv2"), LLHLSSource)
+
+
+def test_create_source_rtsp_routes_to_cv2_source():
+    # issue #107: rtsp:// must NOT go to the HTTP-only source (httpx raises
+    # UnsupportedProtocol on it); cv2's FFmpeg backend handles RTSP natively.
+    assert isinstance(create_source("rtsp://x/cam"), LLHLSSource)
     assert isinstance(create_source("rtsp://x/cam", prefer="cv2"), LLHLSSource)
+
+
+def test_create_source_rtsp_with_prefer_http_is_redirected_and_logged():
+    import logging
+
+    # prefer="http" + rtsp:// is impossible (httpx cannot speak RTSP): the
+    # factory must pick a working source and say so (acceptance: "a clear,
+    # logged failure -- not a silent None").
+    with _capture_logs() as records:
+        src = create_source("rtsp://x/cam", prefer="http")
+    assert isinstance(src, LLHLSSource)
+    assert any("rtsp" in r.message.lower() for r in records)
+
+
+def _capture_logs():
+    import contextlib
+    import logging
+
+    class _Capture(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.records = []
+
+        def emit(self, record):
+            self.records.append(record)
+
+    @contextlib.contextmanager
+    def _ctx():
+        cap = _Capture()
+        logger = logging.getLogger("brain.frame_grab")
+        old_level, old_handlers = logger.level, logger.handlers
+        logger.setLevel(logging.DEBUG)
+        logger.addHandler(cap)
+        try:
+            yield cap.records
+        finally:
+            logger.removeHandler(cap)
+            logger.setLevel(old_level)
+    return _ctx()
 
 
 def test_frame_source_protocol_is_satisfied():

@@ -8,9 +8,15 @@ must **never block** waiting for one. This module provides:
   stream (D5), driven by a daemon decode thread that always keeps the newest
   decoded frame.
 * ``HTTPHLSSource``-- fallback (Q2, option (a)): a pure-HTTP LL-HLS poller
-  (``httpx`` playlist walk -> latest ``.ts`` segment -> ``cv2.imdecode``).
-  A different *transport* (plain HTTP vs FFmpeg HLS demux), not a "no-cv2"
-  escape hatch -- it still needs ``cv2`` to decode.
+  (``httpx`` playlist walk -> latest ``.ts`` segment -> decode). A different
+  *transport* (plain HTTP vs FFmpeg HLS demux), not a "no-cv2" escape hatch --
+  it still needs ``cv2`` to decode. Segments are real video (H.264/MPEG-4 in
+  an MPEG-TS container), so they are decoded with ``cv2.VideoCapture`` on a
+  ``file://`` URL (``cv2.imdecode`` only handles still images); the
+  ``imdecode`` path is kept as a fallback for still-image streams.
+* ``rtsp://`` URLs are always routed to ``LLHLSSource`` (issue #107):
+  OpenCV's FFmpeg backend handles RTSP natively, while ``HTTPHLSSource`` is
+  HTTP-only (``httpx`` raises ``UnsupportedProtocol`` on ``rtsp://``).
 * ``FrameGrab``    -- the consumer-facing wrapper: a daemon thread that reads
   the source every ``interval_s`` and keeps ``(frame, monotonic())``;
   ``read_latest()`` returns the stored frame **only if** it is younger than
@@ -147,12 +153,16 @@ class LLHLSSource:
 # LL-HLS via plain HTTP (fallback, Q2 option (a))
 # ---------------------------------------------------------------------------
 class HTTPHLSSource:
-    """Pure-HTTP LL-HLS poller (``httpx`` + ``cv2.imdecode``).
+    """Pure-HTTP LL-HLS poller (``httpx`` + ``cv2``).
 
     A daemon poller thread fetches the master playlist (first variant), then
     the media playlist, takes the **last** ``EXTINF`` segment, downloads it,
-    and decodes it with ``cv2.imdecode``. Only a *new* segment (different URL
-    than the last decoded) is fetched, so the poller is cheap.
+    and decodes it: real video segments (H.264/MPEG-4 in an MPEG-TS
+    container) go through ``cv2.VideoCapture("file://…")`` (``cv2.imdecode``
+    only decodes *still images* and returns ``None`` for transport streams --
+    issue #107); the ``imdecode`` path is kept for still-image streams.
+    Only a *new* segment (different URL than the last decoded) is fetched,
+    so the poller is cheap.
 
     ``httpx`` and ``cv2`` are imported lazily; any failure (missing module,
     network error, bad playlist, undecodable segment) -> ``read()`` returns
@@ -275,7 +285,16 @@ class HTTPHLSSource:
         return urljoin(base, segments[-1])
 
     def _decode(self, client, segment_url: str):
-        """Fetch the segment and decode it to a BGR ``np.ndarray`` (or None)."""
+        """Fetch the segment and decode it to a BGR ``np.ndarray`` (or None).
+
+        Real LL-HLS segments are *video* (H.264/MPEG-4 in an MPEG-TS
+        container): ``cv2.imdecode`` only decodes still images (JPEG/PNG) and
+        returns ``None`` for them (issue #107). So the primary path writes the
+        bytes to a temp file and runs ``cv2.VideoCapture("file://…")`` -- the
+        same FFmpeg demux/decode stack as :class:`LLHLSSource`. The
+        ``cv2.imdecode`` path is kept as a fallback for streams that serve
+        still images as "segments".
+        """
         resp = client.get(segment_url, timeout=self._timeout_s)
         if resp.status_code >= 400:
             return None
@@ -284,18 +303,62 @@ class HTTPHLSSource:
             return None
         try:
             import cv2  # lazy
-            import numpy as np  # lazy
         except Exception:
             return None
+        arr = self._decode_video_bytes(cv2, data)
+        if arr is not None:
+            return arr
+        return self._decode_image_bytes(cv2, data)
+
+    @staticmethod
+    def _decode_video_bytes(cv2, data: bytes):
+        """Decode a video segment (``.ts``/``.m4s``) to its last frame.
+
+        ``cv2.VideoCapture`` on a ``file://`` URL runs the FFmpeg demuxer +
+        decoder on the container -- this is what actually works for H.264 /
+        MPEG-4 transport streams (``cv2.imdecode`` cannot).
+        """
+        import os
+        import tempfile
+
+        fd, path = tempfile.mkstemp(suffix=".ts", prefix="tankie-hls-")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            cap = cv2.VideoCapture("file://" + path)
+            try:
+                if not cap.isOpened():
+                    return None
+                frame = None
+                while True:
+                    ok, f = cap.read()
+                    if not ok or f is None:
+                        break
+                    frame = f
+                return frame
+            finally:
+                cap.release()
+        except Exception:
+            return None
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _decode_image_bytes(cv2, data: bytes):
+        """Decode a still-image segment (JPEG/PNG) -- the legacy path."""
+        import numpy as np  # lazy
+
         try:
             buf = np.frombuffer(data, dtype=np.uint8)
-            arr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+            return cv2.imdecode(buf, cv2.IMREAD_COLOR)
         except Exception:
             try:
-                arr = cv2.imdecode(data, cv2.IMREAD_COLOR)  # older cv2 accepts bytes
+                return cv2.imdecode(data, cv2.IMREAD_COLOR)  # older cv2 accepts bytes
             except Exception:
                 return None
-        return arr
 
 
 # ---------------------------------------------------------------------------
@@ -445,17 +508,30 @@ def create_source(
 ) -> FrameSource:
     """Pick a :class:`FrameSource` for ``url``.
 
-    ``prefer`` is ``"auto"`` (LL-HLS -> ``LLHLSSource``, RTSP ->
-    ``HTTPHLSSource``), ``"cv2"`` (force ``LLHLSSource``), or ``"http"``
-    (force ``HTTPHLSSource``). The choice is a config decision (D5 / Q2), not
-    a code branch in the reflex loop.
+    ``prefer`` is ``"auto"`` (the default: ``LLHLSSource`` for both
+    ``http(s)://…m3u8`` and ``rtsp://`` URLs), ``"cv2"`` (force
+    ``LLHLSSource``), or ``"http"`` (force ``HTTPHLSSource`` -- HTTP-only,
+    so an ``rtsp://`` URL is redirected to ``LLHLSSource`` with a warning;
+    issue #107). The choice is a config decision (D5 / Q2), not a code branch
+    in the reflex loop.
     """
     scheme = url.split("://", 1)[0].lower() if "://" in url else ""
+    if scheme == "rtsp":
+        # RTSP is a binary protocol -- httpx (and thus HTTPHLSSource) raises
+        # UnsupportedProtocol on it; OpenCV's FFmpeg backend handles RTSP
+        # natively, so rtsp:// always goes to LLHLSSource (issue #107).
+        if prefer == "http":
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "frame_grab: prefer='http' is incompatible with an rtsp:// "
+                "URL (httpx cannot speak RTSP); using LLHLSSource (cv2) "
+                "instead of a source that would only ever return None."
+            )
+        return LLHLSSource(url, timeout_s=timeout_s)
     if prefer == "http":
         return HTTPHLSSource(url, poll_s=poll_s, timeout_s=timeout_s, client=client)
     if prefer == "cv2":
         return LLHLSSource(url, timeout_s=timeout_s)
-    # auto
-    if scheme == "rtsp":
-        return HTTPHLSSource(url, poll_s=poll_s, timeout_s=timeout_s, client=client)
+    # auto: http(s) LL-HLS playlist -> LLHLSSource (cv2)
     return LLHLSSource(url, timeout_s=timeout_s)
