@@ -50,7 +50,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "Decide the next action. Respond with a single JSON object:\n"
     '{"intent": "go_to|find|explore|stop|say|wait",\n'
     ' "cmd": "drive|pan|tilt|stop|none",\n'
-    ' "speed": <int -100..100>, "steer": <int -100..100>,\n'
+    ' "speed": <int -100..100>, "steer": <int -255..255>,\n'
     ' "pan": <int 0..180 or null>, "tilt": <int 0..180 or null>,\n'
     ' "say": "<what to say, optional>", "reason": "<why>"}\n'
     "The reflex safety layer will clamp and may override. Focus on the task."
@@ -105,7 +105,7 @@ class AutoProfile:
 
     enabled: bool = True
     max_speed: int = 40
-    max_steer: int = 120
+    max_steer: int = 255
 
 
 @dataclass(frozen=True)

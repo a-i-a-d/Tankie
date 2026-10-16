@@ -58,36 +58,36 @@ def make_bridge(auto_profile):
 
 # --- T1: _clamp_drive clamps speed + steer ----------------------------------
 print("T1: _clamp_drive clamps to the auto profile")
-b = make_bridge({"enabled": True, "max_speed": 40, "max_steer": 120})
+b = make_bridge({"enabled": True, "max_speed": 40, "max_steer": 100})
 check(b._clamp_drive(40, 0) == (40, 0, None), "at-limit speed not clamped")
 check(b._clamp_drive(50, 0) == (40, 0, {"speed": 40, "steer": 0}),
       "over-limit speed clamped to 40")
 check(b._clamp_drive(-50, 0) == (-40, 0, {"speed": -40, "steer": 0}),
       "negative over-limit clamped to -40")
-check(b._clamp_drive(0, 120) == (0, 120, None), "at-limit steer not clamped")
-check(b._clamp_drive(0, 200) == (0, 120, {"speed": 0, "steer": 120}),
-      "over-limit steer clamped to 120")
-check(b._clamp_drive(0, -200) == (0, -120, {"speed": 0, "steer": -120}),
-      "negative over-limit steer clamped to -120")
-check(b._clamp_drive(255, 255) == (40, 120, {"speed": 40, "steer": 120}),
+check(b._clamp_drive(0, 100) == (0, 100, None), "at-limit steer not clamped")
+check(b._clamp_drive(0, 200) == (0, 100, {"speed": 0, "steer": 100}),
+      "over-limit steer clamped to 100")
+check(b._clamp_drive(0, -200) == (0, -100, {"speed": 0, "steer": -100}),
+      "negative over-limit steer clamped to -100")
+check(b._clamp_drive(255, 255) == (40, 100, {"speed": 40, "steer": 100}),
       "full-range clamped to profile")
 
 # --- T2: _clamp_drive disabled passes through --------------------------------
 print("T2: _clamp_drive disabled -> no clamp")
-b = make_bridge({"enabled": False, "max_speed": 40, "max_steer": 120})
+b = make_bridge({"enabled": False, "max_speed": 40, "max_steer": 100})
 check(b._clamp_drive(255, 255) == (255, 255, None), "disabled: full range passes")
 b = make_bridge({})  # no enabled key
 check(b._clamp_drive(255, 255) == (255, 255, None), "missing enabled: passes")
 
 # --- T3: _dispatch drive returns clamped reply -------------------------------
 print("T3: _dispatch drive clamps + reports clamped in reply")
-b = make_bridge({"enabled": True, "max_speed": 40, "max_steer": 120})
+b = make_bridge({"enabled": True, "max_speed": 40, "max_steer": 100})
 sent.clear()
 res = b._dispatch({"cmd": "drive", "speed": 100, "steer": 200})
 check(res.get("ok") is True, "drive ok: " + repr(res))
-check(res.get("clamped") == {"speed": 40, "steer": 120},
+check(res.get("clamped") == {"speed": 40, "steer": 100},
       "clamped reported: " + repr(res))
-check(sent and sent[-1] == {"cmd": "drive", "speed": 40, "steer": 120},
+check(sent and sent[-1] == {"cmd": "drive", "speed": 40, "steer": 100},
       "clamped line sent: " + repr(sent))
 # within-limit -> no clamped key
 sent.clear()
@@ -99,7 +99,7 @@ check(sent and sent[-1] == {"cmd": "drive", "speed": 10, "steer": 0},
 
 # --- T4: new pan/tilt command dispatches -------------------------------------
 print("T4: pan-rel / tilt-rel / center / sweep dispatch")
-b = make_bridge({"enabled": True, "max_speed": 40, "max_steer": 120})
+b = make_bridge({"enabled": True, "max_speed": 40, "max_steer": 100})
 
 sent.clear()
 res = b._dispatch({"cmd": "pan-rel", "delta": 20})
@@ -127,7 +127,7 @@ check(sent and sent[-1] == {"cmd": "sweep", "axis": "pan", "from": 0,
 
 # --- T5: sweep validation -----------------------------------------------------
 print("T5: sweep validation rejects bad params")
-b = make_bridge({"enabled": True, "max_speed": 40, "max_steer": 120})
+b = make_bridge({"enabled": True, "max_speed": 40, "max_steer": 100})
 res = b._dispatch({"cmd": "sweep", "axis": "yaw", "from": 0, "to": 180, "steps": 5})
 check("error" in res, "bad axis rejected: " + repr(res))
 res = b._dispatch({"cmd": "sweep", "axis": "pan", "from": 0, "to": 181, "steps": 5})

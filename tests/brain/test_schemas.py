@@ -64,10 +64,19 @@ def test_action_rejects_out_of_range_speed(speed):
         Action(intent="go_to", cmd="drive", speed=speed)
 
 
-@pytest.mark.parametrize("steer", [-101, 101])
+@pytest.mark.parametrize("steer", [-256, 256, 1000, -1000])
 def test_action_rejects_out_of_range_steer(steer):
+    # issue #104: the steer bound is the full ESP range (±255), so a
+    # value like 101 is now *valid* — only beyond ±255 is rejected.
     with pytest.raises(ValidationError):
         Action(intent="go_to", cmd="drive", steer=steer)
+
+
+def test_action_accepts_full_range_steer():
+    # issue #104: the AI may now request the full human steer range.
+    for v in (100, 101, 200, 255, -255, -101):
+        a = Action(intent="go_to", cmd="drive", steer=v)
+        assert a.steer == v
 
 
 @pytest.mark.parametrize("pan", [-1, 181, 999])
@@ -110,32 +119,42 @@ def test_action_still_rejects_bad_values_with_extra_key():
 
 
 def test_action_clamp_bounds_to_auto_profile():
-    # over-limit input: built without validation to model a raw LLM output
+    # over-limit speed: built without validation to model a raw LLM output
     # that the clamp must bring back into the AUTO_PROFILE range.
+    # issue #104: max_steer is now the full ESP range (255), so a steer of
+    # -200 is *within* the steer cap and is left untouched (only speed is
+    # clamped to 40).
     a = Action.model_construct(intent="go_to", cmd="drive", speed=90, steer=-200)
-    c = a.clamp(40, 120)
+    c = a.clamp(40, 255)
     assert c["speed"] == 40
-    assert c["steer"] == -120
+    assert c["steer"] == -200
     # other fields preserved
     assert c["intent"] == "go_to" and c["cmd"] == "drive"
 
 
+def test_action_clamp_steer_beyond_full_range():
+    # a steer beyond the full ESP range is clamped to the cap (255).
+    a = Action.model_construct(intent="go_to", cmd="drive", speed=0, steer=-400)
+    c = a.clamp(40, 255)
+    assert c["steer"] == -255
+
+
 def test_action_clamp_negative_bound():
     a = Action.model_construct(intent="go_to", cmd="drive", speed=-90, steer=200)
-    c = a.clamp(40, 120)
+    c = a.clamp(40, 255)
     assert c["speed"] == -40
-    assert c["steer"] == 120
+    assert c["steer"] == 200   # within the full steer range (±255)
 
 
 def test_action_clamp_within_limits_noop():
     a = Action(intent="go_to", cmd="drive", speed=10, steer=-5)
-    c = a.clamp(40, 120)
+    c = a.clamp(40, 255)
     assert c["speed"] == 10 and c["steer"] == -5
 
 
 def test_action_clamp_preserves_other_fields():
     a = Action(intent="go_to", cmd="drive", speed=90, steer=0, say="hi", reason="why")
-    c = a.clamp(40, 120)
+    c = a.clamp(40, 255)
     assert c["say"] == "hi" and c["reason"] == "why" and c["intent"] == "go_to" and c["cmd"] == "drive"
 
 
@@ -286,7 +305,7 @@ def test_load_config_nested_sub_dict(tmp_path):
     c = load_config(path=y, env={})
     assert c.auto_profile.enabled is False
     assert c.auto_profile.max_speed == 10
-    assert c.auto_profile.max_steer == 120     # untouched default
+    assert c.auto_profile.max_steer == 255     # untouched default (#104: full range)
     assert c.timeouts.chat_s == 9.5
     assert c.timeouts.vlm_chat_s == 60.0   # #100: dedicated VLM timeout
 
@@ -306,7 +325,7 @@ def test_brain_yaml_in_repo_loads():
     assert c.reflex_hz == 10
     assert c.deliberate_hz == 1
     assert c.auto_profile.max_speed == 40
-    assert c.auto_profile.max_steer == 120
+    assert c.auto_profile.max_steer == 255     # #104: full human range
     assert c.detection_model == "rfdetr-base"
     assert c.timeouts.vlm_chat_s == 60.0   # #100: committed brain.yaml has it
     # A4: the code default must be the dnsmasq hostname, not a literal IP
