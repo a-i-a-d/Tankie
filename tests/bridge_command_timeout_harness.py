@@ -71,7 +71,7 @@ def make_bridge(**overrides):
     cfg["socket_path"] = os.path.join(sandbox, "bridge.sock")
     cfg.update(overrides)
     b = mod.Bridge(cfg)
-    b._send_line = lambda obj: sent.append(obj)  # capture, no real serial
+    b._send_line = lambda obj: (sent.append(obj), True)[1]  # capture, no real serial
     return b
 
 

@@ -5,6 +5,7 @@
 # and exercises:
 #   1. _clamp_drive against the auto_profile (enabled/disabled, speed/steer)
 #   2. _dispatch for the new pan-rel / tilt-rel / center / sweep commands
+#      (issue #106: each is acked by the simulated ESP -> ok:true)
 #      (asserts the exact NDJSON line handed to the serial port)
 #   3. the `clamped` reply shape on drive
 #
@@ -52,7 +53,12 @@ def make_bridge(auto_profile):
     cfg["socket_path"] = os.path.join(sandbox, "bridge.sock")
     cfg["auto_profile"] = auto_profile
     b = mod.Bridge(cfg)
-    b._send_line = lambda obj: sent.append(obj)  # capture, no real serial
+    def _capture(obj):
+        sent.append(obj)
+        # Simulate the ESP: every command it accepts is acked (issue #106).
+        b._on_ack({"seq": 1})
+        return True
+    b._send_line = _capture
     return b
 
 
