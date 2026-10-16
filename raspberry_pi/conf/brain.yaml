@@ -30,9 +30,13 @@ deliberate_hz: 1                # conservative start; raise once the loop is sta
 # A1 (#81): a short *sequence* of frames per VLM call so it can infer
 # motion. 1-4; the frame grabber's ring buffer is sized to this.
 deliberate_frames: 4
+# issue #109: the deliberation loop skips the VLM call (and clears the
+# pending slot) when the newest *distinct* camera frame is older than this —
+# a frozen camera must not drive a "motion" decision.
+deliberate_max_frame_age_s: 5.0
 # A2 (#81): the VLM prompts are fully configurable — edit here to change
-# the phrasing without touching code. {task} and {state} are the only
-# placeholders in the user template (both always provided).
+# the phrasing without touching code. {task}, {state} and {frame_age} are
+# the only placeholders in the user template (all always provided).
 deliberate_system_prompt: |
   You are the deliberation layer of a tank robot.
   You receive camera frames, the current task, and the tank state.
@@ -46,6 +50,7 @@ deliberate_system_prompt: |
 deliberate_user_prompt_template: |
   Current task: {task}
   Tank state: {state}
+  Newest frame age: {frame_age}
   Decide the next action and respond with the JSON object.
 
 # --- camera (D5: LL-HLS cam_low is the brain's frame source) ---

@@ -55,12 +55,15 @@ DEFAULT_SYSTEM_PROMPT = (
     ' "say": "<what to say, optional>", "reason": "<why>"}\n'
     "The reflex safety layer will clamp and may override. Focus on the task."
 )
-# ``{task}`` and ``{state}`` are the only placeholders; both are always
-# provided by brain.deliberate.build_vlm_prompt. A single user message
-# because the T2 client attaches the image parts to the *last* user message.
+# ``{task}``, ``{state}`` and ``{frame_age}`` are the only placeholders;
+# all three are always provided by brain.deliberate.build_vlm_prompt. A
+# single user message because the T2 client attaches the image parts to the
+# *last* user message. ``{frame_age}`` (issue #109) tells the VLM how old
+# the newest frame is, so it does not reason about motion from a frozen view.
 DEFAULT_USER_PROMPT_TEMPLATE = (
     "Current task: {task}\n"
     "Tank state: {state}\n"
+    "Newest frame age: {frame_age}\n"
     "Decide the next action and respond with the JSON object."
 )
 
@@ -76,6 +79,7 @@ _SCALAR_FIELDS = (
     "reflex_hz",
     "deliberate_hz",
     "deliberate_frames",
+    "deliberate_max_frame_age_s",
     "deliberate_system_prompt",
     "deliberate_user_prompt_template",
     "cam_url",
@@ -141,6 +145,10 @@ class BrainConfig:
     deliberate_hz: int = 1                  # conservative start (1-5 Hz)
     # --- deliberate loop (T5, #81) ---
     deliberate_frames: int = 4              # 1-4 frames per VLM call (A1: sequence)
+    # issue #109: the deliberation loop skips the VLM call (and clears the
+    # pending slot) when the newest *distinct* frame is older than this --
+    # a frozen camera must not drive a "motion" decision.
+    deliberate_max_frame_age_s: float = 5.0
     deliberate_system_prompt: str = DEFAULT_SYSTEM_PROMPT
     deliberate_user_prompt_template: str = DEFAULT_USER_PROMPT_TEMPLATE
     cam_url: str = "http://tankie.local:8888/cam_low/index.m3u8"  # D5 (LL-HLS)

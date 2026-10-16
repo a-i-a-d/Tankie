@@ -529,3 +529,16 @@ def test_write_task_file_creates_parent_dir(tmp_path):
     assert write_task_file(p, "task") is True
     assert p.exists()
     assert read_task_file(p) == "task"
+
+
+def test_brain_state_liveness_includes_frame_freshness(tmp_path):
+    """state().liveness surfaces the frame age (issue #109)."""
+    log = CallLog()
+    brain, *_ = _build_brain(tmp_path, log)
+    state = brain.state()
+    liveness = state["liveness"]
+    assert "frame_age_s" in liveness
+    assert "frame_frozen_s" in liveness
+    # No camera in this offline test: the grabber has no frame yet.
+    assert liveness["frame_age_s"] is None
+    assert liveness["frame_frozen_s"] is None

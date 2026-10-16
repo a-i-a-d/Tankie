@@ -20,8 +20,10 @@ must **never block** waiting for one. This module provides:
 * ``FrameGrab``    -- the consumer-facing wrapper: a daemon thread that reads
   the source every ``interval_s`` and keeps ``(frame, monotonic())``;
   ``read_latest()`` returns the stored frame **only if** it is younger than
-  ``stale_after_s``, else ``None`` (the reflex loop treats ``None`` as
-  "no perception this cycle").
+  ``stale_after_s`` **and the stream is not frozen** (issue #109: a source
+  that keeps delivering the *same* frame is reported stale after a bounded
+  time, via a per-frame content fingerprint), else ``None`` (the reflex loop
+  treats ``None`` as "no perception this cycle").
 
 Design rules (from the #74 plan):
   * ``cv2`` and ``httpx`` are imported **lazily inside the worker thread** so
@@ -368,9 +370,21 @@ class FrameGrab:
     """Read ``source`` on a daemon thread; serve the latest *fresh* frame.
 
     ``read_latest()`` returns the stored frame only if it is younger than
-    ``stale_after_s`` (monotonic), else ``None``. A source that returns
-    ``None`` keeps the last good frame until it goes stale -- a single dropped
-    segment does not blank the reflex loop.
+    ``stale_after_s`` (monotonic) **and the content is not frozen** (issue
+    #109), else ``None``. Two independent freshness guards:
+
+    * **delivery liveness** -- a source that returns ``None`` keeps the last
+      good frame until it goes stale (a single dropped segment does not blank
+      the reflex loop);
+    * **content liveness** -- a source that keeps delivering the *same* frame
+      (a stuck camera/encoder repeating its last frame) is reported stale
+      after ``stale_after_s`` of no *new* frame: each read is fingerprinted
+      (``bytes(frame)``) and only a frame whose fingerprint differs from the
+      last *distinct* one resets the frozen clock and grows the ring.
+
+    ``frozen_s()`` reports the seconds since the last *distinct* frame (the
+    VLM prompt / ``Brain.state()`` surface this so a stale view is visible);
+    ``age_s()`` keeps its meaning (seconds since the last delivery).
 
     ``start()`` / ``stop()`` are idempotent. ``read_latest()`` worst-case cost
     is a lock + a timestamp compare (no I/O, no decode).
@@ -389,7 +403,12 @@ class FrameGrab:
         self._ring_size = max(1, int(ring_size))
         self._lock = threading.Lock()
         self._frame = None
-        self._ts: Optional[float] = None
+        # issue #109: two freshness clocks --
+        #   _ts_last_delivery: last non-None read() (the stream is alive);
+        #   _ts_last_distinct: last frame whose *content* changed (not frozen).
+        self._ts_last_delivery: Optional[float] = None
+        self._ts_last_distinct: Optional[float] = None
+        self._last_fp: Optional[bytes] = None
         self._ring: deque = deque(maxlen=self._ring_size)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -415,20 +434,56 @@ class FrameGrab:
 
     # -- consumer API -----------------------------------------------------
     def read_latest(self):
-        """Newest frame if fresh (``< stale_after_s`` old), else ``None``."""
+        """Newest frame if fresh, else ``None``.
+
+        Fresh means **both** (issue #109):
+
+        * the stream is delivering frames (last non-None read within
+          ``stale_after_s``), and
+        * the stream is not frozen (last *distinct* frame within
+          ``stale_after_s``).
+
+        A source that repeats the same frame is therefore reported stale
+        after a bounded time -- the reflex loop stops instead of driving on a
+        stale view.
+        """
         with self._lock:
-            if self._frame is None or self._ts is None:
+            if self._frame is None or self._ts_last_delivery is None:
                 return None
-            if (time.monotonic() - self._ts) > self._stale_after_s:
+            if self._stale(self._ts_last_delivery):
+                return None
+            if self._stale(self._ts_last_distinct):
                 return None
             return self._frame
 
     def age_s(self) -> Optional[float]:
-        """Seconds since the last good frame, or ``None`` if none yet."""
+        """Seconds since the last *delivery* (non-None read), or ``None``.
+
+        Note (issue #109): a frozen stream still "delivers" -- use
+        :meth:`frozen_s` for the age of the last *distinct* frame.
+        """
         with self._lock:
-            if self._ts is None:
+            if self._ts_last_delivery is None:
                 return None
-            return max(0.0, time.monotonic() - self._ts)
+            return max(0.0, time.monotonic() - self._ts_last_delivery)
+
+    def frozen_s(self) -> Optional[float]:
+        """Seconds since the last *distinct* frame, or ``None`` if none yet.
+
+        issue #109: grows while a source keeps repeating the same frame;
+        resets to ~0 when a new frame arrives. ``Brain.state()`` and the
+        deliberation prompt surface this so a frozen view is visible.
+        """
+        with self._lock:
+            if self._ts_last_distinct is None:
+                return None
+            return max(0.0, time.monotonic() - self._ts_last_distinct)
+
+    def _stale(self, ts: Optional[float]) -> bool:
+        """True when ``ts`` is missing or older than ``stale_after_s``."""
+        if ts is None:
+            return True
+        return (time.monotonic() - ts) > self._stale_after_s
 
     def read_sequence(self, n: int = 4) -> list:
         """Return the last ``n`` distinct fresh frames, oldest first.
@@ -447,13 +502,17 @@ class FrameGrab:
         with self._lock:
             # The ring only ever holds recent frames; the newest one's age is
             # the max age in the ring, so a single freshness check on it
-            # covers the whole ring (same rule as read_latest()).
-            if self._ts is None:
+            # covers the whole ring (same rule as read_latest()). issue #109:
+            # a frozen stream (same frame repeated) is stale too -- the ring
+            # would otherwise be full of copies of one frame.
+            if self._ts_last_delivery is None:
                 return []
-            if (time.monotonic() - self._ts) > self._stale_after_s:
+            if self._stale(self._ts_last_delivery) or self._stale(
+                self._ts_last_distinct
+            ):
                 return []
-            # _ring holds the most-recent frames in arrival order (oldest ->
-            # newest). Take the last n.
+            # _ring holds the most-recent *distinct* frames in arrival order
+            # (oldest -> newest). Take the last n.
             return list(self._ring)[-n:]
 
     # -- internals --------------------------------------------------------
@@ -464,10 +523,28 @@ class FrameGrab:
             except Exception:
                 frame = None
             if frame is not None:
+                now = time.monotonic()
+                # issue #109: fingerprint the content. A repeated (frozen)
+                # frame refreshes the delivery clock but NOT the distinct
+                # clock -- and does not grow the ring with duplicates.
+                # bytes(frame) is a cheap C-level copy for numpy frames;
+                # sources that return an already-encoded blob work too.
+                try:
+                    fp = bytes(frame)
+                except Exception:
+                    fp = None
                 with self._lock:
                     self._frame = frame
-                    self._ts = time.monotonic()
-                    self._ring.append(frame)
+                    self._ts_last_delivery = now
+                    if fp is not None and fp != self._last_fp:
+                        self._last_fp = fp
+                        self._ts_last_distinct = now
+                        self._ring.append(frame)
+                    elif fp is None:
+                        # Unfingerprintable frame: treat as distinct (safe --
+                        # we can never prove it is a duplicate).
+                        self._ts_last_distinct = now
+                        self._ring.append(frame)
             self._stop.wait(self._interval_s)
 
 
