@@ -219,24 +219,30 @@ void notFound(AsyncWebServerRequest *request) {
 // Non-JSON / unknown messages are logged and ignored (coexistence rule).
 // ---------------------------------------------------------------------------
 
-// Minimal JSON field extractor (dependency-free, same approach as
-// serialproto.cpp): find "key" and parse the following integer value.
-static bool wsJsonGetInt(const char* json, const char* key, int* out) {
-  if (!json || !key || !out) return false;
-  char pat[32];
+// Minimal JSON field extractors for the /ws fallback (dependency-free).
+//
+// Issue #110: the key is now located with SerialProto::findTopLevelKey() -
+// the SAME string-aware, left-to-right key locator the serial NDJSON link
+// uses (tankie/serialproto.cpp) - so a key name appearing inside a quoted
+// string value is never mistaken for the field. Only the value parsing
+// (integer / string) is local to this handler.
+static const char* wsJsonKey(const char* json, const char* key) {
+  const char* k = SerialProto::findTopLevelKey(json, key);
+  if (!k) return nullptr;
   size_t klen = strlen(key);
-  if (klen == 0 || klen >= sizeof(pat) - 2) return false;
-  pat[0] = '"';
-  memcpy(pat + 1, key, klen);
-  pat[1 + klen] = '"';
-  pat[2 + klen] = '\0';
-  const char* p = strstr(json, pat);
-  if (!p) return false;
-  p += klen + 2;   // past "key"
+  const char* p = k + klen + 2;   // past "key"
   while (*p == ' ' || *p == '\t') p++;
-  if (*p != ':') return false;
+  if (*p != ':') return nullptr;
   p++;
   while (*p == ' ' || *p == '\t') p++;
+  return p;
+}
+
+// Find "key" and parse the following integer value.
+static bool wsJsonGetInt(const char* json, const char* key, int* out) {
+  if (!json || !key || !out) return false;
+  const char* p = wsJsonKey(json, key);
+  if (!p) return false;
   bool neg = false;
   if (*p == '-') { neg = true; p++; }
   else if (*p == '+') { p++; }
@@ -247,24 +253,12 @@ static bool wsJsonGetInt(const char* json, const char* key, int* out) {
   return true;
 }
 
-// Minimal JSON string-field extractor (for the "cmd" dispatch).
+// Find "key" and copy the following string value (for the "cmd" dispatch).
 static bool wsJsonGetString(const char* json, const char* key,
                             char* out, size_t outSize) {
   if (!json || !key || !out || outSize == 0) return false;
-  char pat[32];
-  size_t klen = strlen(key);
-  if (klen == 0 || klen >= sizeof(pat) - 2) return false;
-  pat[0] = '"';
-  memcpy(pat + 1, key, klen);
-  pat[1 + klen] = '"';
-  pat[2 + klen] = '\0';
-  const char* p = strstr(json, pat);
+  const char* p = wsJsonKey(json, key);
   if (!p) return false;
-  p += klen + 2;
-  while (*p == ' ' || *p == '\t') p++;
-  if (*p != ':') return false;
-  p++;
-  while (*p == ' ' || *p == '\t') p++;
   if (*p != '"') return false;   // must be a string value
   p++;
   size_t i = 0;
