@@ -39,7 +39,7 @@ deliberate_system_prompt: |
   Decide the next action. Respond with a single JSON object:
   {"intent": "go_to|find|explore|stop|say|wait",
    "cmd": "drive|pan|tilt|stop|none",
-   "speed": <int -100..100>, "steer": <int -100..100>,
+   "speed": <int -100..100>, "steer": <int -255..255>,
    "pan": <int 0..180 or null>, "tilt": <int 0..180 or null>,
    "say": "<what to say, optional>", "reason": "<why>"}
   The reflex safety layer will clamp and may override. Focus on the task.
@@ -95,7 +95,7 @@ mcp_port: 9000
 auto_profile:
   enabled: true
   max_speed: 40
-  max_steer: 100
+  max_steer: 255
 
 # --- per-call timeouts (seconds) for the LocalAI client (T2) ---
 # chat_s: short timeout for health() (liveness probe) and other fast endpoints.

@@ -97,7 +97,7 @@ DEFAULTS = {
     "auto_profile": {
         "enabled": True,
         "max_speed": 40,
-        "max_steer": 100,
+        "max_steer": 255,
     },
 }
 
@@ -299,7 +299,7 @@ class Bridge:
         if not prof.get("enabled", False):
             return speed, steer, None
         max_speed = int(prof.get("max_speed", 40))
-        max_steer = int(prof.get("max_steer", 100))
+        max_steer = int(prof.get("max_steer", 255))
         clamped = None
         new_speed = max(-max_speed, min(max_speed, speed))
         new_steer = max(-max_steer, min(max_steer, steer))

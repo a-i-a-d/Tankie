@@ -50,7 +50,7 @@ def det(class_name, cx, cy, w=60, h=60, conf=0.9):
 
 
 def controller(**over) -> ReflexController:
-    base = dict(enabled=True, steer_around=60, max_speed=40, max_steer=100)
+    base = dict(enabled=True, steer_around=60, max_speed=40, max_steer=255)
     base.update(over)
     return ReflexController(**base)
 
@@ -70,7 +70,7 @@ def test_clear_pending_drive_passes_through_clamped():
     r = controller().decide([], IMG_W, IMG_H, pending={"cmd": "drive", "speed": 99, "steer": -150, "reason": "go"})
     assert r.cmd == "drive"
     assert r.speed == 40          # clamped to max_speed (40)
-    assert r.steer == -100        # clamped to max_steer (100) == schema (±100)
+    assert r.steer == -150        # within the full steer range (±255, #104) — not clamped
     assert r.preempted is False
     assert r.reason == "go"
 
@@ -78,13 +78,13 @@ def test_clear_pending_drive_passes_through_clamped():
 def test_to_bridge_cmd_is_pure_passthrough_of_result():
     # to_bridge_cmd() never re-introduces a pending value the reflex
     # overrode: it is a pure passthrough of the ReflexResult (a stop stays a
-    # stop). The ReflexResult is already clamped to min(AUTO_PROFILE, ±100);
+    # stop). The ReflexResult is already clamped to min(AUTO_PROFILE, ±255);
     # the bridge is the real enforcement layer (issue #31).
     c = controller()
     r = c.decide([], IMG_W, IMG_H, pending={"cmd": "drive", "speed": 50, "steer": 150})
-    assert (r.speed, r.steer) == (40, 100)
+    assert (r.speed, r.steer) == (40, 150)   # steer 150 within full range (±255, #104)
     assert c.to_bridge_cmd(r, {"cmd": "drive", "speed": 50, "steer": 150}) == {
-        "cmd": "drive", "speed": 40, "steer": 100
+        "cmd": "drive", "speed": 40, "steer": 150
     }
 
 
