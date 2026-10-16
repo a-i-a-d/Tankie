@@ -96,22 +96,35 @@ def build_vlm_prompt(
     *,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     user_prompt_template: str = DEFAULT_USER_PROMPT_TEMPLATE,
+    frame_age_s: Optional[float] = None,
 ) -> list:
     """Build the ``[system, user]`` message list for the VLM call (A2/A3).
 
     ``task`` is the current goal; ``state`` is the tank state (rendered via
-    :func:`format_state`). Both prompt strings are configurable so the
-    phrasing can change without a code edit. The user message carries the
-    task + state text; the T2 client appends the image parts to it.
+    :func:`format_state`); ``frame_age_s`` (issue #109) is the age of the
+    newest *distinct* camera frame in seconds (``None`` = no frame yet) so
+    the VLM can see how old its view is and does not infer motion from a
+    frozen stream. All prompt strings are configurable so the phrasing can
+    change without a code edit. The user message carries the task + state +
+    frame age text; the T2 client appends the image parts to it.
     Never raises.
     """
     state_str = format_state(state)
+    if frame_age_s is None:
+        frame_age_str = "unknown (no frame received yet)"
+    else:
+        frame_age_str = f"{frame_age_s:.1f} s"
     try:
-        user_text = user_prompt_template.format(task=task, state=state_str)
+        user_text = user_prompt_template.format(
+            task=task, state=state_str, frame_age=frame_age_str
+        )
     except (KeyError, IndexError, ValueError) as exc:
         # A bad template must not kill the loop: fall back to a safe prompt.
         logger.warning("deliberate: bad user prompt template (%s); using fallback", exc)
-        user_text = f"Current task: {task}\nTank state: {state_str}"
+        user_text = (
+            f"Current task: {task}\nTank state: {state_str}\n"
+            f"Newest frame age: {frame_age_str}"
+        )
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_text},
@@ -222,6 +235,7 @@ class DeliberationLoop:
         frames: int = 4,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         user_prompt_template: str = DEFAULT_USER_PROMPT_TEMPLATE,
+        max_frame_age_s: float = 5.0,
     ) -> None:
         self._grabber = grabber
         self._localai = localai
@@ -232,6 +246,9 @@ class DeliberationLoop:
         self._frames = max(1, int(frames))
         self._system_prompt = system_prompt
         self._user_template = user_prompt_template
+        # issue #109: skip the VLM call when the newest distinct frame is
+        # older than this (a frozen camera must not drive a motion decision).
+        self._max_frame_age_s = max(0.0, float(max_frame_age_s))
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
@@ -279,6 +296,31 @@ class DeliberationLoop:
             return []
         return list(frames)
 
+    def _frame_age_s(self) -> Optional[float]:
+        """Age of the newest *distinct* frame (issue #109), or ``None``.
+
+        Prefers ``grabber.frozen_s()`` (seconds since the last frame whose
+        content changed); falls back to ``grabber.age_s()`` for grabbers
+        without frozen-detection (fakes / older sources). ``None`` when the
+        grabber has no frame information (the VLM is still called -- the
+        freshness guard in FrameGrab already returned no frames in that case,
+        or the grabber is a fake that cannot report age).
+        Never raises.
+        """
+        try:
+            frozen = getattr(self._grabber, "frozen_s", None)
+            if callable(frozen):
+                return frozen()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            age = getattr(self._grabber, "age_s", None)
+            if callable(age):
+                return age()
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
     def _clear_pending(self) -> None:
         """Clear the pending slot (issue #101) — a stale action must not keep
         the tank moving once the task is done or the VLM stops producing a
@@ -304,16 +346,31 @@ class DeliberationLoop:
         if not frames:
             return
 
+        # 2b) issue #109: frame age. The grabber knows how long the newest
+        #     *distinct* frame is (frozen_s()); a frozen stream must not drive
+        #     a "motion" decision — skip the VLM call (and clear the pending
+        #     slot so a stale action does not keep the tank moving).
+        frame_age_s = self._frame_age_s()
+        if frame_age_s is not None and frame_age_s > self._max_frame_age_s:
+            logger.warning(
+                "deliberate: newest frame is %.1f s old (> max_frame_age_s=%.1f); "
+                "skipping VLM call (frozen/stale view)",
+                frame_age_s, self._max_frame_age_s,
+            )
+            self._clear_pending()
+            return
+
         # 3) tank state (A3) — None is fine (renders as "unknown").
         #    read_tank_state also reads the nested last_state broadcast
         #    (issue #82, Q6/A6) so the VLM sees the real tank state.
         state = read_tank_state(self._state_file) if self._state_file else None
 
-        # 4) prompt (A2: configurable).
+        # 4) prompt (A2: configurable) — carries the frame age (issue #109).
         messages = build_vlm_prompt(
             task, state,
             system_prompt=self._system_prompt,
             user_prompt_template=self._user_template,
+            frame_age_s=frame_age_s,
         )
 
         # 5) VLM call (the T2 client applies timeouts.chat_s internally).

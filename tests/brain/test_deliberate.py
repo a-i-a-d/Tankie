@@ -814,3 +814,163 @@ def test_integration_loop_writes_to_pending_action():
     assert result.cmd == "drive"
     assert result.speed == 35
     assert result.steer == 5
+
+
+# ===========================================================================
+# issue #109 — frozen video detection + frame age in the VLM prompt
+# ===========================================================================
+
+def test_build_vlm_prompt_includes_frame_age():
+    """The VLM prompt carries the newest frame's age (issue #109)."""
+    msgs = build_vlm_prompt("go to the door", frame_age_s=1.5)
+    user_text = msgs[1]["content"]
+    assert "1.5 s" in user_text
+    assert "Newest frame age" in user_text
+
+
+def test_build_vlm_prompt_frame_age_none_is_unknown():
+    """No frame yet -> the prompt says so (never a misleading '0.0 s')."""
+    msgs = build_vlm_prompt("go to the door", frame_age_s=None)
+    assert "unknown (no frame received yet)" in msgs[1]["content"]
+
+
+class FrozenFakeGrabber:
+    """A grabber that reports a frozen stream (issue #109).
+
+    ``read_sequence`` still returns frames (the stream is *delivering*), but
+    ``frozen_s()`` says the newest *distinct* frame is ``frozen_age`` old.
+    """
+
+    def __init__(self, frames=None, frozen_age: float = 10.0):
+        self._frames = frames if frames is not None else [_frame(1)]
+        self._frozen_age = frozen_age
+
+    def read_sequence(self, n=4):
+        return list(self._frames)
+
+    def read_latest(self):
+        return self._frames[-1]
+
+    def frozen_s(self):
+        return self._frozen_age
+
+    def age_s(self):
+        return 0.0  # the stream is still delivering (frozen, not dead)
+
+
+class NoAgeFakeGrabber:
+    """A grabber without frozen-detection (fakes / older sources)."""
+
+    def __init__(self, frames=None):
+        self._frames = frames if frames is not None else [_frame(1)]
+
+    def read_sequence(self, n=4):
+        return list(self._frames)
+
+    def read_latest(self):
+        return self._frames[-1]
+
+
+def test_deliberation_loop_skips_vlm_when_frame_frozen():
+    """A frozen view must not drive a VLM decision (issue #109).
+
+    Acceptance: the deliberation call is dropped when the frame age exceeds
+    the threshold -- and the pending slot is cleared (a stale action must not
+    keep the tank moving).
+    """
+    grabber = FrozenFakeGrabber(frozen_age=10.0)
+    localai = FakeLocalAI()
+    pa = PendingAction()
+    pa.set(json.loads(_action_json(speed=30)))  # stale action from before the freeze
+    tq = FakeTaskQueue(task="navigate to the flag")
+    loop = DeliberationLoop(
+        grabber, localai, pa, tq, frames=4, hz=100, max_frame_age_s=5.0
+    )
+    loop.start()
+    try:
+        time.sleep(0.3)  # several ticks at 100 Hz
+        assert len(localai.calls) == 0  # no VLM call on a frozen view
+        assert not pa.has()  # stale action cleared
+    finally:
+        loop.stop()
+
+
+def test_deliberation_loop_proceeds_when_frame_fresh():
+    """A fresh frame still drives the VLM -- and the prompt carries the age."""
+    grabber = FrozenFakeGrabber(frozen_age=0.5)
+    localai = FakeLocalAI()
+    pa = PendingAction()
+    tq = FakeTaskQueue(task="navigate to the flag")
+    loop = DeliberationLoop(
+        grabber, localai, pa, tq, frames=4, hz=100, max_frame_age_s=5.0
+    )
+    loop.start()
+    try:
+        assert _wait_until(lambda: pa.has())
+        assert len(localai.calls) >= 1
+        user_text = localai.calls[0]["messages"][1]["content"]
+        assert "0.5 s" in user_text  # the frame age reached the prompt
+    finally:
+        loop.stop()
+
+
+def test_deliberation_loop_grabber_without_age_support_still_calls_vlm():
+    """A grabber that cannot report age must not block deliberation."""
+    grabber = NoAgeFakeGrabber()
+    localai = FakeLocalAI()
+    pa = PendingAction()
+    tq = FakeTaskQueue(task="navigate to the flag")
+    loop = DeliberationLoop(grabber, localai, pa, tq, frames=4, hz=100)
+    loop.start()
+    try:
+        assert _wait_until(lambda: pa.has())
+        assert len(localai.calls) >= 1
+    finally:
+        loop.stop()
+
+
+def test_deliberation_loop_max_frame_age_configurable():
+    """max_frame_age_s is a constructor knob (wired from config by Brain)."""
+    grabber = FrozenFakeGrabber(frozen_age=7.0)
+    localai = FakeLocalAI()
+    pa = PendingAction()
+    tq = FakeTaskQueue(task="navigate to the flag")
+    # threshold below the frozen age -> skip
+    loop = DeliberationLoop(
+        grabber, localai, pa, tq, frames=4, hz=100, max_frame_age_s=5.0
+    )
+    loop.start()
+    time.sleep(0.2)
+    loop.stop()
+    assert len(localai.calls) == 0
+    # threshold above the frozen age -> proceed
+    localai2 = FakeLocalAI()
+    pa2 = PendingAction()
+    loop2 = DeliberationLoop(
+        grabber, localai2, pa2, tq, frames=4, hz=100, max_frame_age_s=10.0
+    )
+    loop2.start()
+    try:
+        assert _wait_until(lambda: pa2.has())
+        assert len(localai2.calls) >= 1
+    finally:
+        loop2.stop()
+
+
+def test_config_deliberate_max_frame_age_s_default():
+    """deliberate_max_frame_age_s defaults to 5.0 (issue #109)."""
+    c = BrainConfig()
+    assert c.deliberate_max_frame_age_s == 5.0
+
+
+def test_config_deliberate_max_frame_age_s_configurable(tmp_path):
+    """deliberate_max_frame_age_s can be overridden via brain.yaml."""
+    y = tmp_path / "brain.yaml"
+    y.write_text("deliberate_max_frame_age_s: 12.5\n")
+    c = load_config(path=y, env={})
+    assert c.deliberate_max_frame_age_s == 12.5
+
+
+def test_default_user_prompt_template_has_frame_age_placeholder():
+    """The default prompt template carries the {frame_age} placeholder."""
+    assert "{frame_age}" in DEFAULT_USER_PROMPT_TEMPLATE

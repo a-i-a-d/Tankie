@@ -589,3 +589,150 @@ def test_frame_source_protocol_is_satisfied():
     assert isinstance(FakeSource(), FrameSource)
     assert isinstance(LLHLSSource("http://x/cam"), FrameSource)
     assert isinstance(HTTPHLSSource("http://x/cam"), FrameSource)
+
+
+# ---------------------------------------------------------------------------
+# issue #109 -- a FROZEN stream (same frame repeated) must go stale
+# ---------------------------------------------------------------------------
+
+class FrozenSource:
+    """A stream that keeps delivering the *same* frame forever.
+
+    Models a stuck camera/encoder that repeats its last frame: ``read()``
+    never returns ``None`` (the stream is alive), but the content never
+    changes (the view is frozen).
+    """
+
+    def __init__(self, frame) -> None:
+        self._frame = frame
+        self.reads = 0
+
+    def read(self):
+        self.reads += 1
+        return self._frame
+
+
+class LiveSource:
+    """A stream that keeps delivering *distinct* frames (a live camera)."""
+
+    def __init__(self) -> None:
+        self._i = 0
+
+    def read(self):
+        self._i += 1
+        return make_frame(self._i % 250)
+
+
+def test_frozen_source_reported_stale_after_bounded_time():
+    """Acceptance (issue #109): a source that repeats the same frame is
+    reported stale after a bounded time -- even though it never stops
+    delivering (delivery liveness alone is not enough)."""
+    frame = make_frame(1)
+    src = FrozenSource(frame)
+    grab = FrameGrab(src, interval_s=0.01, stale_after_s=0.2)
+    grab.start()
+    try:
+        assert wait_for_frame(grab) is not None  # fresh at first
+        time.sleep(0.3)  # > stale_after_s of no *new* frame
+        assert src.reads > 2  # the stream is still delivering...
+        assert grab.read_latest() is None  # ...but the content is frozen
+    finally:
+        grab.stop()
+
+
+def test_frozen_s_grows_while_stream_delivers():
+    """frozen_s() grows while the same frame repeats; age_s() stays small."""
+    src = FrozenSource(make_frame(2))
+    grab = FrameGrab(src, interval_s=0.01, stale_after_s=5.0)
+    grab.start()
+    try:
+        assert wait_for_frame(grab) is not None
+        f0 = grab.frozen_s()
+        assert f0 is not None and f0 < 0.5
+        time.sleep(0.25)
+        f1 = grab.frozen_s()
+        assert f1 is not None and f1 > f0  # frozen clock is running
+        age = grab.age_s()
+        assert age is not None and age < 0.2  # delivery clock keeps resetting
+    finally:
+        grab.stop()
+
+
+def test_frozen_s_none_before_first_frame():
+    src = FrozenSource(make_frame(3))
+    grab = FrameGrab(src, interval_s=0.01, stale_after_s=5.0)
+    assert grab.frozen_s() is None  # no frame yet
+    grab.start()
+    try:
+        assert wait_for_frame(grab) is not None
+        assert grab.frozen_s() is not None
+    finally:
+        grab.stop()
+
+
+def test_live_source_not_flagged_frozen():
+    """A stream that keeps delivering distinct frames never goes stale."""
+    src = LiveSource()
+    grab = FrameGrab(src, interval_s=0.01, stale_after_s=0.5)
+    grab.start()
+    try:
+        assert wait_for_frame(grab) is not None
+        time.sleep(0.2)  # well past what a frozen stream would allow
+        assert grab.read_latest() is not None  # still fresh (content changes)
+        assert grab.frozen_s() is not None and grab.frozen_s() < 0.2
+    finally:
+        grab.stop()
+
+
+def _wait_until(pred, timeout: float = 3.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return pred()
+
+
+def test_frozen_then_new_frame_resets_frozen_clock():
+    """A new (different) frame after a freeze resets frozen_s() to ~0."""
+    frame = make_frame(4)
+    src = FrozenSource(frame)
+    grab = FrameGrab(src, interval_s=0.01, stale_after_s=5.0)
+    grab.start()
+    try:
+        assert wait_for_frame(grab) is not None
+        time.sleep(0.25)
+        assert grab.frozen_s() > 0.2  # frozen
+        src.__init__(make_frame(99))  # the stream "unfreezes" (new content)
+        assert _wait_until(lambda: grab.frozen_s() is not None and grab.frozen_s() < 0.1)
+    finally:
+        grab.stop()
+
+
+def test_frozen_source_ring_has_no_duplicates():
+    """The ring must not accumulate copies of the same frozen frame."""
+    src = FrozenSource(make_frame(5))
+    grab = FrameGrab(src, interval_s=0.01, stale_after_s=5.0, ring_size=4)
+    grab.start()
+    try:
+        assert wait_for_frame(grab) is not None
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and len(grab._ring) == 0:
+            time.sleep(0.01)
+        time.sleep(0.3)  # many more deliveries of the same frame
+        assert len(grab._ring) == 1  # only the one distinct frame
+    finally:
+        grab.stop()
+
+
+def test_frozen_source_read_sequence_goes_empty():
+    """read_sequence() returns [] once the frozen stream is stale."""
+    src = FrozenSource(make_frame(6))
+    grab = FrameGrab(src, interval_s=0.01, stale_after_s=0.2, ring_size=4)
+    grab.start()
+    try:
+        assert wait_for_frame(grab) is not None
+        time.sleep(0.3)
+        assert grab.read_sequence(4) == []
+    finally:
+        grab.stop()

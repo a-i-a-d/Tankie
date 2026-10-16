@@ -297,6 +297,9 @@ class Brain:
                 frames=self._cfg.deliberate_frames,
                 system_prompt=self._cfg.deliberate_system_prompt,
                 user_prompt_template=self._cfg.deliberate_user_prompt_template,
+                # issue #109: skip the VLM call when the newest distinct
+                # frame is older than this (frozen camera = no motion call).
+                max_frame_age_s=self._cfg.deliberate_max_frame_age_s,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("brain: DeliberationLoop construction failed: %s", exc)
@@ -501,6 +504,9 @@ class Brain:
                 "deliberation_valid_actions": self._safe_get(
                     self._deliberation, "valid_actions"
                 ),
+                # issue #109: frame freshness (None = no frame yet).
+                "frame_age_s": self._safe_call(self._grabber, "age_s"),
+                "frame_frozen_s": self._safe_call(self._grabber, "frozen_s"),
             },
             "config": {
                 "vlm_model": self._cfg.vlm_model,
@@ -543,5 +549,16 @@ class Brain:
     def _safe_get(obj: Any, attr: str) -> Any:
         try:
             return getattr(obj, attr)
+        except Exception:  # noqa: BLE001
+            return None
+
+    @staticmethod
+    def _safe_call(obj: Any, method: str) -> Any:
+        """Call ``obj.method()`` if present, else ``None`` (issue #109)."""
+        fn = getattr(obj, method, None) if obj is not None else None
+        if not callable(fn):
+            return None
+        try:
+            return fn()
         except Exception:  # noqa: BLE001
             return None
