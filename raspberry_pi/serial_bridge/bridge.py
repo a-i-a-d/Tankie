@@ -34,6 +34,9 @@ Protocol (NDJSON, one object per line, 921600 8N1):
   ESP → Pi:   {"type":"hello","proto":1,"fw":"v0.1-serial"}
                {"type":"ack","seq":1}
                {"type":"error","seq":2,"code":"range","field":"speed"}
+                (issue #106: the bridge waits (bounded, ack_timeout_ms) for
+                 the matching ack/error before replying ok:true/ok:false to a
+                 client — "ok" means the ESP executed the command)
                {"type":"watchdog"}
                {"type":"sweep","axis":"pan","done":true}   (issue #31)
                {"type":"state","seq":1,"battery":7.42,"speed":50,"steer":0,
@@ -212,6 +215,16 @@ class Bridge:
         # client (set in _dispatch, read by _writer_loop). Guarded by
         # _active_drive_lock (one logical unit with _active_drive).
         self._last_cmd_ms = 0
+        # Issue #106: ack/error correlation. The ESP replies to every command
+        # with either {"type":"ack","seq":N} or {"type":"error","seq":N,...}.
+        # The reader thread publishes each into _pending_ack / _pending_error
+        # (guarded by _ack_lock); _dispatch() waits (bounded, ack_timeout_ms)
+        # for one of them after sending a command and reports it in the
+        # response — so "ok" means *the ESP executed the command*, not merely
+        # "bytes hit the serial buffer" (fire-and-forget was the bug).
+        self._pending_ack = None
+        self._pending_error = None
+        self._ack_lock = threading.Lock()
         self._serial = None
         self._sock = None
         # Guards the self._serial reference (the stream thread may race stop()).
@@ -277,13 +290,20 @@ class Bridge:
         log.info("opened %s @ %d baud", port, self.cfg["baud"])
 
     def _send_line(self, obj):
+        """Write one NDJSON command line to the ESP.
+
+        Returns True if the bytes were written (and flushed), False if the
+        serial handle is closed/None — in which case the line was silently
+        dropped and the caller must not report success (issue #106).
+        """
         line = json.dumps(obj, separators=(",", ":")) + "\n"
         with self._serial_lock:
             ser = self._serial
         if ser is None:
-            return
+            return False
         ser.write(line.encode())
         ser.flush()
+        return True
 
     # -- autonomous drive profile (issue #31) --------------------------------
     #
@@ -379,14 +399,10 @@ class Bridge:
                 self._on_hello(msg)
 
             elif mtype == "ack":
-                seq = msg.get("seq", 0)
-                log.debug("ack seq=%d", seq)
-                self.state.update(last_ack_ms=now_ms, last_seq=seq)
+                self._on_ack(msg)
 
             elif mtype == "error":
-                log.warning("error from ESP: code=%s field=%s seq=%s",
-                            msg.get("code"), msg.get("field"), msg.get("seq"))
-                self.state.update(last_seq=msg.get("seq", 0))
+                self._on_error(msg)
 
             elif mtype == "watchdog":
                 log.warning("watchdog fired on ESP")
@@ -479,6 +495,36 @@ class Bridge:
                 if self._stop.is_set():
                     break
                 time.sleep(1)
+
+    def _on_ack(self, msg):
+        """Reader thread: the ESP confirmed a command (issue #106).
+
+        Publish the ack for a waiting `_dispatch()` and drop any stale error
+        that was queued earlier (an ack for seq N supersedes any error for a
+        lower seq — the ESP emits exactly one of the two per command).
+        """
+        seq = msg.get("seq", 0)
+        log.debug("ack seq=%d", seq)
+        with self._ack_lock:
+            self._pending_error = None
+            self._pending_ack = {"seq": seq}
+        self.state.update(last_ack_ms=int(time.time() * 1000), last_seq=seq)
+
+    def _on_error(self, msg):
+        """Reader thread: the ESP rejected a command (issue #106).
+
+        Publish the error for a waiting `_dispatch()`; the ESP emits this
+        instead of an ack for the rejected command (e.g. code=range).
+        """
+        log.warning("error from ESP: code=%s field=%s seq=%s",
+                    msg.get("code"), msg.get("field"), msg.get("seq"))
+        with self._ack_lock:
+            self._pending_error = {
+                "seq": msg.get("seq", 0),
+                "code": msg.get("code"),
+                "field": msg.get("field"),
+            }
+        self.state.update(last_seq=msg.get("seq", 0))
 
     def _on_hello(self, msg):
         """Handle the ESP's hello handshake (reader thread).
@@ -609,8 +655,54 @@ class Bridge:
         finally:
             conn.close()
 
+    def _ack_result(self, cmd_name, sent):
+        """Build the dispatch result from the ESP's ack/error (issue #106).
+
+        ``sent`` is the return of `_send_line()`: False means the serial
+        handle was closed and the command was dropped — report ok:false
+        immediately (no point waiting for an ack that can never arrive).
+        Otherwise wait up to `ack_timeout_ms` for the reader thread to
+        publish the ESP's ack (ok) or error (the ESP rejected the command,
+        e.g. code=range); on timeout report ok:false with a timeout error so
+        the caller knows the command was NOT confirmed.
+
+        Commands that are not acked by the firmware (get_wifi, set_wifi,
+        reboot — the latter two deliberately reboot the ESP) keep their
+        existing fire-and-forget replies.
+        """
+        if not sent:
+            return {"ok": False, "error": "serial link down — command not sent"}
+
+        timeout_s = max(0.0, int(self.cfg.get("ack_timeout_ms", 500))) / 1000.0
+        deadline = time.monotonic() + timeout_s
+        while True:
+            with self._ack_lock:
+                err = self._pending_error
+                if err is not None:
+                    self._pending_error = None
+                ack = self._pending_ack
+                if ack is not None:
+                    self._pending_ack = None
+            if err is not None:
+                return {"ok": False,
+                        "error": "ESP rejected %s: code=%s field=%s"
+                                 % (cmd_name, err.get("code"), err.get("field"))}
+            if ack is not None:
+                return {"ok": True, "seq": ack.get("seq", 0)}
+            if time.monotonic() >= deadline:
+                return {"ok": False,
+                        "error": "no ack from ESP within %d ms"
+                                 % int(timeout_s * 1000)}
+            time.sleep(0.005)
+
     def _dispatch(self, cmd):
-        """Handle a CLI command and return a JSON-serialisable result."""
+        """Handle a CLI command and return a JSON-serialisable result.
+
+        Issue #106: for the ESP-acked commands (drive/pan/tilt/pan-rel/
+        tilt-rel/center/sweep/stop) the reply is only ok:true once the ESP
+        has confirmed the command (ack) — a closed serial link or an ESP
+        error (e.g. out-of-range) yields ok:false with an error.
+        """
         c = cmd.get("cmd")
 
         if c == "drive":
@@ -624,45 +716,48 @@ class Bridge:
                 # Issue #98: a `drive` command is proof the client is alive —
                 # refresh the freshness timestamp (read by _writer_loop).
                 self._last_cmd_ms = int(time.time() * 1000)
-            self._send_line({"cmd": "drive", "speed": speed, "steer": steer})
+            sent = self._send_line({"cmd": "drive", "speed": speed, "steer": steer})
             self._last_send_ms = int(time.time() * 1000)
             # A fresh drive command means the client is (re-)engaged — clear
             # any prior command-timeout flag so state reflects "alive" now.
             self.state.update(last_command={"cmd": "drive", "speed": speed, "steer": steer},
                               command_timeout_fired=False)
-            result = {"ok": True}
+            # Issue #106: "ok" means the ESP executed the command. If the
+            # serial handle was closed the line was dropped (sent=False) ->
+            # ok:false; otherwise wait (bounded) for the ESP's ack/error.
+            result = self._ack_result("drive", sent)
             if clamped:
                 result["clamped"] = clamped
             return result
 
         elif c == "pan":
             angle = int(cmd.get("angle", 90))
-            self._send_line({"cmd": "pan", "angle": angle})
+            sent = self._send_line({"cmd": "pan", "angle": angle})
             self.state.update(last_command={"cmd": "pan", "angle": angle})
-            return {"ok": True}
+            return self._ack_result("pan", sent)
 
         elif c == "tilt":
             angle = int(cmd.get("angle", 90))
-            self._send_line({"cmd": "tilt", "angle": angle})
+            sent = self._send_line({"cmd": "tilt", "angle": angle})
             self.state.update(last_command={"cmd": "tilt", "angle": angle})
-            return {"ok": True}
+            return self._ack_result("tilt", sent)
 
         elif c == "pan-rel":
             delta = int(cmd.get("delta", 0))
-            self._send_line({"cmd": "pan-rel", "delta": delta})
+            sent = self._send_line({"cmd": "pan-rel", "delta": delta})
             self.state.update(last_command={"cmd": "pan-rel", "delta": delta})
-            return {"ok": True}
+            return self._ack_result("pan-rel", sent)
 
         elif c == "tilt-rel":
             delta = int(cmd.get("delta", 0))
-            self._send_line({"cmd": "tilt-rel", "delta": delta})
+            sent = self._send_line({"cmd": "tilt-rel", "delta": delta})
             self.state.update(last_command={"cmd": "tilt-rel", "delta": delta})
-            return {"ok": True}
+            return self._ack_result("tilt-rel", sent)
 
         elif c == "center":
-            self._send_line({"cmd": "center"})
+            sent = self._send_line({"cmd": "center"})
             self.state.update(last_command={"cmd": "center"})
-            return {"ok": True}
+            return self._ack_result("center", sent)
 
         elif c == "sweep":
             axis = cmd.get("axis", "pan")
@@ -678,21 +773,21 @@ class Bridge:
                 return {"error": "sweep from/to must be in [0, 180]"}
             if not (1 <= steps <= 50):
                 return {"error": "sweep steps must be in [1, 50]"}
-            self._send_line({"cmd": "sweep", "axis": axis, "from": frm,
-                             "to": to, "steps": steps})
+            sent = self._send_line({"cmd": "sweep", "axis": axis, "from": frm,
+                                    "to": to, "steps": steps})
             self.state.update(last_command={"cmd": "sweep", "axis": axis,
                                             "from": frm, "to": to, "steps": steps})
-            return {"ok": True}
+            return self._ack_result("sweep", sent)
 
         elif c == "stop":
             with self._active_drive_lock:
                 self._active_drive = None
-            self._send_line({"cmd": "stop"})
+            sent = self._send_line({"cmd": "stop"})
             # An explicit stop means the client is engaged — clear any prior
             # command-timeout flag so state reflects "client present" now.
             self.state.update(last_command={"cmd": "stop"},
                               command_timeout_fired=False)
-            return {"ok": True}
+            return self._ack_result("stop", sent)
 
         elif c == "state":
             return self.state.read()

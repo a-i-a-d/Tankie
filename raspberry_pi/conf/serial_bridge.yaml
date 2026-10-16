@@ -35,6 +35,17 @@ keepalive_ms: 250
 # ---------------------------------------------------------------------------
 command_timeout_ms: 5000
 
+# ---------------------------------------------------------------------------
+# Ack verification (issue #106)
+#
+# The bridge waits up to this long for the ESP to confirm a command (ack) or
+# reject it (error) before replying ok:true / ok:false to a client. "ok"
+# therefore means the ESP executed the command — not merely "bytes hit the
+# serial buffer". A closed serial link returns ok:false immediately (no wait);
+# a silent ESP (link up but no reply) times out here -> ok:false.
+# 500 ms is ~5x the 921600-baud round-trip margin and well inside the brain's
+# reflex tick budget (the reflex loop keeps sending drive 0 0 on any failure).
+# ---------------------------------------------------------------------------
 ack_timeout_ms: 500
 
 # State store: written by the bridge, read by the CLI and (future) Web UI.

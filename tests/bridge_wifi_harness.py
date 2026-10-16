@@ -53,7 +53,12 @@ def make_bridge():
     cfg["state_file"] = os.path.join(sandbox, "state.json")
     cfg["socket_path"] = os.path.join(sandbox, "bridge.sock")
     b = mod.Bridge(cfg)
-    b._send_line = lambda obj: sent.append(obj)  # capture, no real serial
+    def _capture(obj):
+        sent.append(obj)
+        # Simulate the ESP: every command it accepts is acked (issue #106).
+        b._on_ack({"seq": 1})
+        return True
+    b._send_line = _capture
     return b
 
 

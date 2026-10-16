@@ -157,6 +157,8 @@ jobs:
         run: python tests/bridge_stream_rearm_harness.py
       - name: Run the bridge set_wifi harness (issue #56)
         run: python tests/bridge_wifi_harness.py
+      - name: Run the bridge ack-verification harness (issue #106)
+        run: python tests/bridge_ack_verification_harness.py
 
   vlm-bench:
     runs-on: ubuntu-latest
