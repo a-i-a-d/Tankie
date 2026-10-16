@@ -43,7 +43,7 @@ regardless of where pytest is invoked from.
 - `reflex` (T4, #80) — the System 1 safety net: the pure
   `ReflexController.decide()` decision matrix (A1 configurable block classes,
   A2 in-lane/close geometry + the default-OFF `reflex_obstacle_enabled` switch,
-  A3 steer-around, AUTO_PROFILE clamp, pan/tilt passthrough, invalid-pending
+  A3 arc-around (issue #105), AUTO_PROFILE clamp, pan/tilt passthrough, invalid-pending
   handling); `ReflexController.to_bridge_cmd()` (a stop stays a stop — it never
   re-introduces a pending value the reflex overrode); `ReflexLoop` (the 10 Hz
   thread) with fake grabber/LocalAI/bridge proving the invariants — no frame

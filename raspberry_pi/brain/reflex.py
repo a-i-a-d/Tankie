@@ -108,6 +108,13 @@ class ReflexController:
         ``min_bottom_ratio * img_h`` is "close".
     steer_around:
         A3 (#80): steer magnitude (±) when avoiding a side-lane obstacle.
+        The tank moves forward at ``arc_speed`` while steering this much
+        (issue #105: an arc around the obstacle, not a spin-in-place).
+    arc_speed:
+        Forward speed while arcing around a side-lane obstacle (issue #105).
+        Kept separate from ``max_speed`` (the AI cruising speed) so the arc
+        speed can be tuned independently — low motor speeds may not overcome
+        static friction, so the default is 40 (the normal AI cruising speed).
     max_speed / max_steer:
         AUTO_PROFILE limits (issue #31) — the UX mirror clamp; the bridge is
         the real enforcement layer.
@@ -123,6 +130,7 @@ class ReflexController:
         lane_half_width: float = 0.30,
         min_bottom_ratio: float = 0.70,
         steer_around: int = 60,
+        arc_speed: int = 40,
         max_speed: int = 40,
         max_steer: int = 255,
     ) -> None:
@@ -131,6 +139,7 @@ class ReflexController:
         self.lane_half_width = float(lane_half_width)
         self.min_bottom_ratio = float(min_bottom_ratio)
         self.steer_around = int(steer_around)
+        self.arc_speed = int(arc_speed)
         self.max_speed = int(max_speed)
         self.max_steer = int(max_steer)
 
@@ -189,9 +198,11 @@ class ReflexController:
           1. **Center-lane obstacle is close** (and enabled) ->
              ``drive 0 0`` (stop), ``preempted=True`` when a pending action
              was overridden (invariant 2).
-          2. **Side-lane obstacle is close** (and enabled) -> steer **away**:
-             obstacle left  -> ``steer = +steer_around`` (turn right),
-             obstacle right -> ``steer = -steer_around`` (turn left).
+          2. **Side-lane obstacle is close** (and enabled) -> **arc around**:
+             move forward at ``arc_speed`` while steering **away** (issue #105:
+             a side obstacle implies *moving around* it, not spinning in place).
+             obstacle left  -> ``speed=arc_speed, steer = +steer_around`` (turn right),
+             obstacle right -> ``speed=arc_speed, steer = -steer_around`` (turn left).
           3. **Clear** -> pass the pending action through (drive clamped to
              the AUTO_PROFILE; pan/tilt with its angle), or ``drive 0 0``
              idle keep-alive when there is no pending action.
@@ -214,14 +225,14 @@ class ReflexController:
                 cx = float(obstacle.get("x", 0.0)) + float(obstacle.get("w", 0.0)) / 2.0
                 if cx < img_w / 2.0:
                     return ReflexResult(
-                        cmd="drive", speed=0, steer=self.steer_around,
+                        cmd="drive", speed=self.arc_speed, steer=self.steer_around,
                         preempted=preempted,
-                        reason=f"steer-around: {cls} left",
+                        reason=f"arc-around: {cls} left",
                     )
                 return ReflexResult(
-                    cmd="drive", speed=0, steer=-self.steer_around,
+                    cmd="drive", speed=self.arc_speed, steer=-self.steer_around,
                     preempted=preempted,
-                    reason=f"steer-around: {cls} right",
+                    reason=f"arc-around: {cls} right",
                 )
 
         # --- clear (or obstacle avoidance disabled) ---
