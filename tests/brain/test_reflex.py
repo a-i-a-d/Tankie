@@ -116,21 +116,42 @@ def test_center_obstacle_stops_and_preempts():
     assert "person" in r.reason and "in lane" in r.reason
 
 
-def test_left_obstacle_steers_right_away():
+def test_left_obstacle_arcs_right_around():
     # obstacle centred at 15% width (left of lane) -> steer RIGHT (positive)
+    # while moving forward (issue #105: an arc, not a spin-in-place).
     obstacle = det("car", 0.15 * IMG_W, 0.85 * IMG_H)
     r = controller().decide([obstacle], IMG_W, IMG_H)
-    assert r.cmd == "drive" and r.speed == 0
+    assert r.cmd == "drive"
+    assert r.speed == 40            # forward at max_speed (not 0 = spin)
     assert r.steer == 60
     assert "left" in r.reason
 
 
-def test_right_obstacle_steers_left_away():
+def test_right_obstacle_arcs_left_around():
     # obstacle centred at 85% width (right of lane) -> steer LEFT (negative)
+    # while moving forward (issue #105: an arc, not a spin-in-place).
     obstacle = det("dog", 0.85 * IMG_W, 0.85 * IMG_H)
     r = controller().decide([obstacle], IMG_W, IMG_H)
+    assert r.speed == 40
     assert r.steer == -60
     assert "right" in r.reason
+
+
+def test_side_arc_uses_configured_max_speed():
+    # the arc speed follows max_speed (configurable), not a hardcoded value.
+    obstacle = det("car", 0.15 * IMG_W, 0.85 * IMG_H)
+    r = controller(max_speed=25).decide([obstacle], IMG_W, IMG_H)
+    assert (r.speed, r.steer) == (25, 60)
+
+
+def test_side_arc_preempts_pending_action():
+    # a side obstacle still pre-empts a pending drive (reflex wins),
+    # but the tank moves (arc) rather than idling.
+    obstacle = det("person", 0.15 * IMG_W, 0.85 * IMG_H)
+    r = controller().decide([obstacle], IMG_W, IMG_H,
+                            pending={"cmd": "drive", "speed": 40, "steer": 0})
+    assert r.preempted is True
+    assert (r.speed, r.steer) == (40, 60)
 
 
 def test_non_blocking_class_is_clear():
