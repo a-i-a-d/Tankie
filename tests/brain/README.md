@@ -67,6 +67,11 @@ regardless of where pytest is invoked from.
   decodes the latest LL-HLS segment via `httpx.MockTransport` and returns
   `None` on an unreachable/undecodable stream; `build_frame_grab()` /
   `create_source()` wire the config (`cam_url`, `grab_*`) to a source.
+  Issue #107: a *real* MPEG-TS video segment (generated with
+  `cv2.VideoWriter`) decodes to a frame via the `cv2.VideoCapture("file://…")`
+  path, while `cv2.imdecode` alone returns `None` for it; `rtsp://` URLs
+  route to `LLHLSSource` (cv2 handles RTSP natively), including the
+  `prefer="http"` redirect, which is logged.
 
 ## CI
 

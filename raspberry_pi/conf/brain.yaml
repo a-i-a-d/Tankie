@@ -49,7 +49,7 @@ deliberate_user_prompt_template: |
   Decide the next action and respond with the JSON object.
 
 # --- camera (D5: LL-HLS cam_low is the brain's frame source) ---
-cam_url: http://tankie.local:8888/cam_low/index.m3u8   # LL-HLS; rtsp://tankie.local:8554/cam_low is the fallback
+cam_url: http://tankie.local:8888/cam_low/index.m3u8   # LL-HLS; rtsp://tankie.local:8554/cam_low is the fallback (issue #107: rtsp:// is served by the cv2 path -- OpenCV handles RTSP natively; the HTTP fallback decodes real .ts segments via cv2.VideoCapture)
 
 # --- frame grabber (T3, #74) ---
 # How often FrameGrab polls the source, and how old a frame may be before
