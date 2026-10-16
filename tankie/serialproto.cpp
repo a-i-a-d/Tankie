@@ -655,27 +655,79 @@ void SerialProto::emitWifi(const char* ssid, const char* mode, const char* ip) {
 // which appear in the protocol. See issue #29 §3 for the message shapes.
 // ---------------------------------------------------------------------------
 
+// Locate the top-level key `key` in a flat, single-line JSON object.
+//
+// Issue #110: the extractors used to find the key with strstr(json, "\"key\""),
+// which matches the key name *anywhere* in the line — including inside a
+// quoted string value — so a malformed/foreign line could feed an unintended
+// value into a command. The key is now located with a single left-to-right
+// pass that skips over quoted string values (honoring backslash escapes), so
+// a candidate key must be a real JSON object member: a quoted string that is
+// immediately followed (after optional whitespace) by a ':'. A key name that
+// merely appears inside a string value is never mistaken for the field.
+//
+// Returns a pointer to the opening quote of the key, or nullptr if the key
+// is not a top-level member.
+static const char* jsonFindKey(const char* json, const char* key) {
+  if (!json || !key) return nullptr;
+  size_t klen = strlen(key);
+  if (klen == 0) return nullptr;
+
+  const char* p = json;
+  while (*p) {
+    if (*p != '"') { p++; continue; }
+    // p is a double quote. Scan to the matching closing quote, honoring
+    // backslash escapes (\\ and \\\"), to read this string's content.
+    const char* start = p + 1;
+    const char* q = start;
+    while (*q) {
+      if (*q == '\\') { q += 2; continue; }
+      if (*q == '"') break;
+      q++;
+    }
+    if (*q != '"') break;   // unterminated string -> stop scanning
+    size_t slen = (size_t)(q - start);
+    if (slen == klen && memcmp(start, key, klen) == 0) {
+      // Candidate key: it is a member only if a ':' follows (after any
+      // whitespace). A string *value* (or garbage) is not followed by ':'.
+      const char* r = q + 1;
+      while (*r == ' ' || *r == '\t') r++;
+      if (*r == ':') return p;
+    }
+    p = q + 1;   // skip past this string, keep scanning
+  }
+  return nullptr;
+}
+
+// After jsonFindKey() returned the key (at its opening quote), skip past
+// "key" and the ':' (and any whitespace), leaving the pointer at the start
+// of the value. Returns nullptr if the ':' is missing.
+static const char* jsonValueStart(const char* keyPtr, size_t klen) {
+  const char* p = keyPtr + klen + 2;   // past "key"
+  while (*p == ' ' || *p == '\t') p++;
+  if (*p != ':') return nullptr;
+  p++;
+  while (*p == ' ' || *p == '\t') p++;
+  return p;
+}
+
+// Public wrapper (declared in serialproto.h): exposes the top-level key
+// locator to the WebSocket fallback handler in tankie.ino so both control
+// paths (serial NDJSON + /ws) share the exact same string-aware key match
+// (issue #110).
+const char* SerialProto::findTopLevelKey(const char* json, const char* key) {
+  return jsonFindKey(json, key);
+}
+
 // Find "key" and copy the following string value into out.
 bool SerialProto::jsonGetString(const char* json, const char* key,
                                 char* out, size_t outSize) {
   if (!json || !key || !out || outSize == 0) return false;
 
-  char pat[32];
-  size_t klen = strlen(key);
-  if (klen == 0 || klen >= sizeof(pat) - 2) return false;
-  pat[0] = '"';
-  memcpy(pat + 1, key, klen);
-  pat[1 + klen] = '"';
-  pat[2 + klen] = '\0';
-
-  const char* p = strstr(json, pat);
+  const char* k = jsonFindKey(json, key);
+  if (!k) return false;
+  const char* p = jsonValueStart(k, strlen(key));
   if (!p) return false;
-  p += klen + 2;   // past "key"
-
-  while (*p == ' ' || *p == '\t') p++;
-  if (*p != ':') return false;
-  p++;
-  while (*p == ' ' || *p == '\t') p++;
   if (*p != '"') return false;   // must be a string value
   p++;
 
@@ -692,21 +744,10 @@ bool SerialProto::jsonGetString(const char* json, const char* key,
 bool SerialProto::jsonGetBool(const char* json, const char* key, bool* out) {
   if (!json || !key || !out) return false;
 
-  char pat[32];
-  size_t klen = strlen(key);
-  if (klen == 0 || klen >= sizeof(pat) - 2) return false;
-  pat[0] = '"';
-  memcpy(pat + 1, key, klen);
-  pat[1 + klen] = '"';
-  pat[2 + klen] = '\0';
-
-  const char* p = strstr(json, pat);
+  const char* k = jsonFindKey(json, key);
+  if (!k) return false;
+  const char* p = jsonValueStart(k, strlen(key));
   if (!p) return false;
-  p += klen + 2;
-  while (*p == ' ' || *p == '\t') p++;
-  if (*p != ':') return false;
-  p++;
-  while (*p == ' ' || *p == '\t') p++;
 
   if (strncmp(p, "true", 4) == 0)  { *out = true;  return true; }
   if (strncmp(p, "false", 5) == 0) { *out = false; return true; }
@@ -717,21 +758,10 @@ bool SerialProto::jsonGetBool(const char* json, const char* key, bool* out) {
 bool SerialProto::jsonGetInt(const char* json, const char* key, int* out) {
   if (!json || !key || !out) return false;
 
-  char pat[32];
-  size_t klen = strlen(key);
-  if (klen == 0 || klen >= sizeof(pat) - 2) return false;
-  pat[0] = '"';
-  memcpy(pat + 1, key, klen);
-  pat[1 + klen] = '"';
-  pat[2 + klen] = '\0';
-
-  const char* p = strstr(json, pat);
+  const char* k = jsonFindKey(json, key);
+  if (!k) return false;
+  const char* p = jsonValueStart(k, strlen(key));
   if (!p) return false;
-  p += klen + 2;
-  while (*p == ' ' || *p == '\t') p++;
-  if (*p != ':') return false;
-  p++;
-  while (*p == ' ' || *p == '\t') p++;
 
   bool neg = false;
   if (*p == '-') { neg = true; p++; }

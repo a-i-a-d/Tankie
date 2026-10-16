@@ -563,3 +563,83 @@ TEST(sweep_out_of_range_endpoints_are_errors) {
   CHECK(capturedContains("\"field\":\"to\""));
   CHECK(!proto.sweepActive());
 }
+
+// ---------------------------------------------------------------------------
+// Issue #110 — the JSON extractors must not match a key name that appears
+// INSIDE a quoted string value (the old strstr scan did).
+//
+// The clean trigger: a string value that contains the byte sequence
+// "speed" followed by ": 55". The old extractor matched the "speed" inside
+// the note FIRST and drove at 55 (or range-errored on 999) instead of the
+// real speed of 10. The key must only be matched as a top-level object
+// member, never inside a string value.
+// ---------------------------------------------------------------------------
+
+TEST(issue110_key_name_inside_string_value_is_not_the_field) {
+  // The issue's literal example: the key name appears inside the note string
+  // value. It must not be mistaken for the "speed" field.
+  resetProto();
+  proto.injectLine("{\"note\":\"speed: 999\",\"cmd\":\"drive\",\"speed\":10}");
+  CHECK(proto.speed() == 10);
+  CHECK(proto.steer() == 0);
+  CHECK(capturedHasLine("{\"type\":\"ack\",\"seq\":1}"));
+}
+
+TEST(issue110_embedded_key_with_in_range_value_drives_real_value) {
+  // The note string value contains "speed" + ": 55" (an IN-RANGE value).
+  // Old strstr extractor: drives at 55. Fixed: drives at the real 10.
+  resetProto();
+  proto.injectLine("{\"note\":\"x\"speed\": 55\",\"cmd\":\"drive\",\"speed\":10}");
+  CHECK(proto.speed() == 10);
+  CHECK(proto.steer() == 0);
+}
+
+TEST(issue110_embedded_key_with_out_of_range_value_still_drives_real_value) {
+  // The note string value contains "speed" + ": 999" (OUT of range).
+  // Old extractor: range-error -> speed 0. Fixed: drives at the real 10.
+  resetProto();
+  proto.injectLine("{\"note\":\"x\"speed\": 999\",\"cmd\":\"drive\",\"speed\":10}");
+  CHECK(proto.speed() == 10);
+}
+
+TEST(issue110_embedded_steer_key_uses_real_steer) {
+  // The note string value contains "steer" + ": 200" (in range).
+  // Old extractor: steer 200. Fixed: steer 0 (the real value).
+  resetProto();
+  proto.injectLine("{\"note\":\"x\"steer\": 200\",\"cmd\":\"drive\",\"speed\":10,\"steer\":0}");
+  CHECK(proto.speed() == 10);
+  CHECK(proto.steer() == 0);
+}
+
+TEST(issue110_key_only_inside_string_value_is_missing) {
+  // The key appears ONLY inside a string value (no real "speed" member).
+  // Must be treated as missing -> no drive, no wrong value.
+  resetProto();
+  proto.injectLine("{\"note\":\"x\"speed\": 55\",\"cmd\":\"drive\"}");
+  CHECK(proto.speed() == 0);
+  CHECK(proto.steer() == 0);
+  CHECK(capturedContains("\"code\":\"missing\""));
+}
+
+TEST(issue110_existing_valid_lines_parse_identically) {
+  // Acceptance: existing valid lines still parse identically.
+  resetProto();
+  proto.injectLine("{\"cmd\":\"drive\",\"speed\":50,\"steer\":0}");
+  CHECK(proto.speed() == 50);
+  CHECK(proto.steer() == 0);
+  resetProto();
+  proto.injectLine("{\"cmd\":\"pan\",\"angle\":45}");
+  CHECK(proto.pan() == 45);
+  resetProto();
+  proto.injectLine("{\"cmd\":\"tilt\",\"angle\":30}");
+  CHECK(proto.tilt() == 30);
+  resetProto();
+  proto.injectLine("{\"cmd\":\"pan-rel\",\"delta\":20}");
+  CHECK(proto.pan() == 110);   // 90 + 20
+  resetProto();
+  proto.injectLine("{\"cmd\":\"tilt-rel\",\"delta\":-10}");
+  CHECK(proto.tilt() == 80);   // 90 - 10
+  resetProto();
+  proto.injectLine("{\"cmd\":\"drive\",\"speed\":-80,\"steer\":0}");
+  CHECK(proto.speed() == -80);
+}

@@ -79,6 +79,14 @@ public:
   // Test hook: inject a command line directly (bypasses Serial).
   void injectLine(const char* line);
 
+  // Locate a top-level key in a flat, single-line JSON object, skipping
+  // over quoted string values so a key name appearing *inside* a string
+  // value is never mistaken for the field (issue #110). Public so the
+  // WebSocket fallback handler in tankie.ino (the same protocol, same
+  // defect) can share the exact same string-aware key match instead of
+  // duplicating a second strstr-based extractor.
+  static const char* findTopLevelKey(const char* json, const char* key);
+
 private:
   // Line reader state
   char   lineBuf_[256];   // issue #56: a full-cap set_wifi line (64-char ssid+pass) is ~217 B

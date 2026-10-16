@@ -313,3 +313,34 @@ TEST(ws_long_frame_rejected_no_crash) {
   assertNoMovement();
   CHECK(Serial.captured().find("Ignoring non-JSON") != std::string::npos);
 }
+
+// ---------------------------------------------------------------------------
+// Issue #110 — the /ws fallback must not match a key name that appears
+// INSIDE a quoted string value (the old strstr scan did). The key is now
+// located with SerialProto::findTopLevelKey() (the same string-aware
+// locator the serial NDJSON link uses), so a key name inside a string
+// value is never mistaken for the field.
+// ---------------------------------------------------------------------------
+
+TEST(ws_issue110_key_name_inside_string_value_is_not_the_field) {
+  // The note string value contains the byte sequence "speed" + ": 55".
+  // Old strstr extractor: drives at 55. Fixed: drives at the real 10.
+  resetWs();
+  sendWsText("{\"note\":\"x\"speed\": 55\",\"cmd\":\"drive\",\"speed\":10}");
+  CHECK_EQ_INT(currentSpeed, 10);
+  CHECK_EQ_INT(currentSteer, 0);
+}
+
+TEST(ws_issue110_existing_valid_lines_parse_identically) {
+  // Acceptance: existing valid WS lines still parse identically.
+  resetWs();
+  sendWsText("{\"cmd\":\"drive\",\"speed\":50,\"steer\":0}");
+  CHECK_EQ_INT(currentSpeed, 50);
+  CHECK_EQ_INT(currentSteer, 0);
+  resetWs();
+  sendWsText("{\"cmd\":\"pan\",\"angle\":45}");
+  CHECK_EQ_INT(currentPan, 45);
+  resetWs();
+  sendWsText("{\"cmd\":\"stop\"}");
+  CHECK_EQ_INT(currentSpeed, 0);
+}
