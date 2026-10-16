@@ -162,6 +162,103 @@ def test_side_arc_preempts_pending_action():
     assert (r.speed, r.steer) == (40, 60)
 
 
+# ===========================================================================
+# Obstruction priority (issue #108) — a front (in-pathway) stop must win over
+# a CLOSER side obstacle. The pathway is tested against every close blocker
+# before any side arc is considered.
+# ===========================================================================
+
+def test_front_stop_wins_over_closer_side_obstacle():
+    # Issue #108 acceptance case 1: a front obstacle (bottom=360, close)
+    # AND a closer side obstacle (bottom=432) -> STOP. The side obstacle
+    # is "more threatening" by proximity, but it is not in the pathway,
+    # so it must not override the front stop. (Before the fix: arc.)
+    front = det("person", IMG_W / 2, 0.85 * IMG_H)          # bottom = 360
+    side = det("car", 0.15 * IMG_W, 0.89 * IMG_H)           # bottom = 432
+    r = controller().decide([front, side], IMG_W, IMG_H)
+    assert (r.cmd, r.speed, r.steer) == ("drive", 0, 0)
+    assert "person" in r.reason and "in lane" in r.reason
+
+
+def test_front_stop_wins_over_closer_side_obstacle_right_side():
+    # Same priority rule with the closer obstacle on the RIGHT.
+    front = det("car", IMG_W / 2, 0.85 * IMG_H)
+    side = det("dog", 0.85 * IMG_W, 0.90 * IMG_H)
+    r = controller().decide([front, side], IMG_W, IMG_H)
+    assert (r.cmd, r.speed, r.steer) == ("drive", 0, 0)
+    assert "in lane" in r.reason
+
+
+def test_front_stop_wins_over_closer_side_with_pending_drive():
+    # Issue #108 + invariant 2: the front stop still pre-empts a pending
+    # drive even when a closer side obstacle is in frame.
+    front = det("person", IMG_W / 2, 0.85 * IMG_H)
+    side = det("car", 0.15 * IMG_W, 0.90 * IMG_H)
+    r = controller().decide(
+        [front, side], IMG_W, IMG_H,
+        pending={"cmd": "drive", "speed": 40, "steer": 0})
+    assert (r.cmd, r.speed, r.steer) == ("drive", 0, 0)
+    assert r.preempted is True
+    assert "in lane" in r.reason
+
+
+def test_side_only_still_arcs_left():
+    # Issue #108 acceptance case 2: side obstacle only (no close in-lane
+    # blocker) -> arc around it, unchanged from issue #105 behaviour.
+    side = det("car", 0.15 * IMG_W, 0.85 * IMG_H)
+    r = controller().decide([side], IMG_W, IMG_H)
+    assert (r.speed, r.steer) == (40, 60)
+    assert "left" in r.reason
+
+
+def test_side_only_still_arcs_right():
+    side = det("dog", 0.85 * IMG_W, 0.85 * IMG_H)
+    r = controller().decide([side], IMG_W, IMG_H)
+    assert (r.speed, r.steer) == (40, -60)
+    assert "right" in r.reason
+
+
+def test_two_side_obstacles_arcs_around_closest():
+    # Two side obstacles, both close, pathway clear -> arc around the
+    # CLOSER one (lowest box bottom). Here the right one is closer, so
+    # the arc must steer LEFT (away from right).
+    left_far = det("car", 0.10 * IMG_W, 0.80 * IMG_H)   # bottom = 384
+    right_close = det("dog", 0.90 * IMG_W, 0.90 * IMG_H)  # bottom = 432
+    r = controller().decide([left_far, right_close], IMG_W, IMG_H)
+    assert (r.speed, r.steer) == (40, -60)
+    assert "dog" in r.reason and "right" in r.reason
+
+
+def test_far_front_plus_closer_side_still_arcs():
+    # A front obstacle that is NOT close (below the min_bottom_ratio
+    # threshold) does not create a stop — the closer side obstacle still
+    # gets its arc. (The pathway test only applies to CLOSE blockers.)
+    front_far = det("person", IMG_W / 2, 0.45 * IMG_H)   # bottom = 240 < 336
+    side = det("car", 0.15 * IMG_W, 0.85 * IMG_H)
+    r = controller().decide([front_far, side], IMG_W, IMG_H)
+    assert (r.speed, r.steer) == (40, 60)
+    assert "arc-around" in r.reason
+
+
+def test_loop_front_stop_wins_over_closer_side():
+    # The same priority rule through the live ReflexLoop thread: a front
+    # stop + closer side obstacle -> the bridge receives drive 0 0.
+    bridge = FakeBridge()
+    dets = [det("person", IMG_W / 2, 0.85 * IMG_H),
+            det("car", 0.15 * IMG_W, 0.90 * IMG_H)]
+    loop = ReflexLoop(
+        FakeGrabber(_frame()),
+        FakeLocalAI({"ok": True, "detections": dets}),
+        controller(), bridge,
+        pending_action=lambda: {"cmd": "drive", "speed": 40, "steer": 0}, hz=100)
+    loop.start()
+    try:
+        assert _wait_until(lambda: bridge.sent)
+        assert bridge.sent[0] == IDLE_CMD  # front stop pre-empts the drive
+    finally:
+        loop.stop()
+
+
 def test_non_blocking_class_is_clear():
     obstacle = det("cup", IMG_W / 2, 0.9 * IMG_H)
     r = controller().decide([obstacle], IMG_W, IMG_H)

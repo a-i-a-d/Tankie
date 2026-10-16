@@ -163,12 +163,16 @@ class ReflexController:
         left, right = self._lane_bounds(img_w)
         return left <= cx <= right
 
-    def _most_threatening(
+    def _close_blockers(
         self, detections: Sequence[Mapping[str, Any]], img_w: int, img_h: int
-    ) -> Optional[Mapping[str, Any]]:
-        """Closest (lowest box bottom) blocking + close detection, else None."""
-        best: Optional[Mapping[str, Any]] = None
-        best_bottom = float("-inf")
+    ) -> list:
+        """All blocking + close detections (issue #108).
+
+        The pathway must be tested against *every* close blocker, not just
+        the closest one — a closer side obstacle must not override a front
+        (in-lane) stop.
+        """
+        out = []
         for det in detections:
             if not isinstance(det, Mapping):
                 continue
@@ -176,11 +180,8 @@ class ReflexController:
                 continue
             if not self._is_close(det, img_h):
                 continue
-            bottom = float(det.get("y", 0.0)) + float(det.get("h", 0.0))
-            if bottom > best_bottom:
-                best_bottom = bottom
-                best = det
-        return best
+            out.append(det)
+        return out
 
     # ------------------------------------------------------------------
     # the decision
@@ -195,12 +196,15 @@ class ReflexController:
         """Map detections + the pending deliberation action to a drive command.
 
         Logic (in priority order):
-          1. **Center-lane obstacle is close** (and enabled) ->
+          1. **Any close in-lane (pathway) blocker** (and enabled) ->
              ``drive 0 0`` (stop), ``preempted=True`` when a pending action
-             was overridden (invariant 2).
-          2. **Side-lane obstacle is close** (and enabled) -> **arc around**:
-             move forward at ``arc_speed`` while steering **away** (issue #105:
-             a side obstacle implies *moving around* it, not spinning in place).
+             was overridden (invariant 2). The pathway is tested against
+             *every* close blocker — a closer side obstacle never overrides
+             a front stop (issue #108).
+          2. **Close side-lane blocker, pathway clear** (and enabled) ->
+             **arc around** the closest one: move forward at ``arc_speed``
+             while steering **away** (issue #105: a side obstacle implies
+             *moving around* it, not spinning in place).
              obstacle left  -> ``speed=arc_speed, steer = +steer_around`` (turn right),
              obstacle right -> ``speed=arc_speed, steer = -steer_around`` (turn left).
           3. **Clear** -> pass the pending action through (drive clamped to
@@ -211,15 +215,27 @@ class ReflexController:
         preempted = pending is not None
 
         if self.enabled and detections:
-            obstacle = self._most_threatening(detections, img_w, img_h)
-            if obstacle is not None:
-                cls = str(obstacle.get("class_name", "obstacle"))
-                if self._is_in_lane(obstacle, img_w):
+            # Issue #108: test the PATHWAY FIRST, against every close
+            # blocker — a front (in-lane) stop always wins, even when a
+            # side obstacle is closer. Only when the pathway is clear do
+            # we arc around the closest side obstacle.
+            blockers = self._close_blockers(detections, img_w, img_h)
+            for det in blockers:
+                if self._is_in_lane(det, img_w):
+                    cls = str(det.get("class_name", "obstacle"))
                     return ReflexResult(
                         cmd="drive", speed=0, steer=0,
                         preempted=preempted,
                         reason=f"stop: {cls} in lane",
                     )
+            side = [d for d in blockers if not self._is_in_lane(d, img_w)]
+            if side:
+                # Closest (lowest box bottom) side blocker.
+                obstacle = max(
+                    side,
+                    key=lambda d: float(d.get("y", 0.0)) + float(d.get("h", 0.0)),
+                )
+                cls = str(obstacle.get("class_name", "obstacle"))
                 # Side-lane: steer away from the obstacle (wheels.h, issue #85:
                 # steer > 0 = right, steer < 0 = left).
                 cx = float(obstacle.get("x", 0.0)) + float(obstacle.get("w", 0.0)) / 2.0
