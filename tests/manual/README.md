@@ -27,6 +27,7 @@ writes a JSONL + self-contained dark-theme HTML report.
 ```
 tests/manual/
   run_manual.py        # the runner (stdlib + PyYAML; the stable entry point)
+  brain_manual_harness.py  # offline Phase 2 brain harness (S6-07…S6-16, no hardware)
   requirements.txt     # operator deps (PyYAML + pyserial; per-layer extras noted)
   specs/               # declarative test specs — the STABLE CONTRACT
     power.yaml         #   Stage 0 — power & boot
@@ -34,7 +35,7 @@ tests/manual/
     bridge.yaml        #   Stage 2 — bridge daemon (socket + state store)
     camera.yaml        #   Stage 4 — mediamtx streaming
     ai.yaml            #   Stage 5 — LocalAI + legacy ai_control.py
-    brain.yaml         #   Stage 6 — AI brain reflex loop (issue #80 T4)
+    brain.yaml         #   Stage 6 — AI brain: reflex (T4) + deliberation (T5) + orchestrator (T6)
     soak.yaml          #   Stage 7 — cross-cutting / soak / safety
   adapters/            # thin layer adapters (one per signal stage)
     base.py            #   shared core: evidence shape + assertion engine (pure)
@@ -52,6 +53,7 @@ pip3 install -r tests/manual/requirements.txt          # PyYAML + pyserial
 #   ai_control (5)    : pip3 install -r ai-control/LocalAI/requirements.txt
 
 python3 tests/manual/run_manual.py --dry-run           # validate, no hardware
+python3 tests/manual/brain_manual_harness.py           # Phase 2 brain wiring, offline (no tank)
 python3 tests/manual/run_manual.py --suite all \
     --i-confirm-tank-is-clear                          # the full low→high run
 python3 tests/manual/run_manual.py --suite bridge --filter S2-03   # one test
