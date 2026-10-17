@@ -66,3 +66,179 @@
   action: {mode: record, obstacle: true, duration_s: 3}
   observe:
     expected: "With reflex_obstacle_enabled=true and an in-lane detection, the reflex steers around / stops per config."
+
+# ---------------------------------------------------------------------------
+# Phase 2 (issue #81 T5 deliberation + issue #82 T6 orchestrator) — the
+# newly added components. These run the FULL Brain orchestrator (reflex T4 +
+# deliberation T5 + task queue T6) in `full` mode with offline fakes, so the
+# wiring + invariants are machine-verifiable without the tank. The one
+# `fakes: false` case (S6-17) is the live on-tank run.
+# ---------------------------------------------------------------------------
+- id: S6-07
+  layer: brain
+  title: "full orchestrator starts/stops cleanly (issue #82 T6)"
+  safety: low
+  action: {mode: full, fakes: true, duration_s: 2}
+  observe:
+    expected: "The Brain orchestrator (reflex + deliberation + task queue) starts in the safe order, runs, and stops cleanly (the final command is drive 0 0)."
+    auto:
+      - path: reply.ok
+        eq: true
+      - path: reply.final_stop_sent
+        eq: true
+      - path: reply.state_keys
+        exists: true
+
+- id: S6-08
+  layer: brain
+  title: "deliberation produces a valid action -> reflex drives it (issue #81 T5)"
+  safety: low
+  action: {mode: full, fakes: true, task: "explore the room", duration_s: 3}
+  observe:
+    expected: "With a task set, the deliberation loop calls the VLM, validates a valid Action, and the reflex loop passes the drive through (a non-zero drive is recorded)."
+    auto:
+      - path: reply.ok
+        eq: true
+      - path: reply.deliberation_valid_actions
+        gt: 0
+      - path: reply.all_idle
+        eq: false
+
+- id: S6-09
+  layer: brain
+  title: "malformed VLM reply is ignored + slot cleared (issue #81 T5, #101)"
+  safety: low
+  action: {mode: full, fakes: true, task: "explore", chat_reply: "this is not json", duration_s: 2}
+  observe:
+    expected: "A malformed VLM reply is logged + ignored; the pending slot is cleared so the tank stays stopped (all commands are drive 0 0)."
+    auto:
+      - path: reply.ok
+        eq: true
+      - path: reply.deliberation_errors
+        gt: 0
+      - path: reply.all_idle
+        eq: true
+
+- id: S6-10
+  layer: brain
+  title: "VLM down -> stale action cleared, tank stops (issue #81 T5, #101)"
+  safety: low
+  action: {mode: full, fakes: true, task: "explore", chat_ok: false, duration_s: 2}
+  observe:
+    expected: "When the VLM call fails, the deliberation loop logs the error and clears the pending slot; the reflex loop idles to drive 0 0 (a dead thinker is a stop, not a free drive)."
+    auto:
+      - path: reply.ok
+        eq: true
+      - path: reply.deliberation_errors
+        gt: 0
+      - path: reply.all_idle
+        eq: true
+
+- id: S6-11
+  layer: brain
+  title: "no frame -> stop, even with a task (issue #82 T6, invariant 4)"
+  safety: low
+  action: {mode: full, fakes: true, task: "explore", frames: false, duration_s: 2}
+  observe:
+    expected: "With no camera frame, the reflex loop sends drive 0 0 (a dead perception stack is a stop) and the deliberation loop has no frames to reason about."
+    auto:
+      - path: reply.ok
+        eq: true
+      - path: reply.all_idle
+        eq: true
+      - path: reply.final_stop_sent
+        eq: true
+
+- id: S6-12
+  layer: brain
+  title: "task via the task FILE channel (issue #82 T6, Q5/A5 cross-process)"
+  safety: low
+  action: {mode: full, fakes: true, task_file_write: "go find the red ball", duration_s: 3}
+  observe:
+    expected: "A task written to the task file (what brain_cli.py / the MCP server do) is picked up by the Brain's poller and drives the deliberation loop (the cross-process channel works)."
+    auto:
+      - path: reply.ok
+        eq: true
+      - path: reply.task
+        eq: "go find the red ball"
+      - path: reply.deliberation_valid_actions
+        gt: 0
+
+- id: S6-13
+  layer: brain
+  title: "Brain.state() reports deliberation counters + liveness (issue #82 T6, A3)"
+  safety: low
+  action: {mode: full, fakes: true, task: "explore", duration_s: 3}
+  observe:
+    expected: "Brain.state() surfaces the deliberation loop's liveness (calls / errors / valid actions), the reflex ticks, and the frame age — the observability the MCP state() tool and the operator rely on."
+    auto:
+      - path: reply.ok
+        eq: true
+      - path: reply.reflex_ticks
+        gt: 0
+      - path: reply.deliberation_calls
+        gt: 0
+      - path: reply.frame_age_s
+        exists: true
+
+- id: S6-14
+  layer: brain
+  title: "in-lane obstacle pre-empts a pending drive (issue #80 T4 + #81 T5, invariant 2)"
+  safety: low
+  action:
+    mode: full
+    fakes: true
+    task: "explore"
+    obstacle: true
+    detect: [{class_name: person, x: 24, y: 26, w: 16, h: 16, confidence: 0.9}]
+    duration_s: 3
+  observe:
+    expected: "With obstacle avoidance enabled and an in-lane (close) detection, the reflex loop pre-empts the deliberation's pending drive and stops (a center-lane obstacle always wins — invariant 2)."
+    auto:
+      - path: reply.ok
+        eq: true
+      - path: reply.obstacle_enabled
+        eq: true
+      - path: reply.all_idle
+        eq: true
+
+- id: S6-15
+  layer: brain
+  title: "consume-once: a one-shot pan/tilt is applied once, not re-sent (issue #101)"
+  safety: low
+  action: {mode: full, fakes: true, task: "look around", chat_reply: '{"intent":"explore","cmd":"pan","pan":45,"reason":"fake"}', duration_s: 3}
+  observe:
+    expected: "A one-shot pan action is applied once by the reflex loop and the pending slot is cleared (consume-once), so it is NOT re-sent every tick; afterwards the loop idles to drive 0 0."
+    auto:
+      - path: reply.ok
+        eq: true
+      - path: reply.deliberation_valid_actions
+        gt: 0
+      - path: reply.final_stop_sent
+        eq: true
+
+- id: S6-16
+  layer: brain
+  title: "frozen/stale camera is not used for a motion decision (issue #109)"
+  safety: low
+  action: {mode: full, fakes: true, task: "explore", duration_s: 2}
+  observe:
+    expected: "The deliberation loop checks the newest distinct frame's age (frozen_s); a frozen stream must not drive a 'motion' decision — the frame age is surfaced in state() so a stale view is visible to the operator."
+    auto:
+      - path: reply.ok
+        eq: true
+      - path: reply.frame_frozen_s
+        exists: true
+
+- id: S6-17
+  layer: brain
+  title: "LIVE full-brain on-tank (reflex + deliberation + real bridge/camera/LocalAI)"
+  safety: med
+  action: {mode: full, fakes: false, task: "Drive forward slowly, then stop.", duration_s: 20}
+  observe:
+    expected: "With the real components (bridge socket + camera + LocalAI), set a task and watch the brain: the deliberation loop proposes an action, the reflex loop is the sole bridge writer, and the tank moves (clamped to the AI profile) then stops. This is the end-to-end Phase 2 integration check."
+    auto:
+      - path: reply.ok
+        eq: true
+      - path: reply.final_stop_sent
+        eq: true
