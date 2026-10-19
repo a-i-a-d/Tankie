@@ -209,7 +209,7 @@ footer{margin-top:26px;color:var(--muted);font-size:12px;}
     <div class="field"><label>Import task file (JSONL)</label>
       <input type="file" id="task-import-file" accept=".jsonl,.json,.txt"></div>
     <button id="btn-task-export" class="small">Export all tasks (JSONL)</button>
-    <span class="muted">Tasks live in this browser&rsquo;s localStorage (scratch) and as an exportable task file (the shareable artifact, issue #125).</span>
+    <span class="muted">Tasks live in this browser&rsquo;s localStorage (scratch) and as an exportable task file (the shareable artifact, issue #125). To commit a task to the repo, press &ldquo;commit&rdquo; and copy the command (issue #127).</span>
   </div>
   <div id="saved-tests" class="runs"><span class="muted">No saved tests. Fill the task editor above and press &ldquo;Save test&rdquo;.</span></div>
 </div>
@@ -594,6 +594,17 @@ footer{margin-top:26px;color:var(--muted);font-size:12px;}
     return { ok: true, error: null, bytes: bytes };
   }
 
+  // --- commit to repo (issue #127: display + copy only) ---------------------
+
+  // The exact command that commits a saved task to the repo (issue #127).
+  // submit_test.py validates with vlm_bench._load_tasks() and does the
+  // git add/commit; the UI only shows + copies it (a file:// page cannot
+  // launch a local process).
+  function taskSubmitCommand(name) {
+    const safe = String(name == null ? '' : name).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'task';
+    return 'python3 tools/vlm-benchmark/submit_test.py ' + safe;
+  }
+
   // --- record (issue #125: store the image bytes) ---------------------------
 
   function buildRecord(opts) {
@@ -645,6 +656,7 @@ footer{margin-top:26px;color:var(--muted);font-size:12px;}
     taskToFile: taskToFile,
     parseTaskFile: parseTaskFile,
     checkImageSize: checkImageSize,
+    taskSubmitCommand: taskSubmitCommand,
   };
 
   if (typeof globalThis !== 'undefined') globalThis.TankieBenchUI = api;
@@ -1006,6 +1018,34 @@ footer{margin-top:26px;color:var(--muted);font-size:12px;}
     const line = M.taskToFile(t);
     download('tasks-' + safeName(t.name) + '.jsonl', line + '\n', 'application/x-ndjson');
   }
+  // ---- commit to repo (issue #127: display + copy the command only) --------
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(() => true, () => fallbackCopy(text));
+    }
+    return Promise.resolve(fallbackCopy(text));
+  }
+  function fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.remove();
+    return ok;
+  }
+  function toggleCommit(i) {
+    const box = $('gitcmd-' + i);
+    if (box) box.hidden = !box.hidden;
+  }
+  function copyCommand(i) {
+    const saved = loadJSON(LS_TESTS, []);
+    const t = saved[i]; if (!t) return;
+    copyText(M.taskSubmitCommand(t.name)).then((ok) => {
+      const note = $('copynote-' + i);
+      if (note) { note.hidden = !ok; setTimeout(() => { if (note) note.hidden = true; }, 2000); }
+    });
+  }
   function exportAllTasks() {
     const saved = loadJSON(LS_TESTS, []);
     if (!saved.length) { $('ct-result').innerHTML = '<span class="err">No saved tasks to export.</span>'; return; }
@@ -1115,7 +1155,12 @@ footer{margin-top:26px;color:var(--muted);font-size:12px;}
         + '<div class="task-expected"><span class="lbl">expected</span>' + exp + '</div>'
         + '<div class="acts"><button class="small" data-saved="' + i + '">load</button>'
         + '<button class="small" data-saved-export="' + i + '">export</button>'
-        + '<button class="small danger" data-unsaved="' + i + '">delete</button></div></div>';
+        + '<button class="small" data-saved-commit="' + i + '">commit</button>'
+        + '<button class="small danger" data-unsaved="' + i + '">delete</button></div>'
+        + '<div class="gitcmd" hidden id="gitcmd-' + i + '"><span class="lbl">commit this task to the repo (run from a checkout of the repo, issue #127)</span>'
+        + '<code>' + esc(M.taskSubmitCommand(t.name)) + '</code>'
+        + '<div class="acts" style="margin-top:6px"><button class="small" data-copied="' + i + '">copy command</button>'
+        + '<span class="muted" id="copynote-' + i + '" hidden>copied</span></div></div></div>';
     }).join('');
   }
   function loadTest(i) {
@@ -1215,6 +1260,10 @@ footer{margin-top:26px;color:var(--muted);font-size:12px;}
       const del = e.target.closest('button[data-unsaved]');
       if (load) { loadTest(Number(load.getAttribute('data-saved'))); window.scrollTo({ top: 0, behavior: 'smooth' }); }
       if (expt) exportTask(Number(expt.getAttribute('data-saved-export')));
+      const comm = e.target.closest('button[data-saved-commit]');
+      if (comm) toggleCommit(Number(comm.getAttribute('data-saved-commit')));
+      const cpy = e.target.closest('button[data-copied]');
+      if (cpy) copyCommand(Number(cpy.getAttribute('data-copied')));
       if (del) {
         const saved = loadJSON(LS_TESTS, []);
         saved.splice(Number(del.getAttribute('data-unsaved')), 1);

@@ -178,12 +178,15 @@ jobs:
       - name: py_compile the VLM-benchmark scripts (stdlib only)
         run: |
           python -m py_compile tools/vlm-benchmark/vlm_bench.py \
-            tools/vlm-benchmark/scene_gen.py tools/vlm-benchmark/report.py
-      - name: Run the offline VLM-benchmark harness (issue #81, #90)
+            tools/vlm-benchmark/scene_gen.py tools/vlm-benchmark/report.py \
+            tools/vlm-benchmark/submit_test.py
+      - name: Run the offline VLM-benchmark harness (issue #81, #90, #126, #127)
         # tools/vlm-benchmark is pure stdlib (no pip install). The harness
         # verifies scene generation, report.py recommendation + --json, PNG
-        # validity, and the dynamic UI's core logic (section 18, Node) -
-        # no LocalAI server / network needed.
+        # validity, the dynamic UI's core logic (section 18, Node), runner
+        # --tasks-file (section 19), and submit_test.py incl. an end-to-end
+        # commit in a throwaway git repo (section 20) - no LocalAI server /
+        # network needed.
         run: python tests/vlm_bench_harness.py
 
   firmware-build:

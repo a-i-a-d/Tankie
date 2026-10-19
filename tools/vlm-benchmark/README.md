@@ -20,6 +20,8 @@ Scenes are **generated on the fly** (pure-stdlib PNG encoder in `scene_gen.py`)
 | `scene_gen.py`  | synthetic scene generator (pure-stdlib PNG encoder)  |
 | `report.py`     | JSONL → text/Markdown/HTML/JSON report + recommendation |
 | `benchmark-ui.html` | dynamic browser frontend: load runs, compare, custom tests (issue #90) |
+| `submit_test.py`  | `git_submit_test` helper: validate + commit a task to `tasks/` (issue #127) |
+| `tasks/`          | committed tasks (JSONL, one per file; tracked)               |
 | `results/`      | new benchmark runs (JSONL records; git-ignored)      |
 | `results/baseline-*.jsonl` | tracked baselines (committed)                  |
 | `results/old/`  | superseded / historical runs (kept for reference)    |
@@ -117,8 +119,9 @@ The custom-test form is a **task editor**: it adds a **Name** field and an
   (falls back to the built-in `EXPECTED`), so a human can tune it to real
   model behaviour.
 
-> Follow-ups: committing web-UI-created tests to the repo (+ showing the
-> `git add/commit` command in the UI) → **#127**.
+> Committing web-UI-created tests to the repo (+ showing the
+> `git add/commit` command in the UI) → **implemented in #127** (see
+> `submit_test.py` below).
 
 ### Runner task files (issue #126)
 
@@ -139,8 +142,37 @@ python3 tools/vlm-benchmark/vlm_bench.py --models a,b --tasks-file tasks-my-test
   `--models`, no server). Malformed lines are skipped with a warning; a missing
   or empty file fails fast (exit 2).
 
-> Follow-up: committing web-UI-created tests to the repo (+ showing the
-> `git add/commit` command in the UI) → **#127**.
+> Committing web-UI-created tests to the repo (+ showing the
+> `git add/commit` command in the UI) → **implemented in #127** (see
+> `submit_test.py` below).
+
+### Commit a task to the repo (issue #127)
+
+`submit_test.py` is the `git_submit_test` helper: it takes a task **name** (or
+a path to an exported `tasks-<name>.jsonl`), **validates** it with the
+runner's own `vlm_bench._load_tasks()` (so a committed task is guaranteed to
+load with `--tasks-file`), copies it to the canonical
+`tools/vlm-benchmark/tasks/<name>.jsonl`, then runs `git add` + `git commit`
+(optionally `git push`). Every command it runs is printed.
+
+```bash
+python3 tools/vlm-benchmark/submit_test.py red-circle-detect
+python3 tools/vlm-benchmark/submit_test.py tasks-red-circle-detect.jsonl   # or a file path
+python3 tools/vlm-benchmark/submit_test.py red-circle-detect --message "my custom message"
+python3 tools/vlm-benchmark/submit_test.py red-circle-detect --push
+python3 tools/vlm-benchmark/submit_test.py red-circle-detect --dry-run     # validate + print only
+```
+
+- Re-submitting an unchanged task is a **no-op** (idempotent); a changed task
+  gets an `update task` commit. The default message is
+  `vlm-bench: add task <name>` / `vlm-bench: update task <name>`; `--message`
+  overrides it.
+- The web UI's **Saved tests** panel has a **commit** button per task that
+  shows + copies the exact command (a `file://` page cannot run git itself).
+- Committed `tasks/*.jsonl` are guarded in CI: the harness (section 20)
+  verifies every one of them passes `_load_tasks`, and `submit_test.py` is
+  tested end-to-end (add / idempotent / update / custom message) in a
+  throwaway git repo.
 
 The UI's pure logic (parse / stats / aggregate / rank / compare / grade /
 chat-request shape) is exercised offline in CI by harness section 18, which
