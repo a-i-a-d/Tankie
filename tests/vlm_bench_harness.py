@@ -998,6 +998,47 @@ out.recommend = M.recommend(agg);
 out.agg = { models: Object.keys(agg).sort(), m1_pr: agg.M1.overall.pass_rate,
   m1_lat: agg.M1.overall.lat_med, m1_err: agg.M1.overall.errors,
   m2_pr: agg.M2.overall.pass_rate, m2_lat: agg.M2.overall.lat_med, m2_err: agg.M2.overall.errors };
+// --- issue #125: task images + task file + expected override ---
+out.sceneKeys = Object.keys(M.SCENES).sort();
+out.sceneLens = {};
+for (const k of Object.keys(M.SCENES)) out.sceneLens[k] = M.SCENES[k].length;
+out.sceneFor = {
+  detect: M.sceneFor('detect','').length,
+  sequence: M.sceneFor('sequence','').length,
+  drive_left: M.sceneFor('drive','left').length,
+  custom: M.sceneFor('custom',''),
+};
+out.recInline = M.recordImages({ task:'custom', images:['data:image/png;base64,AAA'] });
+out.recScene = M.recordImages({ task:'detect', variant:'' }).length;
+out.recNone = M.recordImages({ task:'custom', variant:'' });
+out.maxBytes = M.MAX_IMAGE_BYTES;
+function mkDataUrl(nBytes){ const pad = Math.ceil(nBytes/3)*4; return 'data:image/png;base64,' + 'A'.repeat(pad); }
+out.chk = {
+  ok: M.checkImageSize(mkDataUrl(100*1024)),
+  over: M.checkImageSize(mkDataUrl(300*1024)),
+  bad: M.checkImageSize('not-a-dataurl'),
+};
+const rec125 = M.buildRecord({ base:'http://x', model:'m', task:'custom', variant:'',
+  images:['data:image/png;base64,AAA','data:image/png;base64,BBB'], max_tokens:500, prompt:'P',
+  http:200, content:'{}', reasoning:null, parsed:{}, error:null,
+  grade:{valid_json:false,required_keys:false,semantic:false}, t0:Date.now()-1000 });
+out.rec125 = { images: rec125.images, n_images: rec125.n_images };
+const task125 = { name:'red-circle-detect', model:'m', task:'detect', variant:'', prompt:'P',
+  images:['data:image/png;base64,AAA'], max_tokens:500, json_mode:true,
+  expected:{objects:['circle','square']}, ts:'2026-10-18T00:00:00Z' };
+out.fileLine = M.taskToFile(task125);
+const pt125 = M.parseTaskFile(out.fileLine + '\n\nnot-json\n');
+out.parse125 = { tasks: pt125.tasks.length, malformed: pt125.malformed,
+  name: pt125.tasks[0] ? pt125.tasks[0].name : null,
+  exp: pt125.tasks[0] ? pt125.tasks[0].expected : null };
+const base125 = { error:null, parsed:{objects:[{label:'red circle'},{label:'blue square'}]} };
+out.ovr = {
+  detect_def: M.grade('detect','',base125).semantic,
+  detect_ovr_bad: M.grade('detect','',base125, {detect:{objects:['circle','triangle']}}).semantic,
+  detect_ovr_ok: M.grade('detect','',base125, {detect:{objects:['circle','square']}}).semantic,
+  drive_ovr_ok: M.grade('drive','left',{error:null,parsed:{action:'forward',steer:5}}, {drive:{left:{action:['forward'],steer_min:0}}}).semantic,
+  drive_def_fail: M.grade('drive','left',{error:null,parsed:{action:'forward',steer:5}}).semantic,
+};
 console.log(JSON.stringify(out));
 """
             js_path = os.path.join(_tmp18.mkdtemp(), "ui_runner.js")
@@ -1123,6 +1164,47 @@ console.log(JSON.stringify(out));
                           and out["agg"]["m1_lat"] == py_m1["lat_med"]
                           and out["agg"]["m1_err"] == py_m1["errors"],
                           f"js={out['agg']} py={py_m1}")
+
+                    # --- issue #125: task images + task file + expected override ---
+                    check("18 SCENES has 5 keys",
+                          out["sceneKeys"] == ["detect", "drive/center", "drive/clear", "drive/left", "sequence"],
+                          str(out["sceneKeys"]))
+                    check("18 SCENES detect=1 img", out["sceneLens"]["detect"] == 1, str(out["sceneLens"]))
+                    check("18 SCENES sequence=4 imgs", out["sceneLens"]["sequence"] == 4, str(out["sceneLens"]))
+                    check("18 SCENES drive/center=1 img", out["sceneLens"]["drive/center"] == 1, str(out["sceneLens"]))
+                    check("18 sceneFor detect=1", out["sceneFor"]["detect"] == 1, str(out["sceneFor"]))
+                    check("18 sceneFor sequence=4", out["sceneFor"]["sequence"] == 4, str(out["sceneFor"]))
+                    check("18 sceneFor drive/left=1", out["sceneFor"]["drive_left"] == 1, str(out["sceneFor"]))
+                    check("18 sceneFor custom=[]", out["sceneFor"]["custom"] == [], str(out["sceneFor"]["custom"]))
+                    check("18 recordImages inline",
+                          out["recInline"] == ["data:image/png;base64,AAA"], str(out["recInline"]))
+                    check("18 recordImages scene fallback=1", out["recScene"] == 1, str(out["recScene"]))
+                    check("18 recordImages none=[]", out["recNone"] == [], str(out["recNone"]))
+                    check("18 MAX_IMAGE_BYTES=200KB", out["maxBytes"] == 200 * 1024, str(out["maxBytes"]))
+                    chk = out["chk"]
+                    check("18 checkImageSize ok (100KB)",
+                          chk["ok"]["ok"] is True and chk["ok"]["bytes"] > 100 * 1024, str(chk["ok"]))
+                    check("18 checkImageSize over (300KB)", chk["over"]["ok"] is False, str(chk["over"]))
+                    check("18 checkImageSize bad url", chk["bad"]["ok"] is False, str(chk["bad"]))
+                    r125 = out["rec125"]
+                    check("18 buildRecord stores images (2)",
+                          r125["images"] == ["data:image/png;base64,AAA", "data:image/png;base64,BBB"], str(r125))
+                    check("18 buildRecord n_images=2", r125["n_images"] == 2, str(r125))
+                    check("18 taskToFile has name+expected",
+                          '"red-circle-detect"' in out["fileLine"] and '"expected"' in out["fileLine"],
+                          out["fileLine"][:120])
+                    p125 = out["parse125"]
+                    check("18 parseTaskFile tasks=1", p125["tasks"] == 1, str(p125))
+                    check("18 parseTaskFile malformed=1", p125["malformed"] == 1, str(p125))
+                    check("18 parseTaskFile name round-trip", p125["name"] == "red-circle-detect", str(p125))
+                    check("18 parseTaskFile expected round-trip",
+                          p125["exp"] == {"objects": ["circle", "square"]}, str(p125))
+                    ovr = out["ovr"]
+                    check("18 grade detect default semantic=true", ovr["detect_def"] is True, str(ovr))
+                    check("18 grade detect override (triangle) semantic=false", ovr["detect_ovr_bad"] is False, str(ovr))
+                    check("18 grade detect override (circle+square) semantic=true", ovr["detect_ovr_ok"] is True, str(ovr))
+                    check("18 grade drive override (steer_min=0) semantic=true", ovr["drive_ovr_ok"] is True, str(ovr))
+                    check("18 grade drive default (steer_min=20) semantic=false", ovr["drive_def_fail"] is False, str(ovr))
     
     print()
     print(f"{'=' * 40}")

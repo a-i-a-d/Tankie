@@ -82,6 +82,38 @@ browser — no server required.
   `vlm_bench.py` schema (so `report.py` can report on them too) or imported
   back. Saved tests persist in the browser's `localStorage`.
 
+### Task editor + task file (issue #125)
+
+The custom-test form is a **task editor**: it adds a **Name** field and an
+**Expected answer** (JSON) field, and it **persists the image(s)** — so a
+"task" is a self-contained `name` + `model` + `task`/`variant` + `prompt` +
+`images` + `expected` bundle.
+
+- **Goal 1 — see the image.** Result records now store the image bytes
+  (`images: [dataURL, …]`) and the detail drawer renders them. For the
+  built-in `detect`/`sequence`/`drive` tasks the 8 deterministic scene PNGs
+  are embedded in the HTML, so *existing* runner baselines (which store no
+  image bytes) also show their scene in the drawer.
+- **Goal 2 — task editor.** Name + expected + images are all captured; the
+  saved-task list shows a thumbnail, the expected answer, and **load /
+  export / delete** per task.
+- **Goal 3 — save tasks.** Tasks live in two places:
+  - **localStorage** (scratch, this browser) — capped at **10 tasks** (the
+    ~5 MB origin budget, since each task can carry a ~200 KB image).
+  - **task file** (the shareable artifact) — export all (or one) task(s) as
+    **JSONL** (`tasks-<name>.jsonl`), and import a task file back. This is
+    pure text (no binary assets) and the file the runner will `--tasks-file`
+    load in **#126**.
+- **Image cap.** Uploads are capped at **200 KB per image** (~2× a worst-case
+  640×480 camera JPEG); larger files are rejected with a clear message.
+- **Expected answer (Q4=b).** Grading uses the task's `expected` when set
+  (falls back to the built-in `EXPECTED`), so a human can tune it to real
+  model behaviour.
+
+> Follow-ups: runner `--tasks-file` support → **#126**; committing
+> web-UI-created tests to the repo (+ showing the `git add/commit` command in
+> the UI) → **#127**.
+
 The UI's pure logic (parse / stats / aggregate / rank / compare / grade /
 chat-request shape) is exercised offline in CI by harness section 18, which
 runs the real inline `<script>` in a Node VM sandbox — no browser, no network.
