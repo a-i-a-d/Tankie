@@ -618,7 +618,7 @@ def main() -> int:
         sleeps = []
         def fake_attempt_settle(base, key, model, task, variant,
                                 timeout_s, max_tokens, use_json_mode=True,
-                                phase="test"):
+                                phase="test", **kwargs):
             if phase == "test":  # ignore the warmup call for the order check
                 order.append(model)
             return {"http": 200, "elapsed_s": 0.01, "error": None,
@@ -690,7 +690,7 @@ def main() -> int:
         order17 = []
         def fake_attempt17(base, key, model, task, variant,
                            timeout_s, max_tokens, use_json_mode=True,
-                           phase="test"):
+                           phase="test", **kwargs):
             order17.append((model, task, variant, phase))
             return {"http": 200, "elapsed_s": 0.01, "error": None,
                     "content": "{}", "parsed": {},
@@ -738,7 +738,7 @@ def main() -> int:
         order17n = []
         def fake_attempt17n(base, key, model, task, variant,
                             timeout_s, max_tokens, use_json_mode=True,
-                            phase="test"):
+                            phase="test", **kwargs):
             order17n.append((model, phase))
             return {"http": 200, "elapsed_s": 0.01, "error": None,
                     "content": "{}", "parsed": {},
@@ -758,7 +758,7 @@ def main() -> int:
         # 17d: warmup error is NOT fatal -- test calls still run.
         def fake_attempt17e(base, key, model, task, variant,
                             timeout_s, max_tokens, use_json_mode=True,
-                            phase="test"):
+                            phase="test", **kwargs):
             if phase == "warmup":
                 return {"http": 500, "elapsed_s": 2.0,
                         "error": "HTTP 500: could not load model", "content": None,
@@ -1039,6 +1039,15 @@ out.ovr = {
   drive_ovr_ok: M.grade('drive','left',{error:null,parsed:{action:'forward',steer:5}}, {drive:{left:{action:['forward'],steer_min:0}}}).semantic,
   drive_def_fail: M.grade('drive','left',{error:null,parsed:{action:'forward',steer:5}}).semantic,
 };
+// issue #126: a record that STORES its expected (task-file sourced) is graded
+// against it without an explicit override -- the path the runner relies on.
+out.ovrRec = {
+  detect_rec_bad: M.grade('detect','', {error:null, parsed:{objects:[{label:'red circle'},{label:'blue square'}]}, expected:{detect:{objects:['circle','triangle']}}}).semantic,
+  detect_rec_ok: M.grade('detect','', {error:null, parsed:{objects:[{label:'red circle'},{label:'blue square'}]}, expected:{detect:{objects:['circle','square']}}}).semantic,
+  drive_rec_ok: M.grade('drive','left', {error:null, parsed:{action:'forward',steer:5}, expected:{drive:{left:{action:['forward'],steer_min:0}}}}).semantic,
+  drive_rec_fail: M.grade('drive','left', {error:null, parsed:{action:'forward',steer:5}, expected:{drive:{left:{action:['forward'],steer_min:20}}}}).semantic,
+  seq_rec_ok: M.grade('sequence','', {error:null, parsed:{moving:'square',direction:'right'}, expected:{sequence:{moving:'square',direction:'right'}}}).semantic,
+};
 console.log(JSON.stringify(out));
 """
             js_path = os.path.join(_tmp18.mkdtemp(), "ui_runner.js")
@@ -1199,13 +1208,181 @@ console.log(JSON.stringify(out));
                     check("18 parseTaskFile name round-trip", p125["name"] == "red-circle-detect", str(p125))
                     check("18 parseTaskFile expected round-trip",
                           p125["exp"] == {"objects": ["circle", "square"]}, str(p125))
+                    # --- issue #126: JS grade(rec.expected) == Python _grade(expected) ---
+                    ovrRec = out["ovrRec"]
+                    _py = _vb18._grade
+                    check("18 JS rec.expected detect (triangle) == Python False",
+                          ovrRec["detect_rec_bad"] is False
+                          and _py("detect", "", {"error": None, "parsed": {"objects": [{"label": "red circle"}, {"label": "blue square"}]}},
+                                 {"detect": {"objects": ["circle", "triangle"]}})["semantic"] is False, str(ovrRec))
+                    check("18 JS rec.expected detect (circle+square) == Python True",
+                          ovrRec["detect_rec_ok"] is True
+                          and _py("detect", "", {"error": None, "parsed": {"objects": [{"label": "red circle"}, {"label": "blue square"}]}},
+                                 {"detect": {"objects": ["circle", "square"]}})["semantic"] is True, str(ovrRec))
+                    check("18 JS rec.expected drive (steer_min=0) == Python True",
+                          ovrRec["drive_rec_ok"] is True
+                          and _py("drive", "left", {"error": None, "parsed": {"action": "forward", "steer": 5}},
+                                 {"drive": {"left": {"action": ["forward"], "steer_min": 0}}})["semantic"] is True, str(ovrRec))
+                    check("18 JS rec.expected drive (steer_min=20) == Python False",
+                          ovrRec["drive_rec_fail"] is False
+                          and _py("drive", "left", {"error": None, "parsed": {"action": "forward", "steer": 5}},
+                                 {"drive": {"left": {"action": ["forward"], "steer_min": 20}}})["semantic"] is False, str(ovrRec))
+                    check("18 JS rec.expected sequence == Python True",
+                          ovrRec["seq_rec_ok"] is True
+                          and _py("sequence", "", {"error": None, "parsed": {"moving": "square", "direction": "right"}},
+                                 {"sequence": {"moving": "square", "direction": "right"}})["semantic"] is True, str(ovrRec))
                     ovr = out["ovr"]
                     check("18 grade detect default semantic=true", ovr["detect_def"] is True, str(ovr))
                     check("18 grade detect override (triangle) semantic=false", ovr["detect_ovr_bad"] is False, str(ovr))
                     check("18 grade detect override (circle+square) semantic=true", ovr["detect_ovr_ok"] is True, str(ovr))
                     check("18 grade drive override (steer_min=0) semantic=true", ovr["drive_ovr_ok"] is True, str(ovr))
                     check("18 grade drive default (steer_min=20) semantic=false", ovr["drive_def_fail"] is False, str(ovr))
-    
+
+    # 19. runner --tasks-file (issue #126): load + validate a JSONL task file,
+    #     grade against its expected (authoritative), --dry-run offline, and
+    #     the JS==Python expected-override cross-check.
+    print("19. runner --tasks-file (issue #126)")
+    try:
+        import importlib
+        import tempfile
+        import vlm_bench as vb19
+        importlib.reload(vb19)
+
+        # 19a: --tasks-file flag is present in --help.
+        r = run([sys.executable, os.path.join(TOOLS, "vlm_bench.py"), "--help"])
+        help19 = r.stdout
+        check("19 --tasks-file in --help", r.returncode == 0 and "--tasks-file" in help19, help19[:120])
+
+        # 19b: _expected_for returns the task-shaped expected for built-in
+        # tasks, None for custom.
+        check("19 _expected_for detect", vb19._expected_for("detect", "") == {"detect": {"objects": ["circle", "square"]}}, str(vb19._expected_for("detect", "")))
+        check("19 _expected_for sequence", vb19._expected_for("sequence", "") == {"sequence": {"moving": "square", "direction": "right"}}, str(vb19._expected_for("sequence", "")))
+        check("19 _expected_for drive/left", vb19._expected_for("drive", "left") == {"drive": {"left": {"action": ["forward", "right"], "steer_min": 20}}}, str(vb19._expected_for("drive", "left")))
+        check("19 _expected_for custom -> None", vb19._expected_for("custom", "") is None, str(vb19._expected_for("custom", "")))
+
+        # 19c: _grade honours an expected override (authoritative) and falls
+        # back to the built-in defaults when absent.
+        rec_det = {"error": None, "parsed": {"objects": [{"label": "red circle"}, {"label": "green square"}]}}
+        check("19 _grade detect default semantic", vb19._grade("detect", "", rec_det)["semantic"] is True, str(vb19._grade("detect", "", rec_det)))
+        check("19 _grade detect override (circle+square) semantic",
+              vb19._grade("detect", "", rec_det, {"detect": {"objects": ["circle", "square"]}})["semantic"] is True, "")
+        check("19 _grade detect override (circle+triangle) NOT semantic",
+              vb19._grade("detect", "", rec_det, {"detect": {"objects": ["circle", "triangle"]}})["semantic"] is False, "")
+        rec_drv = {"error": None, "parsed": {"action": "forward", "steer": 5}}
+        check("19 _grade drive default (steer_min=20) NOT semantic", vb19._grade("drive", "left", rec_drv)["semantic"] is False, "")
+        check("19 _grade drive override (steer_min=0) semantic",
+              vb19._grade("drive", "left", rec_drv, {"drive": {"left": {"action": ["forward"], "steer_min": 0}}})["semantic"] is True, "")
+        rec_seq = {"error": None, "parsed": {"moving": "square", "direction": "right"}}
+        check("19 _grade sequence default semantic", vb19._grade("sequence", "", rec_seq)["semantic"] is True, "")
+        check("19 _grade sequence override (direction=left) NOT semantic",
+              vb19._grade("sequence", "", rec_seq, {"sequence": {"moving": "square", "direction": "left"}})["semantic"] is False, "")
+
+        # 19d: _task_payloads builds image_url payloads from data-URLs.
+        pl = vb19._task_payloads(["data:image/png;base64,AAA"])
+        check("19 _task_payloads shape", pl == [{"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}}], str(pl))
+        check("19 _task_payloads empty", vb19._task_payloads([]) == [], str(vb19._task_payloads([])))
+
+        # 19e: _load_tasks normalizes + validates a JSONL task file.
+        tmp19 = tempfile.mkdtemp()
+        tf = os.path.join(tmp19, "tasks.jsonl")
+        with open(tf, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"name": "t1", "task": "detect", "prompt": "P1",
+                                 "images": ["data:image/png;base64,AAA"],
+                                 "expected": {"detect": {"objects": ["circle"]}},
+                                 "max_tokens": 100, "json_mode": True}) + "\n")
+            fh.write("\n")  # blank -> skipped
+            fh.write("not-json\n")  # malformed
+            fh.write(json.dumps({"prompt": "   "}) + "\n")  # empty prompt -> malformed
+            fh.write(json.dumps({"name": "t2", "task": "custom", "prompt": "P2"}) + "\n")
+            fh.write(json.dumps({"name": "t3", "task": "bogus", "prompt": "P3"}) + "\n")  # unknown -> custom
+        tasks19, malformed19 = vb19._load_tasks(tf)
+        check("19 _load_tasks 3 usable", len(tasks19) == 3, f"got {len(tasks19)}")
+        check("19 _load_tasks 2 malformed", malformed19 == 2, f"got {malformed19}")
+        check("19 task t1 kind=detect", tasks19[0]["kind"] == "detect", str(tasks19[0]))
+        check("19 task t1 images preserved", tasks19[0]["images"] == ["data:image/png;base64,AAA"], str(tasks19[0]["images"]))
+        check("19 task t1 expected preserved", tasks19[0]["expected"] == {"detect": {"objects": ["circle"]}}, str(tasks19[0]["expected"]))
+        check("19 task t1 max_tokens=100", tasks19[0]["max_tokens"] == 100, str(tasks19[0]["max_tokens"]))
+        check("19 task t2 kind=custom expected=None", tasks19[1]["kind"] == "custom" and tasks19[1]["expected"] is None, str(tasks19[1]))
+        check("19 task t3 unknown kind -> custom", tasks19[2]["kind"] == "custom", str(tasks19[2]))
+
+        # 19f: --dry-run --tasks-file works OFFLINE (no --models, no server).
+        r = run([sys.executable, os.path.join(TOOLS, "vlm_bench.py"),
+                 "--dry-run", "--tasks-file", tf])
+        check("19 dry-run --tasks-file exit 0", r.returncode == 0, r.stderr[:200])
+        check("19 dry-run prints task names", "t1" in r.stdout and "t2" in r.stdout and "t3" in r.stdout, r.stdout[:200])
+        check("19 dry-run reports image count", "1 image(s)" in r.stdout, r.stdout[:200])
+        check("19 dry-run warns on malformed", "malformed task line" in r.stdout, r.stdout[:200])
+
+        # 19g: missing / empty task file -> fail fast (exit 2), no silent no-op.
+        r = run([sys.executable, os.path.join(TOOLS, "vlm_bench.py"),
+                 "--dry-run", "--tasks-file", os.path.join(tmp19, "nope.jsonl")])
+        check("19 missing task file -> exit 2", r.returncode == 2, f"rc={r.returncode} {r.stderr[:120]}")
+        ef = os.path.join(tmp19, "empty.jsonl")
+        with open(ef, "w", encoding="utf-8") as fh:
+            fh.write("not-json\n\n")
+        r = run([sys.executable, os.path.join(TOOLS, "vlm_bench.py"),
+                 "--dry-run", "--tasks-file", ef])
+        check("19 empty task file -> exit 2", r.returncode == 2, f"rc={r.returncode} {r.stderr[:120]}")
+
+        # 19h: built-in --dry-run is unchanged (no task file).
+        r = run([sys.executable, os.path.join(TOOLS, "vlm_bench.py"), "--dry-run"])
+        check("19 built-in dry-run unchanged", r.returncode == 0 and "DRY-RUN detect" in r.stdout, r.stdout[:120])
+
+        # 19i: execution path uses the task's prompt/images/expected and stores
+        # them on the record (verified by faking _attempt to capture the args).
+        import vlm_bench as vb19x
+        importlib.reload(vb19x)
+        captured = {}
+        def fake_attempt19(base, key, model, task, variant,
+                           timeout_s, max_tokens, use_json_mode=True,
+                           phase="test", prompt=None, payloads=None,
+                           expected=None, name=None, **kwargs):
+            if phase == "test" and "prompt" not in captured:  # capture the FIRST task (t1)
+                captured["prompt"] = prompt
+                captured["payloads"] = payloads
+                captured["expected"] = expected
+                captured["name"] = name
+                captured["max_tokens"] = max_tokens
+                captured["use_json_mode"] = use_json_mode
+                captured["task"] = task
+                captured["variant"] = variant
+            return {"http": 200, "elapsed_s": 0.01, "error": None,
+                    "content": "{}", "parsed": {},
+                    "grade": {"valid_json": True, "required_keys": True, "semantic": True},
+                    "model": model, "task": task, "variant": variant, "phase": phase,
+                    "name": name, "expected": expected, "prompt": prompt}
+        tmp19r = os.path.join(tmp19, "results.jsonl")
+        orig19 = vb19x._attempt
+        vb19x._attempt = fake_attempt19
+        try:
+            rc19 = vb19x.main(["--models", "m1", "--tasks-file", tf,
+                               "--no-warmup", "--settle", "0", "--out", tmp19r])
+        finally:
+            vb19x._attempt = orig19
+        check("19 run --tasks-file exit 0", rc19 == 0, f"rc={rc19}")
+        check("19 used task prompt", captured.get("prompt") == "P1", str(captured.get("prompt")))
+        check("19 used task image payload",
+              captured.get("payloads") == [{"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}}],
+              str(captured.get("payloads")))
+        check("19 used task expected (authoritative)",
+              captured.get("expected") == {"detect": {"objects": ["circle"]}}, str(captured.get("expected")))
+        check("19 used task max_tokens", captured.get("max_tokens") == 100, str(captured.get("max_tokens")))
+        check("19 record stores name", captured.get("name") == "t1", str(captured.get("name")))
+        with open(tmp19r, encoding="utf-8") as fh:
+            recs19 = [json.loads(l) for l in fh if l.strip()]
+        # 3 tasks (t1 detect, t2 custom, t3 custom) x 1 model, no warmup.
+        check("19 wrote 3 test records", len(recs19) == 3, f"got {len(recs19)}")
+        check("19 records tagged phase=test", all(r.get("phase") == "test" for r in recs19), str([r.get("phase") for r in recs19]))
+        first = recs19[0]
+        check("19 first record task=detect name=t1", first.get("task") == "detect" and first.get("name") == "t1", str({k: first.get(k) for k in ("task", "name")}))
+        check("19 first record expected stored", first.get("expected") == {"detect": {"objects": ["circle"]}}, str(first.get("expected")))
+        check("19 first record prompt stored", first.get("prompt") == "P1", str(first.get("prompt")))
+    except Exception as e:
+        import traceback
+        check("19 section ran", False, f"{type(e).__name__}: {e}\n{traceback.format_exc()[-800:]}")
+
+    print()
+
     print()
     print(f"{'=' * 40}")
     print(f"  {passed} passed, {failed} failed")

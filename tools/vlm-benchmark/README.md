@@ -47,6 +47,13 @@ python3 tools/vlm-benchmark/vlm_bench.py --dry-run
 # skip the one-shot warmup call per model (old behaviour)
 python3 tools/vlm-benchmark/vlm_bench.py --models a,b --no-warmup
 
+# run tasks from a JSONL task file (the #125 web-UI export) instead of the
+# built-in tasks -- each line's prompt / images / expected are used (issue #126)
+python3 tools/vlm-benchmark/vlm_bench.py --models a,b --tasks-file tasks-my-test.jsonl
+
+# offline dry-run of a task file (no server, no --models needed)
+python3 tools/vlm-benchmark/vlm_bench.py --dry-run --tasks-file tasks-my-test.jsonl
+
 # generate a report from results (text to stdout, or write to file)
 python3 tools/vlm-benchmark/report.py results/old/bench-20261010-235859.jsonl
 python3 tools/vlm-benchmark/report.py results/*.jsonl --md report.md
@@ -110,9 +117,30 @@ The custom-test form is a **task editor**: it adds a **Name** field and an
   (falls back to the built-in `EXPECTED`), so a human can tune it to real
   model behaviour.
 
-> Follow-ups: runner `--tasks-file` support → **#126**; committing
-> web-UI-created tests to the repo (+ showing the `git add/commit` command in
-> the UI) → **#127**.
+> Follow-ups: committing web-UI-created tests to the repo (+ showing the
+> `git add/commit` command in the UI) → **#127**.
+
+### Runner task files (issue #126)
+
+The runner now **consumes** those task files:
+
+```bash
+python3 tools/vlm-benchmark/vlm_bench.py --models a,b --tasks-file tasks-my-test.jsonl
+```
+
+- `--tasks-file <path>` (JSONL) takes precedence over `--tasks` /
+  `--drive-variants`. Each line is a self-contained task (`name`, `task`/
+  `variant`, `prompt`, `images`, `max_tokens`, `json_mode`, `expected`).
+- The task's **`expected` is authoritative** (issue #125 Q4=b); when a task
+  omits it, the built-in default for that task kind is used — so the original
+  `detect`/`sequence`/`drive` behaviour is unchanged.
+- Records store the task's `name` + `expected` (and the images), so the web UI
+  can render + re-grade them. `--dry-run --tasks-file` works **offline** (no
+  `--models`, no server). Malformed lines are skipped with a warning; a missing
+  or empty file fails fast (exit 2).
+
+> Follow-up: committing web-UI-created tests to the repo (+ showing the
+> `git add/commit` command in the UI) → **#127**.
 
 The UI's pure logic (parse / stats / aggregate / rank / compare / grade /
 chat-request shape) is exercised offline in CI by harness section 18, which
