@@ -8,6 +8,9 @@ Fully offline — no LocalAI server, no network. Verifies:
   4. report.py --json emits valid JSON with the expected top-level keys.
   5. scene_gen.py produces valid PNGs (magic bytes + non-trivial size).
   6. _extract_answer falls back to `reasoning` when `content` is empty.
+  (plus later sections: the dynamic UI core logic, runner --tasks-file,
+  and submit_test.py -- the git_submit_test helper, incl. an end-to-end
+  commit in a throwaway git repo.)
 
 Usage:  python3 tests/vlm_bench_harness.py
 Exit 0 = all pass, 1 = failure.
@@ -40,8 +43,8 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         print(f"  [FAIL] {name}: {detail}")
 
 
-def run(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(args, capture_output=True, text=True, timeout=60)
+def run(args: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(args, capture_output=True, text=True, timeout=60, cwd=cwd)
 
 
 def main() -> int:
@@ -1380,6 +1383,166 @@ console.log(JSON.stringify(out));
     except Exception as e:
         import traceback
         check("19 section ran", False, f"{type(e).__name__}: {e}\n{traceback.format_exc()[-800:]}")
+
+    # 20. submit_test.py — the git_submit_test helper (issue #127).
+    #     Validates with vlm_bench._load_tasks(), copies to
+    #     tools/vlm-benchmark/tasks/<name>.jsonl, git add + commit (optionally
+    #     push). End-to-end tested in a THROWAWAY git repo (no network).
+    print("20. submit_test.py (git_submit_test, issue #127)")
+    import importlib as _il20
+    import shutil as _sh20
+    import tempfile as _tmp20
+
+    SUB = os.path.join(TOOLS, "submit_test.py")
+    check("20 submit_test.py present", os.path.isfile(SUB), SUB)
+    try:
+        py_compile.compile(SUB, doraise=True)
+        check("20 py_compile submit_test.py", True)
+    except py_compile.PyCompileError as e:
+        check("20 py_compile submit_test.py", False, str(e))
+
+    # 20a: --help lists the flags.
+    r = run([sys.executable, SUB, "--help"])
+    check("20 --help exit 0", r.returncode == 0, r.stderr[:120])
+    for flag in ("--message", "--push", "--dry-run"):
+        check(f"20 --help has {flag}", flag in r.stdout, r.stdout[:120])
+
+    def _taskfile(d, name, prompt):
+        import json as _j20
+        p20 = os.path.join(d, "tasks-" + name + ".jsonl")
+        with open(p20, "w", encoding="utf-8") as fh20:
+            fh20.write(_j20.dumps({"name": name, "task": "custom", "prompt": prompt,
+                                   "images": [], "expected": None}) + "\n")
+        return p20
+
+    # 20b: unknown task -> exit 2, with the tried paths on stderr.
+    tmp20 = _tmp20.mkdtemp()
+    r = run([sys.executable, SUB, "no-such-task-xyz"], cwd=tmp20)
+    check("20 unknown task -> exit 2", r.returncode == 2, f"rc={r.returncode} {r.stderr[:120]}")
+    check("20 unknown task stderr lists tried paths", "no task file found" in r.stderr, r.stderr[:200])
+
+    # 20c: file with no usable tasks -> exit 1 (validated via _load_tasks).
+    bad = os.path.join(tmp20, "tasks-bad.jsonl")
+    with open(bad, "w", encoding="utf-8") as fh20:
+        fh20.write("not-json\n\n")
+    r = run([sys.executable, SUB, bad])
+    check("20 no usable tasks -> exit 1", r.returncode == 1, f"rc={r.returncode} {r.stderr[:120]}")
+    check("20 no usable tasks message", "no usable tasks" in r.stderr, r.stderr[:200])
+
+    # 20d: --dry-run validates + prints the git commands, changes nothing.
+    _taskfile(tmp20, "dry-task", "What do you see?")
+    r = run([sys.executable, SUB, "dry-task", "--dry-run"], cwd=tmp20)
+    check("20 dry-run exit 0", r.returncode == 0, f"rc={r.returncode} {r.stderr[:120]}")
+    check("20 dry-run prints git add", "git add tools/vlm-benchmark/tasks/dry-task.jsonl" in r.stdout, r.stdout[:200])
+    check("20 dry-run prints git commit", "vlm-bench: add task dry-task" in r.stdout, r.stdout[:200])
+    check("20 dry-run creates nothing", not os.path.isdir(os.path.join(TOOLS, "tasks")), "tasks/ dir appeared")
+
+    # 20e: end-to-end in a THROWAWAY git repo (add -> idempotent -> update).
+    gitbin = _sh20.which("git")
+    check("20 git available", gitbin is not None, "git not on PATH")
+    if gitbin:
+        repo = _tmp20.mkdtemp()
+        tdir = os.path.join(repo, "tools", "vlm-benchmark")
+        os.makedirs(tdir)
+        for f20 in ("submit_test.py", "vlm_bench.py", "scene_gen.py"):
+            _sh20.copyfile(os.path.join(TOOLS, f20), os.path.join(tdir, f20))
+        env20 = dict(os.environ)
+        env20.update({"GIT_AUTHOR_NAME": "harness", "GIT_AUTHOR_EMAIL": "h@h",
+                      "GIT_COMMITTER_NAME": "harness", "GIT_COMMITTER_EMAIL": "h@h"})
+        def _git(*a):
+            subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True, text=True, env=env20)
+        _git("init", "-q", "-b", "main")
+        _git("config", "user.name", "harness")
+        _git("config", "user.email", "h@h")
+        _taskfile(repo, "e2e-task", "What do you see?")
+        SUB20 = os.path.join(tdir, "submit_test.py")
+
+        r = run([sys.executable, SUB20, "e2e-task"], cwd=repo)
+        check("20 e2e add exit 0", r.returncode == 0, f"rc={r.returncode} {r.stderr[:200]}")
+        dest20 = os.path.join(tdir, "tasks", "e2e-task.jsonl")
+        check("20 e2e file in tasks/", os.path.isfile(dest20), dest20)
+        log20 = subprocess.run(["git", "log", "--oneline"], cwd=repo, capture_output=True, text=True, env=env20).stdout
+        check("20 e2e commit message (add)", "vlm-bench: add task e2e-task" in log20, log20)
+
+        r = run([sys.executable, SUB20, "e2e-task"], cwd=repo)
+        check("20 e2e idempotent exit 0", r.returncode == 0, f"rc={r.returncode} {r.stderr[:200]}")
+        check("20 e2e idempotent no-op", "nothing to do" in r.stdout, r.stdout[:200])
+        log20 = subprocess.run(["git", "log", "--oneline"], cwd=repo, capture_output=True, text=True, env=env20).stdout
+        check("20 e2e idempotent no new commit", log20.count("vlm-bench") == 1, log20)
+
+        # update: change the prompt -> commit with a custom message.
+        with open(os.path.join(repo, "tasks-e2e-task.jsonl"), "r+", encoding="utf-8") as fh20:
+            import json as _j20
+            t20 = _j20.loads(fh20.readline())
+            t20["prompt"] = "What do you see? (v2)"
+            fh20.seek(0); fh20.truncate()
+            fh20.write(_j20.dumps(t20) + "\n")
+        r = run([sys.executable, SUB20, "e2e-task", "--message", "my custom message"], cwd=repo)
+        check("20 e2e update exit 0", r.returncode == 0, f"rc={r.returncode} {r.stderr[:200]}")
+        log20 = subprocess.run(["git", "log", "--oneline"], cwd=repo, capture_output=True, text=True, env=env20).stdout
+        check("20 e2e custom commit message", "my custom message" in log20, log20)
+        check("20 e2e two commits", log20.count("vlm-bench") == 1 and log20.count("my custom message") == 1, log20)
+
+        # --push without a remote: commit happens, then push fails (exit 1).
+        with open(os.path.join(repo, "tasks-e2e-task.jsonl"), "r+", encoding="utf-8") as fh20:
+            import json as _j20
+            t20 = _j20.loads(fh20.readline())
+            t20["prompt"] = "What do you see? (v3)"
+            fh20.seek(0); fh20.truncate()
+            fh20.write(_j20.dumps(t20) + "\n")
+        r = run([sys.executable, SUB20, "e2e-task", "--push"], cwd=repo)
+        check("20 e2e --push without remote -> exit 1", r.returncode == 1, f"rc={r.returncode} {r.stderr[:120]}")
+
+    # 20f: every committed tasks/*.jsonl must pass _load_tasks (CI guard).
+    sys.path.insert(0, TOOLS)
+    import vlm_bench as vb20
+    importlib.reload(vb20)
+    committed = []
+    if os.path.isdir(os.path.join(TOOLS, "tasks")):
+        committed = sorted(f20 for f20 in os.listdir(os.path.join(TOOLS, "tasks")) if f20.endswith(".jsonl"))
+    check("20 committed tasks all loadable",
+          all(len(vb20._load_tasks(os.path.join(TOOLS, "tasks", f20))[0]) >= 1 for f20 in committed),
+          str(committed))
+
+    # 20g: the UI exposes taskSubmitCommand + a commit button (Node VM).
+    node20 = _sh20.which("node")
+    ui20 = os.path.join(TOOLS, "benchmark-ui.html")
+    if node20 and os.path.isfile(ui20):
+        js20 = r'''
+'use strict';
+const fs = require('fs');
+const vm = require('vm');
+const html = fs.readFileSync(process.argv[2], 'utf8');
+const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+const sandbox = { console: console };
+sandbox.globalThis = sandbox;
+const ctx = vm.createContext(sandbox);
+for (const sc of scripts) {
+  try { vm.runInContext(sc, ctx); } catch (e) { /* DOM glue: expected in Node */ }
+}
+const M = sandbox.TankieBenchUI;
+const out = {
+  cmd1: M.taskSubmitCommand('red circle detect!'),
+  cmd2: M.taskSubmitCommand(''),
+  hasButton: /data-saved-commit/.test(html),
+  hasSubmitRef: /submit_test\.py/.test(html),
+};
+console.log(JSON.stringify(out));
+'''
+        js20p = os.path.join(_tmp20.mkdtemp(), "ui20.js")
+        with open(js20p, "w", encoding="utf-8") as fh20:
+            fh20.write(js20)
+        r = run([node20, js20p, ui20])
+        if r.returncode != 0:
+            check("20 UI Node run", False, f"node exit {r.returncode}: {r.stderr[:200]}")
+        else:
+            o20 = json.loads(r.stdout.strip().splitlines()[-1])
+            check("20 UI taskSubmitCommand sanitizes",
+                  o20["cmd1"] == "python3 tools/vlm-benchmark/submit_test.py red-circle-detect", str(o20))
+            check("20 UI taskSubmitCommand empty name",
+                  o20["cmd2"] == "python3 tools/vlm-benchmark/submit_test.py task", str(o20))
+            check("20 UI has commit button", o20["hasButton"] is True, str(o20))
+            check("20 UI references submit_test.py", o20["hasSubmitRef"] is True, str(o20))
 
     print()
 
