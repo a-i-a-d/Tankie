@@ -116,6 +116,67 @@ def _prompt_for(task: str) -> str:
     return {"detect": DETECT_PROMPT, "sequence": SEQUENCE_PROMPT, "drive": DRIVE_PROMPT}[task]
 
 
+def _load_tasks(path: str) -> tuple[list[dict], int]:
+    """Load tasks from a JSONL task file (issue #126).
+
+    Each line is a self-contained task definition (the shape the #125 web UI
+    exports via ``taskToFile``): ``{name, model, task, variant, prompt,
+    images:[dataURL], max_tokens, json_mode, expected, ts}``. Returns
+    ``(tasks, malformed)`` where each task is normalized to
+    ``{name, kind, variant, prompt, images, max_tokens, json_mode, expected}``
+    and ``kind`` is the task's ``task`` field (``detect``/``sequence``/
+    ``drive``/``custom``). Blank lines are skipped; malformed lines are
+    counted, not fatal. A task with no usable ``prompt`` is dropped (and
+    counted as malformed) so it can never produce an empty call.
+    """
+    tasks: list[dict] = []
+    malformed = 0
+    with open(path, encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                t = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                malformed += 1
+                continue
+            if not isinstance(t, dict):
+                malformed += 1
+                continue
+            prompt = t.get("prompt")
+            if not isinstance(prompt, str) or not prompt.strip():
+                malformed += 1
+                continue
+            kind = t.get("task") or "custom"
+            if kind not in TASKS and kind != "custom":
+                # Unknown task -> treat as custom (no built-in scene/expected).
+                kind = "custom"
+            images = t.get("images")
+            if not isinstance(images, list):
+                images = []
+            images = [u for u in images if isinstance(u, str) and u]
+            max_tokens = t.get("max_tokens")
+            if not isinstance(max_tokens, int) or max_tokens <= 0:
+                max_tokens = 500
+            tasks.append({
+                "name": t.get("name") or "",
+                "kind": kind,
+                "variant": t.get("variant") or "",
+                "prompt": prompt,
+                "images": images,
+                "max_tokens": max_tokens,
+                "json_mode": t.get("json_mode", True) is not False,
+                "expected": t.get("expected") if isinstance(t.get("expected"), dict) else None,
+            })
+    return tasks, malformed
+
+
+def _task_payloads(images: list[str]) -> list[dict]:
+    """Build image payloads from a task's inline data-URLs (issue #126)."""
+    return [{"type": "image_url", "image_url": {"url": u}} for u in images]
+
+
 def _content_text(value) -> str:
     """Normalize an OpenAI ``content``/``reasoning`` field to plain text.
 
@@ -170,22 +231,29 @@ DEFAULT_SETTLE_S = 30.0
 
 def _call(base: str, key: str, model: str, task: str, variant: str,
           timeout_s: float, max_tokens: int, max_retries: int = 1,
-          use_json_mode: bool = True) -> dict:
+          use_json_mode: bool = True, prompt: str | None = None,
+          payloads: list[dict] | None = None, expected: dict | None = None,
+          name: str | None = None) -> dict:
     """A benchmark call with a bounded retry on transient failures (L3).
 
     Retries ONLY transient HTTP 503 (LocalAI load-cooldown) -- a deterministic
     500 (model won't load), a 4xx, or a timeout is recorded as-is. ``retries``
     in the record shows how many retries were used (0 = first attempt was
     final). Never raises.
+
+    ``prompt``/``payloads``/``expected``/``name`` (issue #126): when supplied
+    (from a task file) they override the built-in scene + prompt + expected.
     """
-    rec = _attempt(base, key, model, task, variant, timeout_s, max_tokens, use_json_mode)
+    rec = _attempt(base, key, model, task, variant, timeout_s, max_tokens, use_json_mode,
+                   prompt=prompt, payloads=payloads, expected=expected, name=name)
     retries = 0
     for _ in range(max(0, max_retries)):
         http = rec.get("http")
         if not (isinstance(http, int) and http in _TRANSIENT_HTTP):
             break
         time.sleep(RETRY_DELAY_S)
-        rec = _attempt(base, key, model, task, variant, timeout_s, max_tokens, use_json_mode)
+        rec = _attempt(base, key, model, task, variant, timeout_s, max_tokens, use_json_mode,
+                       prompt=prompt, payloads=payloads, expected=expected, name=name)
         retries += 1
     rec["retries"] = retries
     return rec
@@ -193,7 +261,9 @@ def _call(base: str, key: str, model: str, task: str, variant: str,
 
 def _attempt(base: str, key: str, model: str, task: str, variant: str,
              timeout_s: float, max_tokens: int, use_json_mode: bool = True,
-             phase: str = "test") -> dict:
+             phase: str = "test", prompt: str | None = None,
+             payloads: list[dict] | None = None,
+             expected: dict | None = None, name: str | None = None) -> dict:
     """One chat/completions attempt. Returns a result record (never raises).
 
     Kept at module level (instead of inlined in ``_call``) so tests can inject
@@ -201,12 +271,20 @@ def _attempt(base: str, key: str, model: str, task: str, variant: str,
 
     ``phase`` marks the record in the results file: ``"test"`` for the graded
     benchmark calls, ``"warmup"`` for the one-shot model-load call (issue #89).
+
+    ``prompt``/``payloads``/``expected``/``name`` (issue #126): when supplied
+    (from a task file) they override the built-in scene + prompt + expected;
+    ``expected``/``name`` are stored on the record so the web UI can render +
+    re-grade it.
     """
     if phase == "warmup":
         # Q1 (issue #89): reuse the real detect scene (image included so the
         # mmproj projector is loaded too) with a short prompt + capped output.
         prompt = WARMUP_PROMPT
         payloads, n_images = _scene_payloads("detect", "")
+    elif prompt is not None and payloads is not None:
+        # issue #126: task-file task -- use its prompt + images verbatim.
+        n_images = len(payloads)
     else:
         prompt = _prompt_for(task)
         payloads, n_images = _scene_payloads(task, variant)
@@ -235,11 +313,13 @@ def _attempt(base: str, key: str, model: str, task: str, variant: str,
         "base": base, "model": model, "task": task, "variant": variant,
         "n_images": n_images, "max_tokens": max_tokens,
         "phase": phase,
+        "name": name,
         "prompt": prompt,
         "prompt_sha": hashlib.sha256(prompt.encode()).hexdigest()[:12],
         "http": None, "elapsed_s": None, "content": None, "reasoning": None,
         "parsed": None,
         "error": None,
+        "expected": expected,
     }
     try:
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
@@ -265,12 +345,36 @@ def _attempt(base: str, key: str, model: str, task: str, variant: str,
     except Exception as e:  # timeout, DNS, connection refused, ...
         rec["elapsed_s"] = round(time.time() - t0, 2)
         rec["error"] = f"{type(e).__name__}: {e}"
-    rec["grade"] = _grade(task, variant, rec)
+    rec["grade"] = _grade(task, variant, rec, expected)
     return rec
 
 
-def _grade(task: str, variant: str, rec: dict) -> dict:
-    """Grade a result record. All checks are data-driven and re-runnable."""
+def _expected_for(task: str, variant: str) -> dict | None:
+    """The task-shaped expected answer for a built-in task (issue #126).
+
+    Returns the dict the record should store under ``expected`` so the web UI
+    can render + re-grade it without re-hardcoding the answer. ``None`` for
+    ``custom`` (no built-in expected). The shape mirrors the UI's ``EXPECTED``
+    and the ``expectedOverride`` contract from issue #125 (Q4=b).
+    """
+    if task == "detect":
+        return {"detect": {"objects": list(DETECT_EXPECTED)}}
+    if task == "sequence":
+        return {"sequence": {"moving": SEQUENCE_MOVING, "direction": SEQUENCE_DIRECTION}}
+    if task == "drive":
+        return {"drive": {variant: DRIVE_EXPECTED[variant]}}
+    return None
+
+
+def _grade(task: str, variant: str, rec: dict, expected: dict | None = None) -> dict:
+    """Grade a result record. All checks are data-driven and re-runnable.
+
+    ``expected`` (issue #126) is an optional task-shaped expected answer --
+    either a task file's ``expected`` (authoritative, human-adjustable per
+    issue #125 Q4=b) or a record's stored ``expected``. When absent, the
+    built-in defaults are used, so the original detect/sequence/drive
+    behaviour is unchanged.
+    """
     g = {"valid_json": False, "required_keys": False, "semantic": False}
     if rec.get("error"):
         return g
@@ -283,18 +387,33 @@ def _grade(task: str, variant: str, rec: dict) -> dict:
         g["required_keys"] = isinstance(objs, list) and len(objs) > 0
         if g["required_keys"]:
             text = json.dumps(parsed).lower()
-            g["semantic"] = all(k in text for k in DETECT_EXPECTED)
+            if expected is not None:
+                keys = expected.get("detect", {}).get("objects")
+                g["semantic"] = isinstance(keys, list) and bool(keys) and all(k in text for k in keys)
+            else:
+                g["semantic"] = all(k in text for k in DETECT_EXPECTED)
     elif task == "sequence":
         g["required_keys"] = "moving" in parsed and "direction" in parsed
         if g["required_keys"]:
             moving = str(parsed.get("moving", "")).lower()
-            g["semantic"] = SEQUENCE_MOVING in moving and str(parsed.get("direction", "")).lower() == SEQUENCE_DIRECTION
+            direction = str(parsed.get("direction", "")).lower()
+            if expected is not None:
+                seq = expected.get("sequence", {})
+                exp_moving = seq.get("moving")
+                exp_dir = seq.get("direction")
+                g["semantic"] = bool(exp_moving) and bool(exp_dir) \
+                    and str(exp_moving).lower() in moving and direction == str(exp_dir).lower()
+            else:
+                g["semantic"] = SEQUENCE_MOVING in moving and direction == SEQUENCE_DIRECTION
     elif task == "drive":
         g["required_keys"] = "action" in parsed
         if g["required_keys"]:
-            exp = DRIVE_EXPECTED[variant]
+            if expected is not None:
+                exp = expected.get("drive", {}).get(variant) or {}
+            else:
+                exp = DRIVE_EXPECTED[variant]
             action = str(parsed.get("action", "")).lower()
-            allowed = exp["action"] if isinstance(exp["action"], list) else [exp["action"]]
+            allowed = exp["action"] if isinstance(exp.get("action"), list) else [exp.get("action")]
             ok = action in allowed
             if "steer_min" in exp:  # signed: steer must be >= this (e.g. +20 = steer right)
                 try:
@@ -444,6 +563,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-warmup", action="store_true",
                     help="skip the one-shot warmup call per model (issue #89); the first "
                          "test call then absorbs the cold model-load time")
+    ap.add_argument("--tasks-file", default=None, metavar="PATH",
+                    help="issue #126: run tasks from a JSONL task file (the #125 web-UI export) "
+                         "instead of the built-in --tasks; each line's prompt/images/expected are used")
     args = ap.parse_args(argv)
 
     tasks = [t.strip() for t in args.tasks.split(",") if t.strip()]
@@ -459,12 +581,33 @@ def main(argv: list[str] | None = None) -> int:
         if v not in DRIVE_EXPECTED:
             ap.error(f"unknown drive variant {v!r} (choose from: {', '.join(DRIVE_EXPECTED)})")
 
+    # issue #126: a task file takes precedence over --tasks / --drive-variants.
+    # It is loaded + validated up front so a missing/empty file fails fast
+    # (exit 2) instead of a silent no-op, and --dry-run can run offline.
+    file_tasks: list[dict] = []
+    if args.tasks_file:
+        if not os.path.isfile(args.tasks_file):
+            ap.error(f"--tasks-file not found: {args.tasks_file}")
+        file_tasks, malformed = _load_tasks(args.tasks_file)
+        if malformed:
+            print(f"# warning: {malformed} malformed task line(s) skipped in {args.tasks_file}")
+        if not file_tasks:
+            ap.error(f"--tasks-file {args.tasks_file} has no usable tasks (each line needs a non-empty prompt)")
+
     if args.dry_run:
-        for task in tasks:
-            for variant in (variants if task == "drive" else [""]):
-                payloads, n = _scene_payloads(task, variant)
-                print(f"DRY-RUN {task}/{variant or '-'}: {n} image(s), "
+        if args.tasks_file:
+            for t in file_tasks:
+                payloads = _task_payloads(t["images"])
+                n = len(payloads)
+                print(f"DRY-RUN {t['name'] or t['kind']}/{t['variant'] or '-'}: {n} image(s), "
+                      f"prompt {len(t['prompt'])} chars, "
                       f"payload ~{sum(len(p['image_url']['url']) for p in payloads) // 1024} KB")
+        else:
+            for task in tasks:
+                for variant in (variants if task == "drive" else [""]):
+                    payloads, n = _scene_payloads(task, variant)
+                    print(f"DRY-RUN {task}/{variant or '-'}: {n} image(s), "
+                          f"payload ~{sum(len(p['image_url']['url']) for p in payloads) // 1024} KB")
         return 0
 
     if args.list:
@@ -502,6 +645,63 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = os.path.dirname(out_path)
     if out_dir:  # a bare filename ("my-results.jsonl") has no directory part
         os.makedirs(out_dir, exist_ok=True)
+
+    if args.tasks_file:
+        n_tasks = len(file_tasks)
+        n_calls = n_tasks * len(models) * args.runs
+        n_warmup = 0 if args.no_warmup else len(models)
+        print(f"# benchmark: {len(models)} model(s) x {n_tasks} task-file task(s) x {args.runs} run(s) = {n_calls} test call(s)")
+        print(f"# warmup: {'disabled (--no-warmup)' if args.no_warmup else f'{n_warmup} model-load call(s), one per model (issue #89)'}")
+        print(f"# results -> {out_path}")
+
+        ok = 0
+        with open(out_path, "a", encoding="utf-8") as fh:
+            for i, model in enumerate(models):
+                if i > 0 and args.settle > 0:
+                    print(f"# settling {args.settle:g}s before {model} (server recovery window)", flush=True)
+                    time.sleep(args.settle)
+                # Warmup (issue #89): one cheap detect-scene call to load the
+                # model (weights + mmproj) into GPU memory. Recorded with
+                # phase="warmup", excluded from graded stats, never fatal.
+                if not args.no_warmup:
+                    rec = _attempt(args.base, args.key, model, "detect", "",
+                                   args.timeout, WARMUP_MAX_TOKENS,
+                                   use_json_mode=not args.no_json_mode,
+                                   phase="warmup")
+                    fh.write(json.dumps(rec) + "\n")
+                    fh.flush()
+                    w_status = "ok" if not rec["error"] else "err"
+                    print(f"[warmup] {model:45s} t={rec['elapsed_s']}s http={rec['http']} "
+                          f"{'| ' + rec['error'][:80] if rec['error'] else w_status}", flush=True)
+                for t in file_tasks:
+                    kind = t["kind"]
+                    variant = t["variant"]
+                    # expected: the task's own (authoritative) else the built-in
+                    # default for built-in kinds (so records stay self-contained).
+                    expected = t["expected"] if t["expected"] is not None else _expected_for(kind, variant)
+                    for run in range(1, args.runs + 1):
+                        rec = _call(args.base, args.key, model, kind, variant,
+                                   args.timeout, t["max_tokens"],
+                                   use_json_mode=t["json_mode"] and not args.no_json_mode,
+                                   prompt=t["prompt"], payloads=_task_payloads(t["images"]),
+                                   expected=expected, name=t["name"] or None)
+                        rec["run"] = run
+                        rec["phase"] = "test"
+                        fh.write(json.dumps(rec) + "\n")
+                        fh.flush()
+                        g = rec["grade"]
+                        status = (
+                            "PASS" if g["semantic"]
+                            else "json" if g["valid_json"]
+                            else "err"
+                        )
+                        ok += status == "PASS"
+                        label = t["name"] or kind
+                        print(f"[{status:4s}] {model:45s} {label:20s} {variant or '-':6s} "
+                              f"t={rec['elapsed_s']}s http={rec['http']} "
+                              f"{'| ' + rec['error'][:80] if rec['error'] else ''}", flush=True)
+        print(f"# done: {ok}/{n_calls} fully-passing calls. Results: {out_path}")
+        return 0
 
     n_calls = sum(len(variants if t == "drive" else [""]) for t in tasks) * len(models) * args.runs
     n_warmup = 0 if args.no_warmup else len(models)

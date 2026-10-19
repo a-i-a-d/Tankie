@@ -430,7 +430,10 @@ footer{margin-top:26px;color:var(--muted);font-size:12px;}
     g.valid_json = true;
     // expectedOverride (issue #125 Q4=b): a task can carry its own
     // expected answer; when provided it replaces the built-in EXPECTED.
-    const exp = expectedOverride != null ? expectedOverride : EXPECTED;
+    // issue #126: a record may also store its expected (task-file sourced) --
+    // prefer the explicit override, then rec.expected, then the built-in.
+    const exp = expectedOverride != null ? expectedOverride
+      : (rec && rec.expected != null ? rec.expected : EXPECTED);
     if (task === 'detect') {
       const objs = parsed.objects;
       g.required_keys = Array.isArray(objs) && objs.length > 0;
@@ -603,7 +606,9 @@ footer{margin-top:26px;color:var(--muted);font-size:12px;}
       images: Array.isArray(opts.images) ? opts.images.slice() : [],
       max_tokens: opts.max_tokens || 500,
       phase: 'test',
+      name: opts.name != null ? opts.name : null,
       prompt: opts.prompt,
+      expected: opts.expected != null ? opts.expected : null,
       http: opts.http == null ? null : opts.http,
       elapsed_s: elapsed,
       content: opts.content != null ? opts.content : null,
