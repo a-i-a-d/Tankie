@@ -1,0 +1,61 @@
+{
+  "$schema": "tankie-docs/manifest@1",
+  "repo": "a-i-a-d/Tankie",
+  "description": "Machine-readable map of the Tankie documentation set. Every page is reachable from any other in at most one hop via the hub (docs-index) or the home page. Use this to enumerate and traverse the docs without parsing Markdown.",
+  "conventions": {
+    "breadcrumb": "Every page carries a top breadcrumb: home + docs index.",
+    "see_also": "Every page carries a bottom 'See also' footer of the most related pages.",
+    "single_source_of_truth": "A fact lives in exactly one page; everywhere else links to it.",
+    "home_no_issues": "The home README has no issue numbers/links; provenance lives in docs/*.md."
+  },
+  "single_source_of_truth": {
+    "parts_bom_wiring": "hardware",
+    "build_toolchains_and_dependencies": "build",
+    "wifi_config_storage": "wifi-config",
+    "firmware_and_data_upload": "ota",
+    "serial_protocol_and_bridge": "serial-protocol",
+    "testing_and_ci": "testing",
+    "ai_usage_safety_config": "ai-control",
+    "raspberry_pi_streaming_watchdog": "sub-raspberry_pi",
+    "ai_control_code": "sub-ai-control",
+    "brain_tests": "sub-brain-tests",
+    "manual_tests": "sub-manual-tests",
+    "vlm_benchmark": "sub-vlm-benchmark"
+  },
+  "pages": [
+    { "id": "home", "path": "../README.md", "kind": "home", "title": "Tankie", "description": "End-user landing page: description, quick start, parts, usage, docs nav." },
+    { "id": "docs-index", "path": "README.md", "kind": "hub", "title": "Documentation index", "description": "The hub: lists every topic page and sub-README." },
+    { "id": "agents", "path": "AGENTS.md", "kind": "meta", "title": "AI agent navigation guide", "description": "How AI agents should navigate the docs; single-source-of-truth rule." },
+    { "id": "manifest", "path": "manifest.json", "kind": "meta", "title": "Docs manifest", "description": "This file." },
+    { "id": "hardware", "path": "hardware.md", "kind": "topic", "title": "Hardware", "description": "Parts BOM + hardware setup / wiring." },
+    { "id": "build", "path": "build.md", "kind": "topic", "title": "Build", "description": "Firmware build (3 toolchains) + all library & Python dependencies." },
+    { "id": "wifi-config", "path": "wifi-config.md", "kind": "topic", "title": "WiFi configuration", "description": "Config portal + where the network config is stored (EEPROM sector 0x3FB000)." },
+    { "id": "ota", "path": "ota.md", "kind": "topic", "title": "Firmware & data upload", "description": "Flashing firmware + LittleFS data (USB & over the air)." },
+    { "id": "serial-protocol", "path": "serial-protocol.md", "kind": "topic", "title": "Serial control protocol", "description": "Full NDJSON contract (Pi <-> ESP) + the Pi-side bridge." },
+    { "id": "testing", "path": "testing.md", "kind": "topic", "title": "Testing", "description": "The test suite + CI jobs." },
+    { "id": "ai-control", "path": "ai-control.md", "kind": "topic", "title": "AI control", "description": "AI usage, safety & state feedback, configuration." },
+    { "id": "sub-raspberry_pi", "path": "../raspberry_pi/README.md", "kind": "subreadme", "title": "Raspberry Pi", "description": "Video streaming, WiFi watchdog, Pi-side flashing." },
+    { "id": "sub-ai-control", "path": "../ai-control/README.md", "kind": "subreadme", "title": "AI control code", "description": "LocalAI / LocalAGI integration code." },
+    { "id": "sub-brain-tests", "path": "../tests/brain/README.md", "kind": "subreadme", "title": "Brain tests", "description": "Offline AI brain test suite." },
+    { "id": "sub-manual-tests", "path": "../tests/manual/README.md", "kind": "subreadme", "title": "Manual / hardware tests", "description": "Hardware-only acceptance tests." },
+    { "id": "sub-vlm-benchmark", "path": "../tools/vlm-benchmark/README.md", "kind": "subreadme", "title": "VLM benchmark", "description": "Vision-language model benchmark tool." }
+  ],
+  "graph": {
+    "home": ["docs-index", "hardware", "build", "wifi-config", "ota", "serial-protocol", "testing", "ai-control", "sub-raspberry_pi", "sub-ai-control", "sub-brain-tests", "sub-manual-tests", "sub-vlm-benchmark"],
+    "docs-index": ["home", "hardware", "build", "wifi-config", "ota", "serial-protocol", "testing", "ai-control", "agents", "manifest", "sub-raspberry_pi", "sub-ai-control", "sub-brain-tests", "sub-manual-tests", "sub-vlm-benchmark"],
+    "agents": ["docs-index", "manifest", "home", "hardware", "build", "wifi-config", "ota", "serial-protocol", "testing", "ai-control", "sub-raspberry_pi", "sub-ai-control", "sub-brain-tests", "sub-manual-tests", "sub-vlm-benchmark"],
+    "manifest": ["docs-index", "agents"],
+    "hardware": ["build", "wifi-config", "home"],
+    "build": ["ota", "serial-protocol", "ai-control", "home"],
+    "wifi-config": ["serial-protocol", "ota", "home"],
+    "ota": ["wifi-config", "build", "home"],
+    "serial-protocol": ["wifi-config", "ai-control", "sub-raspberry_pi", "home"],
+    "testing": ["serial-protocol", "ai-control", "sub-brain-tests", "sub-manual-tests", "home"],
+    "ai-control": ["serial-protocol", "build", "sub-ai-control", "home"],
+    "sub-raspberry_pi": ["home", "docs-index"],
+    "sub-ai-control": ["home", "docs-index"],
+    "sub-brain-tests": ["home", "docs-index"],
+    "sub-manual-tests": ["home", "docs-index"],
+    "sub-vlm-benchmark": ["home", "docs-index"]
+  }
+}

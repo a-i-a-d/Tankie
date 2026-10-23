@@ -1,3 +1,5 @@
+← [Tankie](../../README.md) · [Docs index](../../docs/README.md)
+
 # Brain tests (issue #72 T1 · #73 T2 · #74 T3 · #80 T4)
 
 Offline unit tests for the Tankie AI brain. No tank, no Pi, no LocalAI, no

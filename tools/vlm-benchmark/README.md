@@ -1,3 +1,5 @@
+← [Tankie](../../README.md) · [Docs index](../../docs/README.md)
+
 # VLM Benchmark — Tankie brain model comparison
 
 Repeatable benchmark for comparing vision-language models on the LocalAI
