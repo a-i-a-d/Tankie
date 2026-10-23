@@ -1,3 +1,5 @@
+← [Tankie](../../README.md) · [Docs index](../../docs/README.md)
+
 # Manual / hardware-only tests
 
 This directory is the home for **manual acceptance tests** that can only run on

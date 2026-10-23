@@ -1,3 +1,5 @@
+← [Tankie](../README.md) · [Docs index](../docs/README.md)
+
 # AI Tank Control
 
 This folder contains code to connect an AI to the tank and drive it. This is experimental. The idea is to send images from the camera to an multimodal LLM that then uses tools to control the tank.
