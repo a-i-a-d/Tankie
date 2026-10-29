@@ -54,6 +54,7 @@ TESTS=(
   tests/test_streaminfo.cpp
   tests/test_wifimanager.cpp
   tests/test_set_wifi.cpp
+  tests/test_ota_powersave.cpp
 )
 
 echo "[run_tests] compiling: ${MODULES[*]}"

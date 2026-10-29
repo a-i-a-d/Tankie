@@ -83,10 +83,74 @@ void setMotorsSafe() {
   pinMode(BIN2, OUTPUT);  digitalWrite(BIN2, LOW);
 }
 
+// ---------------------------------------------------------------------------
+// OTA power-save toggle (issue #133)
+//
+// In STA mode the ESP8266 WiFi stack runs with modem-sleep (power save) ON
+// by default (core 3.1.2 default WIFI_MODEM_SLEEP). In that mode the radio
+// periodically wakes to poll the (external) AP on the DTIM/beacon schedule.
+// During the sustained ~2 MB flash erase+write of the LittleFS data
+// partition that concurrent beacon-poll activity trips the interrupt
+// watchdog and the chip RESETS mid-OTA at a random percent (issue #133).
+// In AP mode the ESP *is* the AP - there is no external beacon-poll - which
+// is exactly why the data partition never failed to flash there.
+//
+// This route lets a flasher (raspberry_pi/flash_ota.sh) disable modem-sleep
+// for the duration of the data-partition upload and restore it afterwards
+// (restoring keeps the idle draw low - the tank is battery-powered):
+//
+//   GET /ota/powersave?on=false   -> WiFi.setSleep(false)  (disable modem-sleep)
+//   GET /ota/powersave?on=true    -> WiFi.setSleep(true)   (restore modem-sleep)
+//
+// Registered on the same server as the ElegantOTA /ota/* routes, BEFORE the
+// LittleFS early-return in setup(), so the OTA routes stay available even if
+// the filesystem fails to mount. In AP mode the toggle is a harmless no-op.
+// ---------------------------------------------------------------------------
+
+// Mirror the core state for the host tests (tests/shims/ESP8266WiFi.h).
+// true = modem-sleep currently disabled.
+bool host_otaSleepDisabled = false;   // issue #133: defined here (single TU); extern in the shim header
+
+void otaPowersaveHandler(AsyncWebServerRequest *request) {
+  if (!request->hasParam("on")) {
+    request->send(400, "text/plain", "missing ?on=true|false");
+    return;
+  }
+  const String on = request->getParam("on")->value();
+  bool ok;
+  if (on == "false") {
+    ok = WiFi.setSleep(false);   // disable modem-sleep (STA beacon-poll off)
+  } else if (on == "true") {
+    ok = WiFi.setSleep(true);    // restore modem-sleep
+  } else {
+    request->send(400, "text/plain", "bad ?on= value (use true|false)");
+    return;
+  }
+  if (!ok) {
+    request->send(500, "text/plain", "WiFi.setSleep failed");
+    return;
+  }
+  host_otaSleepDisabled = (on == "false");
+  request->send(200, "text/plain", (on == "false") ? "powersave off" : "powersave on");
+}
+
+// Register the OTA routes on the main server. Called at the top of setup()
+// (before the LittleFS early-return) so the OTA API is reachable even when
+// the filesystem is missing/corrupt.
+void registerOtaRoutes() {
+  server.on("/ota/powersave", HTTP_GET, otaPowersaveHandler);
+}
+
+
 void setup() {
   setMotorsSafe();   // issue #44 C: first statement, before Serial/LittleFS/servos
 
   Serial.begin(SERIAL_PROTO_BAUD);  // 921600 8N1 — issue #29
+
+  // issue #133: register the OTA power-save route BEFORE the LittleFS
+  // early-return, so the OTA API (and the modem-sleep toggle) stays
+  // available even if the filesystem fails to mount.
+  registerOtaRoutes();
 
   if(!LittleFS.begin()){
     Serial.println("An Error has occurred while mounting LittleFS");
