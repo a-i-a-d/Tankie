@@ -18,6 +18,10 @@
 # Configuration (flash.conf, shared with flash_serial.sh; env overrides win):
 #   OTA_URL                ElegantOTA portal URL (default http://192.168.4.1/update)
 #   OTA_UPDATE_FILESYSTEM  also OTA the LittleFS data partition (default true)
+#   OTA_UPLOAD_RATE      rate-limit the data-partition upload (default 40k; issue #133)
+#   OTA_RETRY_COUNT      data-partition upload attempts before failing (default 3; issue #133)
+#   BRIDGE_SOCK          serial-bridge socket (fallback reboot path; issue #133)
+#   TANKIE_SERIAL_PORT   ESP UART for the reboot command (default /dev/ttyS0; issue #133)
 #   OTA_REBOOT_TIMEOUT     seconds to wait for the device to reboot back
 #   OTA_RETRY_COUNT      data-partition upload attempts before failing (default 3, issue #133)
 #   BRIDGE_SOCK          serial-bridge socket used to preserve the saved WiFi
@@ -26,6 +30,10 @@
 # Usage:
 #   bash flash_ota.sh                    # firmware + (default) data partition
 #   OTA_UPDATE_FILESYSTEM=false bash flash_ota.sh   # firmware only
+#   OTA_UPLOAD_RATE      rate-limit the data-partition upload (default 40k; issue #133)
+#   OTA_RETRY_COUNT      data-partition upload attempts before failing (default 3; issue #133)
+#   BRIDGE_SOCK          serial-bridge socket (fallback reboot path; issue #133)
+#   TANKIE_SERIAL_PORT   ESP UART for the reboot command (default /dev/ttyS0; issue #133)
 #   OTA_URL=http://192.168.4.1/update bash flash_ota.sh
 #
 # The ESP must be reachable at OTA_URL — either on the saved WiFi (STA mode,
@@ -126,15 +134,17 @@ wait_for_reboot() {
 }
 
 # Upload one image: mode is "fr" (firmware) or "fs" (filesystem).
-# Returns non-zero (instead of exiting) so the caller can retry - the
-# data-partition upload is retried up to OTA_RETRY_COUNT times (issue #133).
+# $3 (optional) = curl --limit-rate for the upload (e.g. "40k"); empty =
+# full speed. Returns non-zero (instead of exiting) so the caller can retry
+# - the data-partition upload is retried up to OTA_RETRY_COUNT times
+# (issue #133).
 ota_flash() {
-  local mode="$1" file="$2"
+  local mode="$1" file="$2" rate="${3:-}"
   [ -f "${file}" ] || die "image not found: ${file}"
   local size md5 resp code body
   size="$(stat -c%s "${file}")"
   md5="$(md5sum "${file}" | awk '{print $1}')"
-  log "OTA ${mode}: uploading $(basename "${file}") (${size} bytes, md5 ${md5})"
+  log "OTA ${mode}: uploading $(basename "${file}") (${size} bytes, md5 ${md5}${rate:+, rate-limited to ${rate}})"
 
   # Open the flash region (the device validates the MD5 before accepting data).
   resp="$(curl -sS -w $'\n%{http_code}' --max-time 15 \
@@ -148,7 +158,16 @@ ota_flash() {
   log "ota/start OK"
 
   # Stream the image in. The device verifies the MD5 on completion.
+  # issue #133: for the data partition the upload is rate-limited
+  # (OTA_UPLOAD_RATE, default 40k) - a full-speed 2 MB burst overloads the
+  # ESP8266's async-web receive pbufs (they fill while flash writes are
+  # blocking the loop) and the connection drops mid-transfer. Throttling
+  # below the flash-write rate keeps the pbufs drained and the upload
+  # completes reliably (verified live).
+  local rate_args=()
+  [ -n "${rate}" ] && rate_args=(--limit-rate "${rate}")
   resp="$(curl -sS -w $'\n%{http_code}' --max-time 600 \
+    "${rate_args[@]}" \
     -F "file=@${file};type=application/octet-stream" \
     "${OTA_BASE}/ota/upload")"
   code="${resp##*$'\n'}"
@@ -165,30 +184,33 @@ ota_flash() {
 # --- issue #133: data-partition OTA hardening -------------------------------
 #
 # The sustained ~2 MB flash erase+write of the LittleFS data partition
-# RESETS the ESP8266 mid-upload in STA mode (random percent), leaving the
-# core Updater stuck - the next ota/start then fails with
-# 400 "ERROR[0]: No Error" until a reboot clears it. Root cause: in STA
-# mode the WiFi stack runs with modem-sleep (power save) ON by default
-# (core 3.1.2 default WIFI_MODEM_SLEEP); the radio's periodic beacon-poll
-# to the external AP collides with the sustained flash write and trips the
-# interrupt watchdog. In AP mode the ESP IS the AP (no external beacon-
-# poll), which is exactly why the data partition never failed there.
+# DROPS the ESP8266's upload connection mid-transfer in STA mode (at a
+# random percent), leaving the core Updater stuck - the next ota/start then
+# fails with 400 "ERROR[0]: No Error" until a reboot clears it. A full-speed
+# 2 MB burst overloads the ESP8266's async-web receive pbufs (they fill
+# while the flash writes block the loop); throttling below the flash-write
+# rate keeps the pbufs drained and the upload completes reliably (verified
+# live). In AP mode the upload also completes, which is why it "never
+# failed there."
 #
 # Mitigations here:
-#   1. /ota/powersave?on=false  - disable modem-sleep for the upload
+#   1. /ota/powersave?on=false  - disable WiFi modem-sleep for the upload
 #      (firmware route, issue #133); restored on the next reboot.
-#   2. retry the fs upload up to OTA_RETRY_COUNT times (default 3),
-#      rebooting the device between attempts to clear the stuck Updater.
-#      The reboot preserves the saved WiFi: the config is read over the
-#      serial bridge (get_wifi) and re-POSTed to the always-running :8080
-#      config server (same wificfg save path, no wipe - the "reset" flag
-#      is not set).
-
-# The Pi serial-bridge socket (issue #29) - used to read the saved WiFi
-# config before a reboot. Override with BRIDGE_SOCK.
+#   2. rate-limit the fs upload (OTA_UPLOAD_RATE, default 40k) so the
+#      receive pbufs never fill.
+#   3. retry the fs upload up to OTA_RETRY_COUNT times (default 3),
+#      rebooting the device between attempts (direct serial {"cmd":"reboot"},
+#      preserving the saved WiFi) to clear the stuck Updater.
+# The serial-bridge socket (issue #29) - fallback reboot path (the daemon
+# accepts plain commands). Override with BRIDGE_SOCK.
 BRIDGE_SOCK="${BRIDGE_SOCK:-/run/tankie/bridge.sock}"
 # How many times to attempt the data-partition upload before failing.
 OTA_RETRY_COUNT="${OTA_RETRY_COUNT:-3}"
+# Upload rate limit for the data-partition upload (issue #133). A full-speed
+# 2 MB burst overloads the ESP8266 async-web receive pbufs; throttling
+# below the flash-write rate keeps them drained. Default 40k (40 KB/s).
+# Set to "0" or empty for full speed.
+OTA_UPLOAD_RATE="${OTA_UPLOAD_RATE:-40k}"
 
 # Disable (or re-enable) WiFi modem-sleep on the device. A no-op (warning)
 # if the running firmware predates the /ota/powersave route.
@@ -205,63 +227,32 @@ ota_powersave() {
   fi
 }
 
-# Read the saved WiFi config over the serial bridge (issue #29/#56).
-# Prints "ssid<TAB>pass<TAB>ip" or nothing on any failure.
-read_saved_wifi() {
-  [ -S "${BRIDGE_SOCK}" ] || return 1
-  python3 - "${BRIDGE_SOCK}" <<'PY' 2>/dev/null
-import json, socket, sys
-path = sys.argv[1]
-try:
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(5)
-    s.connect(path)
-    s.sendall(b'{"cmd":"get_wifi"}\n')
-    data = b""
-    while b"\n" not in data:
-        chunk = s.recv(4096)
-        if not chunk:
-            break
-        data += chunk
-    s.close()
-    msg = json.loads(data.decode().strip().split("\n")[0])
-    ssid = msg.get("ssid", "")
-    if ssid:
-        ip = msg.get("ip", "")
-        print(f"{ssid}\t{msg.get('pass','')}\t{ip}")
-except Exception:
-    pass
-PY
-}
 
-# Reboot the device to clear the stuck core Updater (issue #133),
-# PRESERVING the saved WiFi: the config is read over the serial bridge and
-# re-POSTed to the always-running :8080 config server (the same wificfg
-# save path the portal uses; no wipe - the "reset" flag is not set).
+# Reboot the device to clear the stuck core Updater (issue #133) while
+# PRESERVING the saved WiFi. Primary path: a direct serial reboot
+# ({"cmd":"reboot"} to the ESP's UART) - the ESP reboots and reconnects to
+# its saved network, so nothing is lost. This works even while the serial
+# bridge daemon holds the port (the ESP's RX line is shared). Fallback: the
+# serial-bridge socket ({"cmd":"reboot"}), then a plain :8080 config POST.
+# The serial port is the Pi native UART0 wired to the ESP (issue #29);
+# override with TANKIE_SERIAL_PORT.
+TANKIE_SERIAL_PORT="${TANKIE_SERIAL_PORT:-/dev/ttyS0}"
+
 reboot_device_preserve_wifi() {
-  local line ssid pass ip
-  line="$(read_saved_wifi || true)"
-  if [ -n "${line}" ]; then
-    ssid="${line%%	*}"
-    local rest="${line#*	}"
-    pass="${rest%%	*}"
-    ip="${rest#*	}"
-  else
-    ssid=""; pass=""; ip=""
+  log "rebooting the device to clear the stuck Updater (saved WiFi preserved) …"
+  local rebooted=false
+
+  # 1) Direct serial reboot (preferred - works while the bridge holds the port).
+  if [ -e "${TANKIE_SERIAL_PORT}" ]; then
+    if printf '{"cmd":"reboot"}\n' > "${TANKIE_SERIAL_PORT}" 2>/dev/null; then
+      log "reboot command sent to ${TANKIE_SERIAL_PORT}"
+      rebooted=true
+    fi
   fi
-  if [ -z "${ssid}" ]; then
-    warn "could not read the saved WiFi config (bridge socket ${BRIDGE_SOCK} unavailable or no saved ssid) - the reboot may drop the device onto the config AP"
-  fi
-  log "rebooting the device to clear the stuck Updater (saved WiFi: ${ssid:-<none>}) …"
-  # POST the (saved) config to the :8080 config server. The handler stores
-  # it (wificfg sector) and reboots. The response is cut off by the reboot.
-  if [ -n "${ssid}" ]; then
-    curl -sS --max-time 20 -o /dev/null \
-      -d "ssid=${ssid}" -d "pass=${pass}" -d "ip=${ip}" \
-      "${OTA_BASE}:8080/" 2>/dev/null || true
-  else
-    # No saved config to preserve - a plain reboot via the bridge.
-    [ -S "${BRIDGE_SOCK}" ] && python3 - "${BRIDGE_SOCK}" <<'PY' 2>/dev/null || true
+
+  # 2) Fallback: the serial-bridge socket.
+  if [ "${rebooted}" = "false" ] && [ -S "${BRIDGE_SOCK}" ]; then
+    if python3 - "${BRIDGE_SOCK}" <<'PY' 2>/dev/null
 import json, socket, sys
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 s.settimeout(5); s.connect(sys.argv[1])
@@ -269,20 +260,28 @@ s.sendall(b'{"cmd":"reboot"}\n')
 try: s.recv(4096)
 except Exception: pass
 PY
+    then
+      log "reboot command sent via the bridge socket"
+      rebooted=true
+    fi
   fi
+
+  if [ "${rebooted}" = "false" ]; then
+    warn "could not send a reboot (no ${TANKIE_SERIAL_PORT}, no bridge socket) - waiting for the device to recover on its own"
+  fi
+
   wait_for_reboot
-  if [ -n "${ssid}" ]; then
-    log "saved WiFi re-stored after the reboot"
-  fi
+  log "device rebooted - the stuck Updater is cleared"
 }
 
 # --- 2. OTA ------------------------------------------------------------------
 preflight_device
 
-# issue #133: warn early if the serial bridge (used to preserve the saved
-# WiFi across a retry-reboot) is not reachable from this host.
-if [ ! -S "${BRIDGE_SOCK}" ]; then
-  warn "serial bridge socket ${BRIDGE_SOCK} not found - if a data-partition upload fails, the retry-reboot cannot read the saved WiFi (the device may drop onto the config AP)"
+# issue #133: warn early if neither the ESP UART nor the bridge socket
+# is available - a failed data-partition upload then cannot be retried
+# (the retry-reboot has no way to clear the stuck Updater).
+if [ ! -e "${TANKIE_SERIAL_PORT}" ] && [ ! -S "${BRIDGE_SOCK}" ]; then
+  warn "no ${TANKIE_SERIAL_PORT} and no bridge socket ${BRIDGE_SOCK} - if a data-partition upload fails, the retry-reboot cannot clear the stuck Updater"
 fi
 
 # Firmware region: already flashes reliably (issue #133 - the failure is
@@ -302,7 +301,7 @@ if [ "${OTA_UPDATE_FILESYSTEM}" = "true" ]; then
     fs_done=false
     while [ "${attempt}" -le "${OTA_RETRY_COUNT}" ]; do
       log "data-partition upload, attempt ${attempt}/${OTA_RETRY_COUNT}"
-      if ota_flash "fs" "${DATA_BIN}"; then
+      if ota_flash "fs" "${DATA_BIN}" "${OTA_UPLOAD_RATE}"; then
         fs_done=true
         break
       fi
