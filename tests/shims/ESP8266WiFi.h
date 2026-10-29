@@ -21,6 +21,12 @@ typedef enum {
 
 typedef enum { WIFI_OFF, WIFI_STA, WIFI_AP, WIFI_STA_AP } wifi_mode_t;
 
+// issue #133: host-side mirror of the WiFi modem-sleep state. The real
+// core's WiFi.setSleep() has no host equivalent, so the shim records the
+// call here and the /ota/powersave handler (tankie.ino) can be asserted on
+// in the host tests. true = modem-sleep currently DISABLED.
+bool host_otaSleepDisabled = false;
+
 class WiFiClass {
  public:
   wifi_mode_t mode() { return WIFI_STA; }
@@ -31,6 +37,9 @@ class WiFiClass {
   IPAddress localIP() { return IPAddress(); }
   void softAP(const char* ssid, const char* pass = NULL) { (void)ssid; (void)pass; }
   void softAPConfig(IPAddress, IPAddress, IPAddress) {}
+  // issue #133: modem-sleep toggle (real core: WiFi.setSleep). Records the
+  // call in host_otaSleepDisabled so the host tests can assert on it.
+  bool setSleep(bool enable) { host_otaSleepDisabled = !enable; return true; }
   IPAddress softAPIP() { return IPAddress(); }
 };
 

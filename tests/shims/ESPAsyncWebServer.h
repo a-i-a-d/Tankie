@@ -2,8 +2,19 @@
 //
 // Provides just enough of the async web server API for tankie.ino and
 // wifimanager.cpp to COMPILE on the host. Nothing here is functional:
-// the tests drive the WebSocket command handler (handleWebSocketMessage)
-// directly, not through the server.
+// the tests drive the command handlers (handleWebSocketMessage,
+// otaPowersaveHandler) directly, not through the server.
+//
+// issue #133 additions (test hooks, compile-only on the device):
+//   * host_wsQueryParam — the "on" query-param value the handler's
+//     getParam("on") call returns (injected by the /ota/powersave tests;
+//     empty = no query param, like a real request without one).
+//   * host_lastSendCode / host_lastSendBody — recorded by the plain
+//     send(code, type, body) overload so the tests can assert on the HTTP
+//     status + body the handler produced.
+//
+// The hooks are C++17 inline variables (the shim is a header with no
+// separate .cpp), so every translation unit shares the same storage.
 #pragma once
 
 #include <Arduino.h>
@@ -16,20 +27,39 @@
 
 enum { HTTP_GET, HTTP_POST, HTTP_PUT, HTTP_DELETE, HTTP_PATCH };
 
+// issue #133: test hooks (shared across all TUs via C++17 inline variables).
+inline std::string host_wsQueryParam = "";
+inline int host_lastSendCode = 0;
+inline std::string host_lastSendBody = "";
+
 class AsyncWebParameter {
  public:
   String name() const { return String(); }
-  String value() const { return String(); }
+  // issue #133: returns the injected query-param value ("" = no param).
+  String value() const { return String(host_wsQueryParam.c_str()); }
   bool isPost() const { return true; }
 };
 
 class AsyncWebServerRequest {
  public:
   size_t params() const { return 0; }
+  // Index form (wifimanager.cpp's param loop) - no params on the host.
   const AsyncWebParameter* getParam(size_t) const { return nullptr; }
-  bool hasParam(const String&, bool) const { return false; }
+  // Name form (tankie.ino's /ota/powersave handler, issue #133).
+  const AsyncWebParameter* getParam(const String& name) const {
+    if (name != "on" || host_wsQueryParam.empty()) return nullptr;
+    static const AsyncWebParameter p;
+    return &p;
+  }
+  bool hasParam(const String& name, bool post = false) const {
+    (void)post;
+    return name == "on" && !host_wsQueryParam.empty();
+  }
   void send(int code, const String& type, const String& content) {
-    (void)code; (void)type; (void)content;
+    (void)type;
+    // issue #133: record for the host tests.
+    host_lastSendCode = code;
+    host_lastSendBody = content.c_str();
   }
   void send(int code, const String& type, const String& content,
             const String& headers) { (void)code; (void)type; (void)content; (void)headers; }
@@ -63,4 +93,3 @@ class AsyncWebServer {
  private:
   uint16_t port_;
 };
-
