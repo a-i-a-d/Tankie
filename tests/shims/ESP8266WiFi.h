@@ -25,7 +25,7 @@ typedef enum { WIFI_OFF, WIFI_STA, WIFI_AP, WIFI_STA_AP } wifi_mode_t;
 // core's WiFi.setSleep() has no host equivalent, so the shim records the
 // call here and the /ota/powersave handler (tankie.ino) can be asserted on
 // in the host tests. true = modem-sleep currently DISABLED.
-bool host_otaSleepDisabled = false;
+extern bool host_otaSleepDisabled;
 
 class WiFiClass {
  public:

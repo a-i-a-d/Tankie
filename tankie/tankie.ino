@@ -109,7 +109,7 @@ void setMotorsSafe() {
 
 // Mirror the core state for the host tests (tests/shims/ESP8266WiFi.h).
 // true = modem-sleep currently disabled.
-extern bool host_otaSleepDisabled;
+bool host_otaSleepDisabled = false;   // issue #133: defined here (single TU); extern in the shim header
 
 void otaPowersaveHandler(AsyncWebServerRequest *request) {
   if (!request->hasParam("on")) {
